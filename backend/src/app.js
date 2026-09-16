@@ -10,9 +10,19 @@ import adminRoutes from './routes/admin.route.js';
 
 const app = express();
 
-const allowedOrigins = env.CORS_ORIGIN.split(',').map((origin) => origin.trim()).filter(Boolean);
+// Required behind Render / reverse proxies for secure cookies + rate limiting
+app.set('trust proxy', 1);
 
-app.use(helmet());
+const allowedOrigins = env.CORS_ORIGIN.split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+
+app.use(
+  helmet({
+    crossOriginResourcePolicy: { policy: 'cross-origin' },
+  })
+);
+
 app.use(
   cors({
     origin(origin, callback) {
@@ -20,21 +30,28 @@ app.use(
         return callback(null, true);
       }
 
-      return callback(new Error(`Not allowed by CORS: ${origin}`));
+      return callback(null, false);
     },
     credentials: true,
   })
 );
-app.use(express.json());
+
+app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 
 if (env.NODE_ENV !== 'production') {
   app.use(morgan('dev'));
+} else {
+  app.use(morgan('combined'));
 }
 
 app.get('/api/v1/health', (req, res) => {
-  res.status(200).json({ success: true, message: 'Flash Digital CRM API is running' });
+  res.status(200).json({
+    success: true,
+    message: 'Flash Digital CRM API is running',
+    env: env.NODE_ENV,
+  });
 });
 
 app.use('/api/v1/auth', authRoutes);

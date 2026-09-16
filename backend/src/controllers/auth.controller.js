@@ -25,7 +25,8 @@ export const login = asyncHandler(async (req, res) => {
   res.cookie('token', token, {
     httpOnly: true,
     secure: env.NODE_ENV === 'production',
-    sameSite: 'strict',
+    // Cross-site cookies required for Vercel frontend ↔ Render API
+    sameSite: env.NODE_ENV === 'production' ? 'none' : 'strict',
     maxAge: 7 * 24 * 60 * 60 * 1000,
   });
 
