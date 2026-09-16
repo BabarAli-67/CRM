@@ -1,0 +1,14 @@
+{
+  "name": "crm",
+  "version": "1.0.0",
+  "description": "Internal CRM with role-based access for Sales Agent, Closer, CST Manager, and Tech Team, managed by a Super Admin.",
+  "main": "index.js",
+  "scripts": {
+    "dev:backend": "npm run dev --prefix backend",
+    "dev:frontend": "npm run dev --prefix frontend"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs"
+}
