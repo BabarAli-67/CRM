@@ -1,4 +1,6 @@
 import { useNavigate } from 'react-router-dom';
+import AttendanceGrid from '../components/AttendanceGrid.component.jsx';
+import LateRequestsQueue from '../components/LateRequestsQueue.component.jsx';
 import UserAccessManagement from '../components/UserAccessManagement.component.jsx';
 import UserRoster from '../components/UserRoster.component.jsx';
 import useAuth from '../hooks/useAuth.hook.js';
@@ -55,6 +57,24 @@ export default function AdminMonitorPage() {
             </h2>
           </div>
           <UserRoster readOnly={true} />
+        </section>
+
+        <section className="space-y-4">
+          <div>
+            <h2 className="font-display text-xl font-semibold text-ink">
+              Late Attendance Requests (View Only)
+            </h2>
+          </div>
+          <LateRequestsQueue readOnly={true} />
+        </section>
+
+        <section className="space-y-4">
+          <div>
+            <h2 className="font-display text-xl font-semibold text-ink">
+              Attendance Grid (View Only)
+            </h2>
+          </div>
+          <AttendanceGrid readOnly={true} />
         </section>
       </div>
     </div>

@@ -34,10 +34,8 @@ export const protect = asyncHandler(async (req, res, next) => {
 });
 
 export const restrictTo = (...allowedRoles) => (req, res, next) => {
-  if (req.user.isAdmin) {
-    return next();
-  }
-
+  // Role allowlist only — Super Admin / Auditor must not bypass department-only
+  // routes (e.g. personal attendance) via isAdmin.
   if (!allowedRoles.includes(req.user.role)) {
     throw new ApiError(403, 'You do not have permission to access this resource');
   }

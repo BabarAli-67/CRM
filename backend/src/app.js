@@ -7,6 +7,8 @@ import env from './config/env.config.js';
 import { notFound, errorHandler } from './middlewares/error.middleware.js';
 import authRoutes from './routes/auth.route.js';
 import adminRoutes from './routes/admin.route.js';
+import shiftRoutes from './routes/shift.route.js';
+import attendanceRoutes from './routes/attendance.route.js';
 
 const app = express();
 
@@ -56,6 +58,8 @@ app.get('/api/v1/health', (req, res) => {
 
 app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/admin', adminRoutes);
+app.use('/api/v1/shift', shiftRoutes);
+app.use('/api/v1/attendance', attendanceRoutes);
 
 app.use(notFound);
 app.use(errorHandler);
