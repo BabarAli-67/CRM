@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useRef } from 'react';
-import { playChime } from '../utils/audioAlert.js';
 import { enqueueReminderPopup } from '../components/alerts/ReminderPopup.jsx';
 import useAuth from './useAuth.hook.js';
 
@@ -71,12 +70,6 @@ export default function useReminderScheduler(items = [], options = {}) {
       firedRef.current.add(key);
 
       try {
-        await playChime(alertType === 'fiveMin' ? 'single' : 'double');
-      } catch {
-        // audioAlert already swallows; keep going for visual + mark
-      }
-
-      try {
         showPopupRef.current?.({
           id: item.id,
           kind: item.kind,
@@ -85,7 +78,7 @@ export default function useReminderScheduler(items = [], options = {}) {
           item,
         });
       } catch {
-        // Popup (Phase 4.1.3) may not be wired yet
+        // Popup may not be wired yet
       }
 
       try {

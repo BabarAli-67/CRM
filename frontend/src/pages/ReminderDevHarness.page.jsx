@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import useReminderScheduler from '../hooks/useReminderScheduler.js';
-import { playChime } from '../utils/audioAlert.js';
+import { playChime, startAlarmLoop, stopChime } from '../utils/audioAlert.js';
 import { enqueueReminderPopup } from '../components/alerts/ReminderPopup.jsx';
 import { ReminderPopupHost } from '../components/alerts/ReminderPopup.jsx';
 
@@ -173,8 +173,28 @@ export default function ReminderDevHarnessPage() {
             type="button"
             className="rounded-md bg-slate-900 px-3 py-2 text-sm text-white"
             onClick={async () => {
+              await startAlarmLoop();
+              append('startAlarmLoop() — looping alarm (MP3 or Web Audio pulse)');
+            }}
+          >
+            Start looping alarm
+          </button>
+          <button
+            type="button"
+            className="rounded-md bg-red-700 px-3 py-2 text-sm text-white"
+            onClick={() => {
+              stopChime();
+              append('stopChime() — silenced');
+            }}
+          >
+            Stop alarm
+          </button>
+          <button
+            type="button"
+            className="rounded-md bg-slate-900 px-3 py-2 text-sm text-white"
+            onClick={async () => {
               await playChime('single');
-              append("playChime('single') called");
+              append("playChime('single') → startAlarmLoop");
             }}
           >
             TC1 playChime single
@@ -184,7 +204,7 @@ export default function ReminderDevHarnessPage() {
             className="rounded-md bg-slate-900 px-3 py-2 text-sm text-white"
             onClick={async () => {
               await playChime('double');
-              append("playChime('double') called");
+              append("playChime('double') → startAlarmLoop");
             }}
           >
             TC2 playChime double

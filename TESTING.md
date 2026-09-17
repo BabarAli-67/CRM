@@ -155,3 +155,21 @@ static scan of `MilestoneStepper.jsx` / `MyProjectsPage.jsx`.
       milestone PATCH → 403
 - [x] Completion reflected — advance to `completed` sets `completedAt`; project
       stays completed on my-projects; absent from CST pending_review queue
+
+## Phase 4.7 — Pipeline Overview & Month-End Reports
+
+Verified via `backend/scripts/test-phase47-pipeline-reports.mjs` (4/4) against live API +
+static scan of `PipelineOverviewPage.jsx` / `OverrideReassignModal.jsx` /
+`MonthlyReportPage.jsx`.
+
+- [x] Auditor parity — `admin` and `super_admin` see identical callback / lead /
+      handover queue IDs; write controls gated on `user.isAdmin === true` (Auditor has
+      no Override / Assign buttons)
+- [x] Override visible only to super admin — Auditor `PATCH /handover/:id/reassign`
+      → 403; `OverrideReassignModal` mounts only when `canWrite`; requires
+      `overrideReason`
+- [x] Report accuracy — seeded 3 closes (amounts 1000+2500+500=4000) appear in
+      agent/closer monthly rows; tech completion ≥1 after milestone complete; admin and
+      super_admin monthly payloads match
+- [x] CSV export — MonthlyReportPage Export CSV button + client-side escaping;
+      commas/quotes produce correctly formatted CSV

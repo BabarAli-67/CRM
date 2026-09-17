@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import useAuth from '../../hooks/useAuth.hook.js';
+import { startAlarmLoop, stopChime } from '../../utils/audioAlert.js';
 
-const AUTO_DISMISS_MS = 20_000;
+/** Auto-stop alarm + dismiss if the agent never interacts */
+const AUTO_STOP_MS = 60_000;
 
 /** @type {Array<object>} */
 const queue = [];
@@ -124,7 +126,7 @@ function ReminderPopup({ reminder, onClose, onView }) {
           <button
             type="button"
             onClick={onClose}
-            aria-label="Dismiss reminder"
+            aria-label="Close"
             className="rounded-md px-2 py-1 text-sm font-medium text-amber-900/70 hover:bg-amber-200/60 hover:text-amber-950"
           >
             ✕
@@ -169,6 +171,7 @@ function ReminderPopup({ reminder, onClose, onView }) {
 
 /**
  * Mount once in the authenticated shell. Shows one reminder at a time from the queue.
+ * Starts a looping alarm while a popup is visible; silences on dismiss / view / 60s.
  */
 export function ReminderPopupHost() {
   const navigate = useNavigate();
@@ -179,13 +182,19 @@ export function ReminderPopupHost() {
 
   const active = snapshot[0] || null;
 
-  const handleClose = useCallback(() => {
+  const silenceAndDismiss = useCallback(() => {
+    stopChime();
     dismissFront();
   }, []);
+
+  const handleClose = useCallback(() => {
+    silenceAndDismiss();
+  }, [silenceAndDismiss]);
 
   const handleView = useCallback(() => {
     if (!active) return;
     const path = viewPathFor(active.kind, active.id, user?.role);
+    stopChime();
     dismissFront();
     navigate(path);
     window.setTimeout(() => {
@@ -193,13 +202,28 @@ export function ReminderPopupHost() {
     }, 120);
   }, [active, navigate, user?.role]);
 
+  // Start / restart looping alarm whenever the front reminder changes
   useEffect(() => {
-    if (!active) return undefined;
-    const timerId = window.setTimeout(() => {
+    if (!active) {
+      stopChime();
+      return undefined;
+    }
+
+    startAlarmLoop();
+
+    const safetyId = window.setTimeout(() => {
+      stopChime();
       dismissFront();
-    }, AUTO_DISMISS_MS);
-    return () => window.clearTimeout(timerId);
+    }, AUTO_STOP_MS);
+
+    return () => {
+      window.clearTimeout(safetyId);
+      stopChime();
+    };
   }, [active?.queueId]);
+
+  // Unmount / navigate away from shell
+  useEffect(() => () => stopChime(), []);
 
   if (!active) return null;
 
