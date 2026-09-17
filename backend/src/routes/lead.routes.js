@@ -1,0 +1,71 @@
+import { Router } from 'express';
+import { protect, restrictTo } from '../middlewares/auth.middleware.js';
+import { blockReadOnlyAdmin } from '../middlewares/permission.middleware.js';
+import {
+  createLead,
+  getMyLeads,
+  getAssignedLeads,
+  getAllLeads,
+  updateLead,
+  disqualifyLead,
+  setFollowUp,
+  markFollowUpAlert,
+  closeLead,
+} from '../controllers/lead.controller.js';
+import { closeLeadValidator } from '../utils/validators.util.js';
+import { validate } from '../middlewares/validate.middleware.js';
+
+const router = Router();
+
+router.use(protect);
+
+router.post('/', restrictTo('sales_agent'), createLead);
+
+router.get('/mine', restrictTo('sales_agent'), getMyLeads);
+
+router.get('/assigned-to-me', restrictTo('closer'), getAssignedLeads);
+
+router.get(
+  '/',
+  restrictTo('super_admin', 'admin'),
+  blockReadOnlyAdmin,
+  getAllLeads
+);
+
+router.patch(
+  '/:id/follow-up/mark-alert',
+  restrictTo('sales_agent', 'closer', 'super_admin'),
+  blockReadOnlyAdmin,
+  markFollowUpAlert
+);
+
+router.patch(
+  '/:id/follow-up',
+  restrictTo('sales_agent', 'closer', 'super_admin'),
+  blockReadOnlyAdmin,
+  setFollowUp
+);
+
+router.patch(
+  '/:id/close',
+  restrictTo('sales_agent', 'closer'),
+  closeLeadValidator,
+  validate,
+  closeLead
+);
+
+router.patch(
+  '/:id/disqualify',
+  restrictTo('sales_agent', 'closer', 'super_admin'),
+  blockReadOnlyAdmin,
+  disqualifyLead
+);
+
+router.patch(
+  '/:id',
+  restrictTo('sales_agent', 'closer', 'super_admin'),
+  blockReadOnlyAdmin,
+  updateLead
+);
+
+export default router;

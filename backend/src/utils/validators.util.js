@@ -84,3 +84,33 @@ export const forceAbsentValidator = [
     .isLength({ max: 300 })
     .withMessage('Reason must be at most 300 characters'),
 ];
+
+export const closeLeadValidator = [
+  body('payment.method')
+    .isIn(['via_link', 'via_card'])
+    .withMessage("payment.method must be 'via_link' or 'via_card'"),
+  body('payment.linkUrl')
+    .if(body('payment.method').equals('via_link'))
+    .notEmpty()
+    .withMessage('payment.linkUrl is required when method is via_link')
+    .trim()
+    .isURL()
+    .withMessage('payment.linkUrl must be a valid URL'),
+  body('payment.cardLast4')
+    .if(body('payment.method').equals('via_card'))
+    .notEmpty()
+    .withMessage('payment.cardLast4 is required when method is via_card')
+    .trim()
+    .isLength({ min: 4, max: 4 })
+    .withMessage('payment.cardLast4 must be exactly 4 characters')
+    .matches(/^\d{4}$/)
+    .withMessage('payment.cardLast4 must be 4 digits'),
+  body('payment.cardReferenceToken')
+    .if(body('payment.method').equals('via_card'))
+    .notEmpty()
+    .withMessage('payment.cardReferenceToken is required when method is via_card')
+    .trim(),
+  body('payment.cardBrand')
+    .optional({ nullable: true })
+    .trim(),
+];

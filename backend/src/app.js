@@ -9,6 +9,9 @@ import authRoutes from './routes/auth.route.js';
 import adminRoutes from './routes/admin.route.js';
 import shiftRoutes from './routes/shift.route.js';
 import attendanceRoutes from './routes/attendance.route.js';
+import callbackRoutes from './routes/callback.routes.js';
+import leadRoutes from './routes/lead.routes.js';
+import statsRoutes from './routes/stats.routes.js';
 
 const app = express();
 
@@ -60,6 +63,9 @@ app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/admin', adminRoutes);
 app.use('/api/v1/shift', shiftRoutes);
 app.use('/api/v1/attendance', attendanceRoutes);
+app.use('/api/v1/callbacks', callbackRoutes);
+app.use('/api/v1/leads', leadRoutes);
+app.use('/api/v1/stats', statsRoutes);
 
 app.use(notFound);
 app.use(errorHandler);
