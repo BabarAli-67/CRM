@@ -179,6 +179,27 @@ const leadSchema = new mongoose.Schema(
           type: Date,
           default: null,
         },
+        overrideLog: {
+          type: [
+            {
+              by: {
+                type: mongoose.Schema.Types.ObjectId,
+                ref: 'User',
+                required: true,
+              },
+              reason: {
+                type: String,
+                required: true,
+                trim: true,
+              },
+              at: {
+                type: Date,
+                default: Date.now,
+              },
+            },
+          ],
+          default: [],
+        },
       },
       default: undefined,
     },

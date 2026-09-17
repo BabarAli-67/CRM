@@ -6,6 +6,7 @@ import {
   getMyLeads,
   getAssignedLeads,
   getAllLeads,
+  getLeadById,
   updateLead,
   disqualifyLead,
   setFollowUp,
@@ -30,6 +31,12 @@ router.get(
   restrictTo('super_admin', 'admin'),
   blockReadOnlyAdmin,
   getAllLeads
+);
+
+router.get(
+  '/:id',
+  restrictTo('sales_agent', 'closer', 'super_admin'),
+  getLeadById
 );
 
 router.patch(

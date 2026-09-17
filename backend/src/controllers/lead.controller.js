@@ -3,14 +3,18 @@ import { ApiError } from '../utils/apiError.util.js';
 import { ApiResponse } from '../utils/apiResponse.util.js';
 import Lead from '../models/lead.model.js';
 
+const refId = (ref) => {
+  if (!ref) return null;
+  if (typeof ref === 'object' && ref._id != null) return String(ref._id);
+  return String(ref);
+};
+
 const canAccessLead = (lead, user) => {
   if (user.role === 'super_admin') return true;
 
-  const userId = user._id.toString();
-  const isOwningAgent =
-    lead.agentId && lead.agentId.toString() === userId;
-  const isAssignedCloser =
-    lead.closerId && lead.closerId.toString() === userId;
+  const userId = String(user._id);
+  const isOwningAgent = refId(lead.agentId) === userId;
+  const isAssignedCloser = refId(lead.closerId) === userId;
 
   return isOwningAgent || isAssignedCloser;
 };
@@ -89,11 +93,28 @@ export const getAllLeads = asyncHandler(async (req, res) => {
   const leads = await Lead.find()
     .populate('agentId', 'fullName email role')
     .populate('closerId', 'fullName email role')
+    .populate('handover.assignedTechId', 'fullName email role')
     .sort({ updatedAt: -1 });
 
   res
     .status(200)
     .json(new ApiResponse(200, { leads }, 'All leads retrieved'));
+});
+
+export const getLeadById = asyncHandler(async (req, res) => {
+  const lead = await Lead.findById(req.params.id)
+    .populate('agentId', 'fullName email role')
+    .populate('closerId', 'fullName email role');
+
+  if (!lead) {
+    throw new ApiError(404, 'Lead not found');
+  }
+
+  if (!canAccessLead(lead, req.user)) {
+    throw new ApiError(403, 'You can only view leads you own or are assigned to');
+  }
+
+  res.status(200).json(new ApiResponse(200, { lead }, 'Lead retrieved'));
 });
 
 export const updateLead = asyncHandler(async (req, res) => {

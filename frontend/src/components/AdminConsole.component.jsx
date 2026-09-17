@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Activity,
   Clock3,
   LayoutDashboard,
   LogOut,
+  PhoneCall,
   PieChart as PieChartIcon,
   Users,
   Workflow,
@@ -451,6 +453,18 @@ export default function AdminConsole({
             <p className="mt-1 text-sm text-zinc-400">{subtitle}</p>
           </div>
           <div className="flex items-center gap-3">
+            <Link to="/admin/callbacks" className={ADMIN_BTN_GHOST}>
+              <PhoneCall className="mr-2 h-4 w-4" aria-hidden />
+              Callbacks
+            </Link>
+            <Link to="/admin/pipeline" className={ADMIN_BTN_GHOST}>
+              <Workflow className="mr-2 h-4 w-4" aria-hidden />
+              Pipeline
+            </Link>
+            <Link to="/admin/reports/monthly" className={ADMIN_BTN_GHOST}>
+              <PieChartIcon className="mr-2 h-4 w-4" aria-hidden />
+              Reports
+            </Link>
             <span className="text-sm text-zinc-400">
               {user?.fullName || user?.email}
             </span>
@@ -509,8 +523,8 @@ export default function AdminConsole({
               <KpiCard
                 icon={Workflow}
                 label="Operational Pipeline"
-                value="—"
-                hint="Leads & deals — coming in Phase 3"
+                value="Live"
+                hint="Open Pipeline from the header"
               />
             </div>
 

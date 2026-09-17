@@ -1,5 +1,6 @@
 import { Navigate } from 'react-router-dom';
 import useAuth from '../hooks/useAuth.hook.js';
+import { ReminderPopupHost } from './alerts/ReminderPopup.jsx';
 
 export default function RoleRoute({ children, allowedRoles }) {
   const { user } = useAuth();
@@ -9,12 +10,22 @@ export default function RoleRoute({ children, allowedRoles }) {
   }
 
   if (user.isAdmin) {
-    return children;
+    return (
+      <>
+        <ReminderPopupHost />
+        {children}
+      </>
+    );
   }
 
   if (!allowedRoles.includes(user.role)) {
     return <Navigate to="/unauthorized" replace />;
   }
 
-  return children;
+  return (
+    <>
+      <ReminderPopupHost />
+      {children}
+    </>
+  );
 }
