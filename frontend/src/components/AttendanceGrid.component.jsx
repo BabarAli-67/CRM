@@ -6,6 +6,16 @@ import {
   forceAbsent,
   getGrid,
 } from '../services/attendance.service.js';
+import {
+  ADMIN_BTN_GHOST,
+  ADMIN_BTN_PRIMARY,
+  ADMIN_CARD,
+  ADMIN_INPUT,
+  ADMIN_ROW,
+  ADMIN_TABLE_WRAP,
+  ADMIN_THEAD,
+  ROLE_PILL,
+} from './adminBrand.js';
 
 const DEPARTMENT_ROLES = ['sales_agent', 'closer', 'cst_manager', 'tech_team'];
 
@@ -27,13 +37,12 @@ const STATUS_OPTIONS = [
 ];
 
 const STATUS_BADGE = {
-  present: 'bg-emerald-100 text-emerald-800 ring-emerald-200',
-  late: 'bg-amber-100 text-amber-900 ring-amber-200',
-  pending_approval:
-    'bg-transparent text-amber-800 ring-2 ring-amber-400 ring-inset',
-  absent: 'bg-red-100 text-red-800 ring-red-200',
-  auto_absent: 'bg-red-100 text-red-800 ring-red-200',
-  weekend_off: 'bg-slate-200 text-slate-700 ring-slate-300',
+  present: 'bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-500/30',
+  late: 'bg-amber-500/15 text-amber-300 ring-1 ring-amber-500/30',
+  pending_approval: 'bg-[#FF4B26]/15 text-[#FF8A6A] ring-1 ring-[#FF4B26]/40',
+  absent: 'bg-red-500/15 text-red-300 ring-1 ring-red-500/30',
+  auto_absent: 'bg-red-500/15 text-red-300 ring-1 ring-red-500/30',
+  weekend_off: 'bg-zinc-500/15 text-zinc-300 ring-1 ring-zinc-500/30',
 };
 
 const STATUS_LABEL = {
@@ -44,9 +53,6 @@ const STATUS_LABEL = {
   auto_absent: 'Auto absent',
   weekend_off: 'Weekend off',
 };
-
-const inputClassName =
-  'rounded-xl border border-obsidian-border bg-obsidian-elevated px-3 py-2 text-sm text-ink outline-none focus:border-flash-secondary focus:ring-2 focus:ring-flash-secondary/30';
 
 const formatWorkedDuration = (workedMinutes) => {
   if (workedMinutes === null || workedMinutes === undefined) return '—';
@@ -68,12 +74,12 @@ const formatDateTime = (value) => {
 
 const StatusBadge = ({ status }) => {
   const classes =
-    STATUS_BADGE[status] || 'bg-slate-100 text-slate-700 ring-slate-200';
+    STATUS_BADGE[status] || 'bg-white/5 text-zinc-300 ring-1 ring-white/10';
   const label = STATUS_LABEL[status] || status;
 
   return (
     <span
-      className={`inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium ring-1 ring-inset ${classes}`}
+      className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${classes}`}
     >
       {label}
     </span>
@@ -158,34 +164,34 @@ export default function AttendanceGrid({ readOnly = false }) {
   return (
     <div
       data-readonly={readOnly ? 'true' : 'false'}
-      className="space-y-4 rounded-card border border-obsidian-border bg-obsidian-surface p-4 sm:p-6"
+      className={`${ADMIN_CARD} space-y-4`}
     >
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div className="flex flex-wrap gap-3">
-          <label className="flex flex-col gap-1 text-xs font-medium text-ink-muted">
+          <label className="flex flex-col gap-1 text-xs font-medium text-zinc-400">
             From
             <input
               type="date"
               value={from}
               onChange={(e) => setFrom(e.target.value)}
-              className={inputClassName}
+              className={ADMIN_INPUT}
             />
           </label>
-          <label className="flex flex-col gap-1 text-xs font-medium text-ink-muted">
+          <label className="flex flex-col gap-1 text-xs font-medium text-zinc-400">
             To
             <input
               type="date"
               value={to}
               onChange={(e) => setTo(e.target.value)}
-              className={inputClassName}
+              className={ADMIN_INPUT}
             />
           </label>
-          <label className="flex flex-col gap-1 text-xs font-medium text-ink-muted">
+          <label className="flex flex-col gap-1 text-xs font-medium text-zinc-400">
             Employee
             <select
               value={userId}
               onChange={(e) => setUserId(e.target.value)}
-              className={`${inputClassName} min-w-48`}
+              className={`${ADMIN_INPUT} min-w-48`}
             >
               <option value="">All employees</option>
               {departmentUsers.map((user) => (
@@ -195,12 +201,12 @@ export default function AttendanceGrid({ readOnly = false }) {
               ))}
             </select>
           </label>
-          <label className="flex flex-col gap-1 text-xs font-medium text-ink-muted">
+          <label className="flex flex-col gap-1 text-xs font-medium text-zinc-400">
             Status
             <select
               value={status}
               onChange={(e) => setStatus(e.target.value)}
-              className={`${inputClassName} min-w-40`}
+              className={`${ADMIN_INPUT} min-w-40`}
             >
               {STATUS_OPTIONS.map((option) => (
                 <option key={option.value || 'all'} value={option.value}>
@@ -211,11 +217,7 @@ export default function AttendanceGrid({ readOnly = false }) {
           </label>
         </div>
 
-        <a
-          href={exportGridUrl(filters)}
-          download="attendance-export.csv"
-          className="inline-flex items-center rounded-xl bg-flash-secondary px-4 py-2 font-display text-sm font-semibold text-obsidian transition hover:bg-flash-primary"
-        >
+        <a href={exportGridUrl(filters)} download="attendance-export.csv" className={ADMIN_BTN_PRIMARY}>
           Export CSV
         </a>
       </div>
@@ -227,29 +229,29 @@ export default function AttendanceGrid({ readOnly = false }) {
       ) : null}
 
       {isLoading ? (
-        <p className="py-8 text-center text-sm text-ink-muted">Loading…</p>
+        <p className="py-8 text-center text-sm text-zinc-400">Loading…</p>
       ) : isError ? (
         <p className="py-8 text-center text-sm text-red-400">
           {error?.response?.data?.message || 'Failed to load attendance grid.'}
         </p>
       ) : records.length === 0 ? (
-        <p className="py-8 text-center text-sm text-ink-muted">
+        <p className="py-8 text-center text-sm text-zinc-400">
           No attendance records match these filters.
         </p>
       ) : (
-        <div className="overflow-x-auto">
-          <table className="min-w-full text-left text-sm text-ink">
-            <thead className="border-b border-obsidian-border text-ink-muted">
+        <div className={ADMIN_TABLE_WRAP}>
+          <table className="min-w-full text-left text-sm text-white">
+            <thead className={ADMIN_THEAD}>
               <tr>
-                <th className="px-3 py-2 font-medium">Employee</th>
-                <th className="px-3 py-2 font-medium">Role</th>
-                <th className="px-3 py-2 font-medium">Shift Date</th>
-                <th className="px-3 py-2 font-medium">Check-In</th>
-                <th className="px-3 py-2 font-medium">Check-Out</th>
-                <th className="px-3 py-2 font-medium">Worked Duration</th>
-                <th className="px-3 py-2 font-medium">Status</th>
+                <th className="px-3 py-3 font-medium">Employee</th>
+                <th className="px-3 py-3 font-medium">Role</th>
+                <th className="px-3 py-3 font-medium">Shift Date</th>
+                <th className="px-3 py-3 font-medium">Check-In</th>
+                <th className="px-3 py-3 font-medium">Check-Out</th>
+                <th className="px-3 py-3 font-medium">Worked Duration</th>
+                <th className="px-3 py-3 font-medium">Status</th>
                 {!readOnly ? (
-                  <th className="px-3 py-2 font-medium">Actions</th>
+                  <th className="px-3 py-3 font-medium">Actions</th>
                 ) : null}
               </tr>
             </thead>
@@ -262,35 +264,34 @@ export default function AttendanceGrid({ readOnly = false }) {
                   forceAbsentMutation.variables?.id === row._id;
 
                 return (
-                  <tr
-                    key={row._id}
-                    className="border-b border-obsidian-border/60 last:border-0 align-top"
-                  >
-                    <td className="px-3 py-2.5 whitespace-nowrap">
+                  <tr key={row._id} className={`${ADMIN_ROW} align-top`}>
+                    <td className="px-3 py-3 whitespace-nowrap">
                       {row.user?.fullName || '—'}
                     </td>
-                    <td className="px-3 py-2.5 whitespace-nowrap">
-                      {ROLE_LABELS[row.user?.role] || row.user?.role || '—'}
+                    <td className="px-3 py-3 whitespace-nowrap">
+                      <span className={ROLE_PILL}>
+                        {ROLE_LABELS[row.user?.role] || row.user?.role || '—'}
+                      </span>
                     </td>
-                    <td className="px-3 py-2.5 whitespace-nowrap">
+                    <td className="px-3 py-3 whitespace-nowrap text-zinc-300">
                       {row.shiftDate}
                     </td>
-                    <td className="px-3 py-2.5 whitespace-nowrap">
+                    <td className="px-3 py-3 whitespace-nowrap text-zinc-400">
                       {formatDateTime(row.checkInTime)}
                     </td>
-                    <td className="px-3 py-2.5 whitespace-nowrap">
+                    <td className="px-3 py-3 whitespace-nowrap text-zinc-400">
                       {formatDateTime(row.checkOutTime)}
                     </td>
-                    <td className="px-3 py-2.5 whitespace-nowrap">
+                    <td className="px-3 py-3 whitespace-nowrap text-zinc-300">
                       {formatWorkedDuration(row.workedMinutes)}
                     </td>
-                    <td className="px-3 py-2.5">
+                    <td className="px-3 py-3">
                       <StatusBadge status={row.status} />
                     </td>
                     {!readOnly ? (
-                      <td className="px-3 py-2.5">
+                      <td className="px-3 py-3">
                         {!canForce ? (
-                          <span className="text-xs text-ink-muted">—</span>
+                          <span className="text-xs text-zinc-500">—</span>
                         ) : prompting ? (
                           <div className="flex min-w-52 flex-col gap-2">
                             <input
@@ -299,7 +300,7 @@ export default function AttendanceGrid({ readOnly = false }) {
                               onChange={(e) => setForceReason(e.target.value)}
                               placeholder="Reason (optional)"
                               maxLength={300}
-                              className={inputClassName}
+                              className={ADMIN_INPUT}
                             />
                             <div className="flex flex-wrap gap-2">
                               <button
@@ -311,7 +312,7 @@ export default function AttendanceGrid({ readOnly = false }) {
                                     reason: forceReason.trim() || undefined,
                                   })
                                 }
-                                className="rounded-lg bg-red-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-600 disabled:opacity-60"
+                                className="rounded-xl bg-red-700 px-3 py-1.5 text-xs font-semibold text-white shadow-lg shadow-red-950/40 transition hover:brightness-110 disabled:opacity-60"
                               >
                                 {busy ? 'Saving…' : 'Confirm Absent'}
                               </button>
@@ -322,7 +323,7 @@ export default function AttendanceGrid({ readOnly = false }) {
                                   setForceTargetId(null);
                                   setForceReason('');
                                 }}
-                                className="rounded-lg border border-obsidian-border px-3 py-1.5 text-xs font-semibold text-ink hover:border-flash-secondary"
+                                className={ADMIN_BTN_GHOST}
                               >
                                 Cancel
                               </button>
@@ -336,7 +337,7 @@ export default function AttendanceGrid({ readOnly = false }) {
                               setForceTargetId(row._id);
                               setForceReason('');
                             }}
-                            className="rounded-lg border border-red-500/40 px-3 py-1.5 text-xs font-semibold text-red-300 hover:bg-red-500/10"
+                            className="rounded-xl border border-red-500/40 px-3 py-1.5 text-xs font-semibold text-red-300 transition hover:bg-red-500/10"
                           >
                             Force Absent
                           </button>

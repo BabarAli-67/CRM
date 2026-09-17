@@ -4,6 +4,13 @@ import {
   approveAttendance,
   getLateQueue,
 } from '../services/attendance.service.js';
+import {
+  ADMIN_BTN_PRIMARY,
+  ADMIN_CARD,
+  ADMIN_ROW,
+  ADMIN_TABLE_WRAP,
+  ADMIN_THEAD,
+} from './adminBrand.js';
 
 const formatSubmittedAt = (value) => {
   if (!value) return '—';
@@ -58,7 +65,7 @@ export default function LateRequestsQueue({ readOnly = false }) {
   });
 
   return (
-    <div className="space-y-4 rounded-card border border-obsidian-border bg-obsidian-surface p-4 sm:p-6">
+    <div className="space-y-4">
       {actionError ? (
         <p className="rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-300">
           {actionError}
@@ -71,25 +78,27 @@ export default function LateRequestsQueue({ readOnly = false }) {
       ) : null}
 
       {isLoading ? (
-        <p className="py-8 text-center text-sm text-ink-muted">Loading…</p>
+        <div className={`${ADMIN_CARD} py-8 text-center text-sm text-zinc-400`}>
+          Loading…
+        </div>
       ) : isError ? (
         <p className="py-8 text-center text-sm text-red-400">
           {error?.response?.data?.message || 'Failed to load late requests.'}
         </p>
       ) : requests.length === 0 ? (
-        <p className="py-8 text-center text-sm text-ink-muted">
+        <div className={`${ADMIN_CARD} py-8 text-center text-sm text-zinc-400`}>
           No pending late attendance requests.
-        </p>
+        </div>
       ) : (
-        <div className="overflow-x-auto">
-          <table className="min-w-full text-left text-sm text-ink">
-            <thead className="border-b border-obsidian-border text-ink-muted">
+        <div className={ADMIN_TABLE_WRAP}>
+          <table className="min-w-full text-left text-sm text-white">
+            <thead className={ADMIN_THEAD}>
               <tr>
-                <th className="px-3 py-2 font-medium">Employee</th>
-                <th className="px-3 py-2 font-medium">Submitted At</th>
-                <th className="px-3 py-2 font-medium">Reason Note</th>
+                <th className="px-3 py-3 font-medium">Employee</th>
+                <th className="px-3 py-3 font-medium">Submitted At</th>
+                <th className="px-3 py-3 font-medium">Reason Note</th>
                 {!readOnly ? (
-                  <th className="px-3 py-2 font-medium">Actions</th>
+                  <th className="px-3 py-3 font-medium">Actions</th>
                 ) : null}
               </tr>
             </thead>
@@ -100,28 +109,25 @@ export default function LateRequestsQueue({ readOnly = false }) {
                   approveMutation.variables?.id === request._id;
 
                 return (
-                  <tr
-                    key={request._id}
-                    className="border-b border-obsidian-border/60 last:border-0 align-top"
-                  >
-                    <td className="px-3 py-2.5 whitespace-nowrap">
-                      <div className="font-medium">
+                  <tr key={request._id} className={`${ADMIN_ROW} align-top`}>
+                    <td className="px-3 py-3 whitespace-nowrap">
+                      <div className="font-medium text-white">
                         {request.user?.fullName || '—'}
                       </div>
-                      <div className="text-xs text-ink-muted">
+                      <div className="text-xs text-zinc-500">
                         {request.user?.email || ''}
                       </div>
                     </td>
-                    <td className="px-3 py-2.5 whitespace-nowrap">
+                    <td className="px-3 py-3 whitespace-nowrap text-zinc-400">
                       {formatSubmittedAt(request.lateRequestedAt)}
                     </td>
-                    <td className="px-3 py-2.5 max-w-md">
-                      <p className="whitespace-pre-wrap break-words text-ink">
+                    <td className="px-3 py-3 max-w-md">
+                      <p className="whitespace-pre-wrap break-words text-zinc-300">
                         {request.lateReason || '—'}
                       </p>
                     </td>
                     {!readOnly ? (
-                      <td className="px-3 py-2.5">
+                      <td className="px-3 py-3">
                         <div className="flex flex-wrap gap-2">
                           <button
                             type="button"
@@ -132,7 +138,7 @@ export default function LateRequestsQueue({ readOnly = false }) {
                                 decision: 'present',
                               })
                             }
-                            className="rounded-lg bg-emerald-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-600 disabled:opacity-60"
+                            className={ADMIN_BTN_PRIMARY}
                           >
                             Approve &amp; Mark Present
                           </button>
@@ -145,7 +151,7 @@ export default function LateRequestsQueue({ readOnly = false }) {
                                 decision: 'late',
                               })
                             }
-                            className="rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-500 disabled:opacity-60"
+                            className="inline-flex items-center justify-center rounded-xl bg-amber-600 px-4 py-2 font-display text-sm font-semibold text-white shadow-lg shadow-amber-950/30 transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
                           >
                             Approve &amp; Mark Late
                           </button>

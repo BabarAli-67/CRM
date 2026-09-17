@@ -6,6 +6,15 @@ import {
   rejectUser,
   resetUserPassword,
 } from '../services/admin.service.js';
+import {
+  ADMIN_BTN_GHOST,
+  ADMIN_BTN_PRIMARY,
+  ADMIN_CARD,
+  ADMIN_INPUT,
+  ADMIN_ROW,
+  ADMIN_TABLE_WRAP,
+  ADMIN_THEAD,
+} from './adminBrand.js';
 
 const ROLE_OPTIONS = [
   { value: 'admin', label: 'Admin (Auditor)' },
@@ -94,9 +103,9 @@ export default function UserAccessManagement({ readOnly = false }) {
 
   if (isLoading) {
     return (
-      <div className="flex min-h-48 items-center justify-center rounded-card border border-obsidian-border bg-obsidian-surface">
+      <div className={`flex min-h-48 items-center justify-center ${ADMIN_CARD}`}>
         <div
-          className="h-8 w-8 animate-spin rounded-full border-2 border-flash-secondary border-t-transparent"
+          className="h-8 w-8 animate-spin rounded-full border-2 border-[#FF4B26] border-t-transparent"
           role="status"
           aria-label="Loading pending users"
         />
@@ -108,7 +117,7 @@ export default function UserAccessManagement({ readOnly = false }) {
     return (
       <div
         role="alert"
-        className="rounded-card border border-flash-primary/40 bg-flash-primary/10 px-4 py-3 text-sm text-flash-secondary"
+        className="rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300"
       >
         {error?.response?.data?.message || 'Failed to load pending users.'}
       </div>
@@ -120,7 +129,7 @@ export default function UserAccessManagement({ readOnly = false }) {
       {actionError ? (
         <div
           role="alert"
-          className="rounded-xl border border-flash-primary/40 bg-flash-primary/10 px-4 py-3 text-sm text-flash-secondary"
+          className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300"
         >
           {actionError}
         </div>
@@ -129,20 +138,20 @@ export default function UserAccessManagement({ readOnly = false }) {
       {actionSuccess ? (
         <div
           role="status"
-          className="rounded-xl border border-flash-tertiary/40 bg-flash-tertiary/10 px-4 py-3 text-sm text-ink"
+          className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-300"
         >
           {actionSuccess}
         </div>
       ) : null}
 
       {users.length === 0 ? (
-        <div className="rounded-card border border-obsidian-border bg-obsidian-surface px-6 py-12 text-center text-ink-muted">
+        <div className={`${ADMIN_CARD} px-6 py-12 text-center text-zinc-400`}>
           No pending requests
         </div>
       ) : (
-        <div className="overflow-x-auto rounded-card border border-obsidian-border bg-obsidian-surface">
+        <div className={ADMIN_TABLE_WRAP}>
           <table className="min-w-full text-left text-sm">
-            <thead className="border-b border-obsidian-border bg-obsidian-elevated font-display text-ink-muted">
+            <thead className={ADMIN_THEAD}>
               <tr>
                 <th className="px-4 py-3 font-medium">Full Name</th>
                 <th className="px-4 py-3 font-medium">Email</th>
@@ -158,16 +167,18 @@ export default function UserAccessManagement({ readOnly = false }) {
                 const isResetting = resetTargetId === user._id;
 
                 return (
-                  <tr key={user._id} className="border-b border-obsidian-border last:border-b-0">
-                    <td className="px-4 py-4 text-ink">{user.fullName}</td>
-                    <td className="px-4 py-4 text-ink-muted">{user.email}</td>
-                    <td className="px-4 py-4 text-ink-muted">{user.phone}</td>
-                    <td className="px-4 py-4 text-ink-muted">
+                  <tr key={user._id} className={ADMIN_ROW}>
+                    <td className="px-4 py-4 text-white">{user.fullName}</td>
+                    <td className="px-4 py-4 text-zinc-400">{user.email}</td>
+                    <td className="px-4 py-4 text-zinc-400">{user.phone}</td>
+                    <td className="px-4 py-4 text-zinc-400">
                       {formatRequestedAt(user.createdAt)}
                     </td>
                     <td className="px-4 py-4">
                       {readOnly ? (
-                        <span className="text-ink">{formatRoleLabel(user.role)}</span>
+                        <span className="inline-flex rounded-full border border-white/10 bg-white/[0.04] px-2.5 py-0.5 text-xs text-zinc-200">
+                          {formatRoleLabel(user.role)}
+                        </span>
                       ) : (
                         <select
                           value={selectedRole}
@@ -177,7 +188,7 @@ export default function UserAccessManagement({ readOnly = false }) {
                               [user._id]: event.target.value,
                             }))
                           }
-                          className="min-w-44 rounded-xl border border-obsidian-border bg-obsidian-elevated px-3 py-2 text-ink outline-none focus:border-flash-secondary focus:ring-2 focus:ring-flash-secondary/30"
+                          className={`min-w-44 ${ADMIN_INPUT}`}
                         >
                           <option value="">Select role</option>
                           {ROLE_OPTIONS.map((option) => (
@@ -189,8 +200,8 @@ export default function UserAccessManagement({ readOnly = false }) {
                       )}
                     </td>
                     {!readOnly ? (
-                    <td className="px-4 py-4">
-                      <div className="flex min-w-72 flex-col gap-2">
+                      <td className="px-4 py-4">
+                        <div className="flex min-w-72 flex-col gap-2">
                           <div className="flex flex-wrap gap-2">
                             <button
                               type="button"
@@ -201,7 +212,7 @@ export default function UserAccessManagement({ readOnly = false }) {
                                   role: selectedRole,
                                 })
                               }
-                              className="rounded-xl bg-flash-tertiary px-3 py-2 font-display text-xs font-semibold text-obsidian transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+                              className={ADMIN_BTN_PRIMARY}
                             >
                               Approve & Activate
                             </button>
@@ -209,7 +220,7 @@ export default function UserAccessManagement({ readOnly = false }) {
                               type="button"
                               disabled={isMutating}
                               onClick={() => rejectMutation.mutate(user._id)}
-                              className="rounded-xl border border-flash-primary/50 px-3 py-2 font-display text-xs font-semibold text-flash-secondary transition hover:bg-flash-primary/10 disabled:cursor-not-allowed disabled:opacity-50"
+                              className={ADMIN_BTN_GHOST}
                             >
                               Reject
                             </button>
@@ -222,7 +233,7 @@ export default function UserAccessManagement({ readOnly = false }) {
                                 setActionError('');
                                 setActionSuccess('');
                               }}
-                              className="rounded-xl border border-obsidian-border px-3 py-2 font-display text-xs font-semibold text-ink transition hover:border-flash-secondary hover:text-flash-secondary disabled:cursor-not-allowed disabled:opacity-50"
+                              className={ADMIN_BTN_GHOST}
                             >
                               Reset Password
                             </button>
@@ -236,7 +247,7 @@ export default function UserAccessManagement({ readOnly = false }) {
                                 value={resetPassword}
                                 onChange={(event) => setResetPassword(event.target.value)}
                                 placeholder="New password (min 8)"
-                                className="min-w-48 flex-1 rounded-xl border border-obsidian-border bg-obsidian-elevated px-3 py-2 text-ink outline-none placeholder:text-ink-soft focus:border-flash-secondary focus:ring-2 focus:ring-flash-secondary/30"
+                                className={`min-w-48 flex-1 ${ADMIN_INPUT}`}
                               />
                               <button
                                 type="button"
@@ -247,7 +258,7 @@ export default function UserAccessManagement({ readOnly = false }) {
                                     newPassword: resetPassword,
                                   })
                                 }
-                                className="rounded-xl bg-flash-secondary px-3 py-2 font-display text-xs font-semibold text-obsidian transition hover:bg-flash-primary disabled:cursor-not-allowed disabled:opacity-50"
+                                className={ADMIN_BTN_PRIMARY}
                               >
                                 Confirm
                               </button>
@@ -258,14 +269,14 @@ export default function UserAccessManagement({ readOnly = false }) {
                                   setResetTargetId(null);
                                   setResetPassword('');
                                 }}
-                                className="rounded-xl px-3 py-2 font-display text-xs font-semibold text-ink-muted transition hover:text-ink"
+                                className="rounded-xl px-3 py-2 font-display text-xs font-semibold text-zinc-500 transition hover:text-white"
                               >
                                 Cancel
                               </button>
                             </div>
                           ) : null}
                         </div>
-                    </td>
+                      </td>
                     ) : null}
                   </tr>
                 );
