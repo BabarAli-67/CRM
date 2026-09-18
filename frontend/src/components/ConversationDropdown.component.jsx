@@ -106,11 +106,11 @@ export default function ConversationDropdown({ onClose }) {
 
   return (
     <div
-      className="absolute right-0 z-50 mt-2 w-[22rem] max-w-[calc(100vw-2rem)] overflow-hidden rounded-2xl border border-zinc-800/80 bg-zinc-950 shadow-2xl"
+      className="absolute right-0 z-50 mt-2 flex max-h-[480px] w-[22rem] max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-2xl border border-zinc-800/80 bg-zinc-950 shadow-2xl"
       role="dialog"
       aria-label="Messenger"
     >
-      <div className="flex items-center justify-between border-b border-zinc-800 px-4 py-3">
+      <div className="flex shrink-0 items-center justify-between border-b border-zinc-800 px-4 py-3">
         <p className="font-display text-sm font-semibold text-white">Messenger</p>
         <button
           type="button"
@@ -122,60 +122,13 @@ export default function ConversationDropdown({ onClose }) {
       </div>
 
       {actionError ? (
-        <p className="border-b border-zinc-800 px-4 py-2 text-xs text-red-400">
+        <p className="shrink-0 border-b border-zinc-800 px-4 py-2 text-xs text-red-400">
           {actionError}
         </p>
       ) : null}
 
-      <div className="max-h-[28rem] overflow-y-auto">
+      <div className="min-h-0 flex-1 overflow-y-auto scrollbar-thin scrollbar-thumb-zinc-800 scrollbar-track-transparent">
         <section className="border-b border-zinc-800/80">
-          <h3 className="px-4 pt-3 pb-1 text-[11px] font-semibold uppercase tracking-wider text-zinc-500">
-            Contacts
-          </h3>
-          {contactsLoading ? (
-            <p className="px-4 py-3 text-sm text-zinc-500">Loading…</p>
-          ) : contacts.length === 0 ? (
-            <p className="px-4 py-3 text-sm text-zinc-500">No contacts yet.</p>
-          ) : (
-            <ul>
-              {contacts.map((contact) => {
-                const online = onlineIds.has(String(contact._id));
-                return (
-                  <li key={contact._id}>
-                    <button
-                      type="button"
-                      disabled={openMutation.isPending}
-                      onClick={() => {
-                        setActionError('');
-                        openMutation.mutate(contact._id);
-                      }}
-                      className="flex w-full cursor-pointer items-center gap-3 px-4 py-2.5 text-left transition hover:bg-zinc-800/50 disabled:opacity-60"
-                    >
-                      <span
-                        className={`h-2.5 w-2.5 shrink-0 rounded-full ${
-                          online
-                            ? 'bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.7)]'
-                            : 'bg-zinc-600'
-                        }`}
-                        title={online ? 'Online' : 'Offline'}
-                      />
-                      <span className="min-w-0 flex-1">
-                        <span className="block truncate text-sm font-medium text-zinc-100">
-                          {contact.fullName}
-                        </span>
-                        <span className="block truncate text-xs text-zinc-500">
-                          {ROLE_LABEL[contact.role] || contact.role}
-                        </span>
-                      </span>
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-        </section>
-
-        <section>
           <h3 className="px-4 pt-3 pb-1 text-[11px] font-semibold uppercase tracking-wider text-zinc-500">
             Recent Conversations
           </h3>
@@ -214,6 +167,53 @@ export default function ConversationDropdown({ onClose }) {
                               {unread > 99 ? '99+' : unread}
                             </span>
                           ) : null}
+                        </span>
+                      </span>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </section>
+
+        <section>
+          <h3 className="px-4 pt-3 pb-1 text-[11px] font-semibold uppercase tracking-wider text-zinc-500">
+            All Contacts
+          </h3>
+          {contactsLoading ? (
+            <p className="px-4 py-3 text-sm text-zinc-500">Loading…</p>
+          ) : contacts.length === 0 ? (
+            <p className="px-4 py-3 text-sm text-zinc-500">No contacts yet.</p>
+          ) : (
+            <ul>
+              {contacts.map((contact) => {
+                const online = onlineIds.has(String(contact._id));
+                return (
+                  <li key={contact._id}>
+                    <button
+                      type="button"
+                      disabled={openMutation.isPending}
+                      onClick={() => {
+                        setActionError('');
+                        openMutation.mutate(contact._id);
+                      }}
+                      className="flex w-full cursor-pointer items-center gap-3 px-4 py-2.5 text-left transition hover:bg-zinc-800/50 disabled:opacity-60"
+                    >
+                      <span
+                        className={`h-2.5 w-2.5 shrink-0 rounded-full ${
+                          online
+                            ? 'bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.7)]'
+                            : 'bg-zinc-600'
+                        }`}
+                        title={online ? 'Online' : 'Offline'}
+                      />
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-sm font-medium text-zinc-100">
+                          {contact.fullName}
+                        </span>
+                        <span className="block truncate text-xs text-zinc-500">
+                          {ROLE_LABEL[contact.role] || contact.role}
                         </span>
                       </span>
                     </button>
