@@ -17,12 +17,12 @@ const ROLE_LABELS = {
 };
 
 const PULSE_BADGE = {
-  present: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20',
-  late: 'bg-amber-500/10 text-amber-400 border-amber-500/20',
-  checked_in: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20',
-  auto_absent: 'bg-red-500/10 text-red-400 border-red-500/20',
+  on_duty: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20',
+  checked_out: 'bg-sky-500/10 text-sky-400 border-sky-500/20',
+  pending_approval:
+    'bg-transparent text-amber-400 border-amber-500/40 border-dashed',
+  off_duty: 'bg-slate-500/10 text-slate-400 border-slate-500/20',
   absent: 'bg-red-500/10 text-red-400 border-red-500/20',
-  pending_approval: 'bg-amber-500/10 text-amber-400 border-amber-500/20',
   weekend_off: 'bg-zinc-500/10 text-zinc-400 border-zinc-500/20',
   unknown: 'bg-zinc-500/10 text-zinc-400 border-zinc-500/20',
 };
@@ -58,46 +58,59 @@ const formatWorkedDuration = (workedMinutes) => {
   return `${hours}h ${minutes}m`;
 };
 
-function derivePulse(attendance) {
+/**
+ * Display-only pulse for the KPI badge.
+ * Prefer check-in / check-out timestamps over lingering DB status
+ * (status can stay `present` until the noon shift-date rollover).
+ * Shift window bounds come from the attendance record (admin settings).
+ */
+function derivePulse(attendance, nowMs = Date.now()) {
   if (!attendance) {
     return { key: 'unknown', label: '—' };
   }
 
   if (attendance.status === 'weekend_off') {
-    return { key: 'weekend_off', label: 'Weekend off' };
+    return { key: 'weekend_off', label: 'Weekend Off' };
   }
 
-  if (attendance.status === 'auto_absent') {
-    return { key: 'auto_absent', label: 'Auto Absent' };
+  // Checked out always wins — never show Present after checkout
+  if (attendance.checkOutTime) {
+    return { key: 'checked_out', label: 'Checked Out' };
+  }
+
+  if (attendance.status === 'pending_approval') {
+    return { key: 'pending_approval', label: 'Approval Pending' };
+  }
+
+  // Actively on shift
+  if (attendance.checkInTime && !attendance.checkOutTime) {
+    return { key: 'on_duty', label: 'On Duty' };
   }
 
   if (attendance.status === 'absent') {
     return { key: 'absent', label: 'Absent' };
   }
 
-  if (attendance.status === 'pending_approval') {
-    return { key: 'pending_approval', label: 'Pending approval' };
+  const startMs = attendance.shiftStartAt
+    ? new Date(attendance.shiftStartAt).getTime()
+    : null;
+  const endSource = attendance.extendedUntil || attendance.shiftEndAt;
+  const endMs = endSource ? new Date(endSource).getTime() : null;
+
+  // Outside the active window (before start or after end) → Off Duty
+  if (
+    (startMs != null && !Number.isNaN(startMs) && nowMs < startMs) ||
+    (endMs != null && !Number.isNaN(endMs) && nowMs > endMs)
+  ) {
+    return { key: 'off_duty', label: 'Off Duty' };
   }
 
-  if (attendance.checkInTime && !attendance.checkOutTime) {
-    return {
-      key: 'checked_in',
-      label: attendance.status === 'late' ? 'Checked-in (late)' : 'Checked-in',
-    };
+  // Inside the window, never checked in
+  if (attendance.status === 'auto_absent') {
+    return { key: 'absent', label: 'Absent' };
   }
 
-  if (attendance.status === 'late') {
-    return { key: 'late', label: 'Late' };
-  }
-
-  if (attendance.status === 'present') {
-    return { key: 'present', label: 'Present' };
-  }
-
-  return {
-    key: 'unknown',
-    label: attendance.status || '—',
-  };
+  return { key: 'off_duty', label: 'Off Duty' };
 }
 
 function DepartmentKpiStrip({ role }) {
@@ -128,7 +141,10 @@ function DepartmentKpiStrip({ role }) {
     enabled: !showClosedCount && Boolean(month),
   });
 
-  const pulse = derivePulse(todayData?.attendance);
+  const nowMs = todayData?.serverTime
+    ? new Date(todayData.serverTime).getTime()
+    : Date.now();
+  const pulse = derivePulse(todayData?.attendance, nowMs);
   const pulseClasses = PULSE_BADGE[pulse.key] || PULSE_BADGE.unknown;
 
   const startLabel = formatShiftClock(shiftData?.settings?.startTime || '19:00');
