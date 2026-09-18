@@ -7,7 +7,7 @@ export default function LeadCreatePage() {
 
   return (
     <SalesAgentShell title="New Lead">
-      <div className="rounded-xl border border-white/10 bg-white/[0.03] p-5">
+      <div className="bg-zinc-900/50 border border-zinc-800/80 rounded-2xl p-6 shadow-xl">
         <LeadForm
           title="Create Lead"
           onCancel={() => navigate('/dashboard/sales-agent')}

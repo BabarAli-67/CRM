@@ -3,13 +3,12 @@ import { useQuery } from '@tanstack/react-query';
 import { getHistory } from '../services/attendance.service.js';
 
 const STATUS_BADGE = {
-  present: 'bg-emerald-100 text-emerald-800 ring-emerald-200',
-  late: 'bg-amber-100 text-amber-900 ring-amber-200',
-  pending_approval:
-    'bg-transparent text-amber-800 ring-2 ring-amber-400 ring-inset',
-  absent: 'bg-red-100 text-red-800 ring-red-200',
-  auto_absent: 'bg-red-100 text-red-800 ring-red-200',
-  weekend_off: 'bg-slate-200 text-slate-700 ring-slate-300',
+  present: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20',
+  late: 'bg-amber-500/10 text-amber-400 border-amber-500/20',
+  pending_approval: 'bg-amber-500/10 text-amber-400 border-amber-500/30',
+  absent: 'bg-red-500/10 text-red-400 border-red-500/20',
+  auto_absent: 'bg-red-500/10 text-red-400 border-red-500/20',
+  weekend_off: 'bg-zinc-500/10 text-zinc-400 border-zinc-500/20',
 };
 
 const STATUS_LABEL = {
@@ -47,12 +46,13 @@ const formatDateTime = (value) => {
 };
 
 const StatusBadge = ({ status }) => {
-  const classes = STATUS_BADGE[status] || 'bg-slate-100 text-slate-700 ring-slate-200';
+  const classes =
+    STATUS_BADGE[status] || 'bg-zinc-500/10 text-zinc-400 border-zinc-500/20';
   const label = STATUS_LABEL[status] || status;
 
   return (
     <span
-      className={`inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium ring-1 ring-inset ${classes}`}
+      className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold ${classes}`}
     >
       {label}
     </span>
@@ -82,68 +82,66 @@ export default function AttendanceHistory() {
   );
 
   return (
-    <section className="w-full max-w-5xl rounded-xl border border-white/10 bg-white/5 p-4 sm:p-6">
-      <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
+    <section className="w-full bg-zinc-900/50 border border-zinc-800/80 rounded-2xl p-6 shadow-xl">
+      <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h2 className="font-display text-xl font-semibold text-ink">
+          <h2 className="font-display text-xl font-semibold text-white">
             Attendance
           </h2>
-          <p className="mt-1 text-sm text-ink/70">
+          <p className="mt-1 text-sm text-zinc-400">
             Your shift history for the selected month
           </p>
         </div>
-        <label className="flex flex-col gap-1 text-sm text-ink/80">
+        <label className="flex flex-col gap-1 text-sm text-zinc-400">
           <span>Month</span>
           <input
             type="month"
             value={month}
             onChange={(e) => setMonth(e.target.value)}
-            className="rounded-md border border-white/15 bg-obsidian px-3 py-2 text-ink outline-none focus:border-flash-secondary"
+            className="rounded-lg border border-zinc-700/80 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 outline-none transition focus:border-orange-500/50 focus:ring-2 focus:ring-orange-500/20"
           />
         </label>
       </div>
 
       {isLoading ? (
-        <p className="py-8 text-center text-sm text-ink/60">Loading…</p>
+        <p className="py-8 text-center text-sm text-zinc-500">Loading…</p>
       ) : isError ? (
-        <p className="py-8 text-center text-sm text-red-300">
+        <p className="py-8 text-center text-sm text-red-400">
           {error?.response?.data?.message || 'Failed to load attendance history.'}
         </p>
       ) : sortedRecords.length === 0 ? (
-        <p className="py-8 text-center text-sm text-ink/60">
+        <p className="py-8 text-center text-sm text-zinc-500">
           No attendance records for this month yet.
         </p>
       ) : (
         <div className="overflow-x-auto">
-          <table className="min-w-full text-left text-sm text-ink">
-            <thead className="border-b border-white/10 text-ink/70">
+          <table className="min-w-full text-left text-sm text-zinc-200">
+            <thead className="border-b border-zinc-800 text-xs uppercase tracking-wide text-zinc-500">
               <tr>
-                <th className="px-3 py-2 font-medium">Shift Date</th>
-                <th className="px-3 py-2 font-medium">Check-In</th>
-                <th className="px-3 py-2 font-medium">Check-Out</th>
-                <th className="px-3 py-2 font-medium">Worked Duration</th>
-                <th className="px-3 py-2 font-medium">Status</th>
+                <th className="px-3 py-2.5 font-medium">Shift Date</th>
+                <th className="px-3 py-2.5 font-medium">Check-In</th>
+                <th className="px-3 py-2.5 font-medium">Check-Out</th>
+                <th className="px-3 py-2.5 font-medium">Worked Duration</th>
+                <th className="px-3 py-2.5 font-medium">Status</th>
               </tr>
             </thead>
             <tbody>
               {sortedRecords.map((row) => (
                 <tr
                   key={row._id}
-                  className="border-b border-white/5 last:border-0"
+                  className="border-b border-zinc-800/60 last:border-0 hover:bg-zinc-800/30 transition-colors"
                 >
-                  <td className="px-3 py-2.5 whitespace-nowrap">
-                    {row.shiftDate}
-                  </td>
-                  <td className="px-3 py-2.5 whitespace-nowrap">
+                  <td className="px-3 py-3 whitespace-nowrap">{row.shiftDate}</td>
+                  <td className="px-3 py-3 whitespace-nowrap">
                     {formatDateTime(row.checkInTime)}
                   </td>
-                  <td className="px-3 py-2.5 whitespace-nowrap">
+                  <td className="px-3 py-3 whitespace-nowrap">
                     {formatDateTime(row.checkOutTime)}
                   </td>
-                  <td className="px-3 py-2.5 whitespace-nowrap">
+                  <td className="px-3 py-3 whitespace-nowrap">
                     {formatWorkedDuration(row.workedMinutes)}
                   </td>
-                  <td className="px-3 py-2.5">
+                  <td className="px-3 py-3">
                     <StatusBadge status={row.status} />
                   </td>
                 </tr>

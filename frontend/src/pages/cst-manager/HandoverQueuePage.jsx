@@ -35,14 +35,14 @@ function paymentSummary(payment) {
 
 function ExternalLink({ href, label }) {
   if (!href) {
-    return <span className="text-ink/40">—</span>;
+    return <span className="text-zinc-600">—</span>;
   }
   return (
     <a
       href={href}
       target="_blank"
       rel="noreferrer"
-      className="text-flash-secondary hover:underline"
+      className="text-orange-400 hover:text-orange-300 hover:underline"
     >
       {label}
     </a>
@@ -72,77 +72,77 @@ export default function HandoverQueuePage() {
 
   return (
     <CstManagerShell title="Handover Queue">
-      <section className="w-full rounded-xl border border-white/10 bg-white/5 p-4 sm:p-6">
+      <section className="w-full bg-zinc-900/50 border border-zinc-800/80 rounded-2xl p-6 shadow-xl">
         <div className="mb-4">
-          <h2 className="font-display text-xl font-semibold text-ink">
+          <h2 className="font-display text-xl font-semibold text-white">
             Pending review
           </h2>
-          <p className="mt-1 text-sm text-ink/70">
+          <p className="mt-1 text-sm text-zinc-400">
             Closed sales awaiting tech assignment · payment token never shown
           </p>
         </div>
 
         {message ? (
-          <p className="mb-3 text-sm text-emerald-300">{message}</p>
+          <p className="mb-3 text-sm text-emerald-400">{message}</p>
         ) : null}
 
         {isLoading ? (
-          <p className="py-8 text-center text-sm text-ink/60">Loading…</p>
+          <p className="py-8 text-center text-sm text-zinc-500">Loading…</p>
         ) : isError ? (
-          <p className="py-8 text-center text-sm text-red-300">
+          <p className="py-8 text-center text-sm text-red-400">
             {error?.response?.data?.message || 'Failed to load handover queue.'}
           </p>
         ) : rows.length === 0 ? (
-          <p className="py-10 text-center text-sm text-ink/60">
+          <p className="py-10 text-center text-sm text-zinc-500">
             No leads pending review.
           </p>
         ) : (
           <div className="overflow-x-auto">
-            <table className="min-w-full text-left text-sm text-ink">
-              <thead className="border-b border-white/10 text-ink/70">
+            <table className="min-w-full text-left text-sm text-zinc-200">
+              <thead className="border-b border-zinc-800 text-xs uppercase tracking-wide text-zinc-500">
                 <tr>
-                  <th className="px-3 py-2 font-medium">Business</th>
-                  <th className="px-3 py-2 font-medium">Technical links</th>
-                  <th className="px-3 py-2 font-medium">Payment</th>
-                  <th className="px-3 py-2 font-medium">Closed (PKT)</th>
-                  <th className="px-3 py-2 font-medium">Actions</th>
+                  <th className="px-3 py-2.5 font-medium">Business</th>
+                  <th className="px-3 py-2.5 font-medium">Technical links</th>
+                  <th className="px-3 py-2.5 font-medium">Payment</th>
+                  <th className="px-3 py-2.5 font-medium">Closed (PKT)</th>
+                  <th className="px-3 py-2.5 font-medium">Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {rows.map((row) => (
                   <tr
                     key={row._id}
-                    className="border-b border-white/5 last:border-0"
+                    className="border-b border-zinc-800/60 last:border-0 hover:bg-zinc-800/30 transition-colors"
                   >
-                    <td className="px-3 py-2.5 font-medium">
+                    <td className="px-3 py-3 font-medium">
                       {row.businessName}
                       {row.clientName ? (
-                        <span className="mt-0.5 block text-xs font-normal text-ink/55">
+                        <span className="mt-0.5 block text-xs font-normal text-zinc-500">
                           {row.clientName}
                         </span>
                       ) : null}
                     </td>
-                    <td className="px-3 py-2.5">
+                    <td className="px-3 py-3">
                       <div className="flex flex-wrap gap-x-3 gap-y-1">
                         <ExternalLink href={row.yelpLink} label="Yelp" />
                         <ExternalLink href={row.websiteLink} label="Website" />
                         <ExternalLink href={row.gmbLink} label="GMB" />
                       </div>
                     </td>
-                    <td className="px-3 py-2.5 max-w-[14rem] truncate text-ink/85">
+                    <td className="px-3 py-3 max-w-[14rem] truncate text-zinc-300">
                       {paymentSummary(row.payment)}
                     </td>
-                    <td className="px-3 py-2.5 whitespace-nowrap">
+                    <td className="px-3 py-3 whitespace-nowrap">
                       {formatPkt(row.closedAt)}
                     </td>
-                    <td className="px-3 py-2.5">
+                    <td className="px-3 py-3">
                       <button
                         type="button"
                         onClick={() => {
                           setMessage('');
                           setAssignTarget(row);
                         }}
-                        className="rounded-md bg-flash-primary px-2.5 py-1.5 text-xs font-semibold text-white hover:bg-flash-secondary"
+                        className="cursor-pointer rounded-full bg-orange-600 px-3 py-1.5 text-xs font-semibold text-white shadow-lg shadow-orange-600/20 hover:bg-orange-500"
                       >
                         Assign to Tech
                       </button>

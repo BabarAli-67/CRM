@@ -88,7 +88,7 @@ export default function AttendanceBanner() {
   }
 
   const errorLine = actionError ? (
-    <p className="mt-2 text-sm text-red-700">{actionError}</p>
+    <p className="mt-2 text-sm text-red-400">{actionError}</p>
   ) : null;
 
   if (
@@ -96,8 +96,8 @@ export default function AttendanceBanner() {
     !attendance.checkOutTime
   ) {
     return (
-      <div className="border-b border-emerald-200 bg-emerald-50 px-4 py-3 text-emerald-950">
-        <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-3">
+      <div className="border-b border-emerald-500/20 bg-emerald-500/10 px-4 py-3 text-emerald-100">
+        <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3 px-2 sm:px-4">
           <p className="text-sm font-medium">
             Checked in at {formatTime(attendance.checkInTime)}
             {attendance.status === 'late' ? ' (late)' : ''}
@@ -106,7 +106,7 @@ export default function AttendanceBanner() {
             type="button"
             onClick={() => checkOutMutation.mutate()}
             disabled={checkOutMutation.isPending}
-            className="rounded-md bg-emerald-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-800 disabled:opacity-60"
+            className="cursor-pointer rounded-full bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-emerald-500 disabled:opacity-60"
           >
             {checkOutMutation.isPending ? 'Checking out…' : 'Check Out'}
           </button>
@@ -121,14 +121,14 @@ export default function AttendanceBanner() {
     const withinWindow = now() < shiftStartAt;
 
     return (
-      <div className="border-b border-amber-200 bg-amber-50 px-4 py-4 text-amber-950">
-        <div className="mx-auto max-w-5xl">
+      <div className="border-b border-amber-500/20 bg-amber-500/10 px-4 py-4 text-amber-100">
+        <div className="mx-auto max-w-7xl px-2 sm:px-4">
           <p className="text-base font-semibold">
             {withinWindow
               ? 'Mark your attendance for today’s shift'
               : 'On-time check-in window has closed'}
           </p>
-          <p className="mt-1 text-sm text-amber-900/80">
+          <p className="mt-1 text-sm text-amber-200/80">
             Shift starts at {formatTime(attendance.shiftStartAt)}.
           </p>
 
@@ -137,7 +137,7 @@ export default function AttendanceBanner() {
               type="button"
               onClick={() => checkInMutation.mutate()}
               disabled={checkInMutation.isPending}
-              className="mt-3 rounded-md bg-amber-700 px-4 py-2 text-sm font-medium text-white hover:bg-amber-800 disabled:opacity-60"
+              className="mt-3 cursor-pointer rounded-full bg-amber-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-amber-500 disabled:opacity-60"
             >
               {checkInMutation.isPending ? 'Marking…' : 'Mark Attendance'}
             </button>
@@ -147,7 +147,7 @@ export default function AttendanceBanner() {
                 <button
                   type="button"
                   onClick={() => setShowLateForm(true)}
-                  className="rounded-md bg-amber-700 px-4 py-2 text-sm font-medium text-white hover:bg-amber-800"
+                  className="cursor-pointer rounded-full bg-amber-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-amber-500"
                 >
                   Request Attendance
                 </button>
@@ -155,7 +155,7 @@ export default function AttendanceBanner() {
                 <div className="max-w-lg space-y-2">
                   <label
                     htmlFor="late-reason"
-                    className="block text-sm font-medium"
+                    className="block text-sm font-medium text-amber-100"
                   >
                     Reason Note
                   </label>
@@ -165,7 +165,7 @@ export default function AttendanceBanner() {
                     value={lateReason}
                     onChange={(e) => setLateReason(e.target.value)}
                     placeholder="Explain why you are late (5–300 characters)"
-                    className="w-full rounded-md border border-amber-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500"
+                    className="w-full rounded-lg border border-amber-500/30 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-400/40"
                   />
                   <button
                     type="button"
@@ -173,7 +173,7 @@ export default function AttendanceBanner() {
                     disabled={
                       lateMutation.isPending || lateReason.trim().length < 5
                     }
-                    className="rounded-md bg-amber-700 px-4 py-2 text-sm font-medium text-white hover:bg-amber-800 disabled:opacity-60"
+                    className="cursor-pointer rounded-full bg-amber-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-amber-500 disabled:opacity-60"
                   >
                     {lateMutation.isPending ? 'Submitting…' : 'Submit Request'}
                   </button>
@@ -189,13 +189,13 @@ export default function AttendanceBanner() {
 
   if (attendance.status === 'pending_approval') {
     return (
-      <div className="border-b border-slate-200 bg-slate-100 px-4 py-3 text-slate-800">
-        <div className="mx-auto max-w-5xl">
+      <div className="border-b border-zinc-700/80 bg-zinc-900/80 px-4 py-3 text-zinc-200">
+        <div className="mx-auto max-w-7xl px-2 sm:px-4">
           <p className="text-sm font-medium">
             Your late attendance request is awaiting Super Admin review
           </p>
           {attendance.lateReason ? (
-            <p className="mt-1 text-sm text-slate-600">
+            <p className="mt-1 text-sm text-zinc-400">
               Reason: {attendance.lateReason}
             </p>
           ) : null}
@@ -206,13 +206,13 @@ export default function AttendanceBanner() {
 
   if (attendance.status === 'absent') {
     return (
-      <div className="border-b border-red-200 bg-red-50 px-4 py-3 text-red-900">
-        <div className="mx-auto max-w-5xl">
+      <div className="border-b border-red-500/20 bg-red-500/10 px-4 py-3 text-red-100">
+        <div className="mx-auto max-w-7xl px-2 sm:px-4">
           <p className="text-sm font-semibold">
             You have been marked absent for today
           </p>
           {attendance.forcedAbsentReason ? (
-            <p className="mt-1 text-sm text-red-800/80">
+            <p className="mt-1 text-sm text-red-200/80">
               Reason: {attendance.forcedAbsentReason}
             </p>
           ) : null}

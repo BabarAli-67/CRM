@@ -48,29 +48,28 @@ export const assignHandover = asyncHandler(async (req, res) => {
     throw new ApiError(400, 'techId must be an approved tech_team user');
   }
 
-  const lead = await Lead.findById(req.params.id);
+  const lead = await Lead.findOneAndUpdate(
+    {
+      _id: req.params.id,
+      stage: 'closed_sale',
+      'handover.cstStatus': 'pending_review',
+    },
+    {
+      $set: {
+        'handover.assignedTechId': tech._id,
+        'handover.cstStatus': 'assigned',
+        'handover.assignedAt': new Date(),
+      },
+    },
+    { returnDocument: 'after' }
+  );
 
   if (!lead) {
-    throw new ApiError(404, 'Lead not found');
+    throw new ApiError(
+      409,
+      'This lead has already been assigned to a Tech Team member.'
+    );
   }
-
-  if (lead.stage !== 'closed_sale') {
-    throw new ApiError(400, 'Only closed sales can be assigned for handover');
-  }
-
-  if (lead.handover?.cstStatus !== 'pending_review') {
-    throw new ApiError(400, 'Lead is not pending CST review');
-  }
-
-  lead.handover = {
-    cstStatus: 'assigned',
-    assignedTechId: tech._id,
-    assignedAt: new Date(),
-    completedAt: lead.handover?.completedAt || null,
-    overrideLog: lead.handover?.overrideLog || [],
-  };
-
-  await lead.save();
 
   res
     .status(200)

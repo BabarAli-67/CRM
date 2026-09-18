@@ -62,18 +62,18 @@ export default function LeadTable({
       ) : null}
 
       {rows.length === 0 ? (
-        <p className="py-10 text-center text-sm text-ink/60">{emptyMessage}</p>
+        <p className="py-10 text-center text-sm text-zinc-500">{emptyMessage}</p>
       ) : (
         <div className="overflow-x-auto">
-          <table className="min-w-full text-left text-sm text-ink">
-            <thead className="border-b border-white/10 text-ink/70">
+          <table className="min-w-full text-left text-sm text-zinc-200">
+            <thead className="border-b border-zinc-800 text-xs uppercase tracking-wide text-zinc-500">
               <tr>
-                <th className="px-3 py-2 font-medium">Business</th>
-                <th className="px-3 py-2 font-medium">Client</th>
-                <th className="px-3 py-2 font-medium">Phone</th>
-                <th className="px-3 py-2 font-medium">Follow-up (PKT)</th>
-                <th className="px-3 py-2 font-medium">Amount</th>
-                <th className="px-3 py-2 font-medium">Actions</th>
+                <th className="px-3 py-2.5 font-medium">Business</th>
+                <th className="px-3 py-2.5 font-medium">Client</th>
+                <th className="px-3 py-2.5 font-medium">Phone</th>
+                <th className="px-3 py-2.5 font-medium">Follow-up (PKT)</th>
+                <th className="px-3 py-2.5 font-medium">Amount</th>
+                <th className="px-3 py-2.5 font-medium">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -87,14 +87,14 @@ export default function LeadTable({
                     key={row._id}
                     data-reminder-row={`followup-${row._id}`}
                     className={[
-                      'border-b border-white/5 last:border-0 transition',
-                      overdue ? 'bg-flash-primary/10' : '',
+                      'border-b border-zinc-800/60 last:border-0 transition-colors hover:bg-zinc-800/30',
+                      overdue ? 'bg-orange-600/10' : '',
                     ].join(' ')}
                   >
                     <td className="px-3 py-2.5 font-medium">
                       {row.businessName}
                       {overdue ? (
-                        <span className="ml-2 inline-flex rounded-md bg-flash-primary/20 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-flash-secondary">
+                        <span className="ml-2 inline-flex rounded-full border border-orange-500/20 bg-orange-500/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-orange-400">
                           Follow-up overdue
                         </span>
                       ) : null}
@@ -116,7 +116,7 @@ export default function LeadTable({
                         {showEdit ? (
                           <Link
                             to={`/dashboard/sales-agent/leads/${row._id}/edit`}
-                            className="rounded-md border border-white/15 px-2.5 py-1.5 text-xs font-semibold text-ink/80 hover:bg-white/5"
+                            className="cursor-pointer rounded-full border border-zinc-700 px-2.5 py-1.5 text-xs font-semibold text-zinc-300 hover:bg-zinc-800/50"
                           >
                             Edit
                           </Link>
@@ -128,7 +128,7 @@ export default function LeadTable({
                             setActionMessage('');
                             setCloseTarget(row);
                           }}
-                          className="rounded-md bg-emerald-600/90 px-2.5 py-1.5 text-xs font-semibold text-white hover:bg-emerald-500"
+                          className="cursor-pointer rounded-full bg-emerald-600/90 px-2.5 py-1.5 text-xs font-semibold text-white hover:bg-emerald-500"
                         >
                           Move to Closed Sale
                         </button>
@@ -139,7 +139,7 @@ export default function LeadTable({
                             setActionMessage('');
                             setDisqualifyTarget(row);
                           }}
-                          className="rounded-md border border-red-400/40 px-2.5 py-1.5 text-xs font-semibold text-red-200 hover:bg-red-500/10"
+                          className="cursor-pointer rounded-full border border-red-500/30 px-2.5 py-1.5 text-xs font-semibold text-red-400 hover:bg-red-500/10"
                         >
                           Mark Disqualified
                         </button>

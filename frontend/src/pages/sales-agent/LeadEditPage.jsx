@@ -22,13 +22,13 @@ export default function LeadEditPage() {
   return (
     <SalesAgentShell title="Edit Lead">
       {isLoading ? (
-        <p className="text-ink/70">Loading lead…</p>
+        <p className="text-zinc-400">Loading lead…</p>
       ) : isError ? (
-        <p role="alert" className="text-sm text-red-300">
+        <p role="alert" className="text-sm text-red-400">
           {error?.response?.data?.message || 'Failed to load lead.'}
         </p>
       ) : (
-        <div className="rounded-xl border border-white/10 bg-white/[0.03] p-5">
+        <div className="bg-zinc-900/50 border border-zinc-800/80 rounded-2xl p-6 shadow-xl">
           <LeadForm
             leadId={id}
             initialValues={lead}

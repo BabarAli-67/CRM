@@ -57,7 +57,7 @@ export default function CallbackTable({ callbacks = [] }) {
 
   if (rows.length === 0) {
     return (
-      <p className="py-10 text-center text-sm text-ink/60">
+      <p className="py-10 text-center text-sm text-zinc-500">
         No upcoming callbacks. Create one to get started.
       </p>
     );
@@ -72,16 +72,16 @@ export default function CallbackTable({ callbacks = [] }) {
       ) : null}
 
       <div className="overflow-x-auto">
-        <table className="min-w-full text-left text-sm text-ink">
-          <thead className="border-b border-white/10 text-ink/70">
+        <table className="min-w-full text-left text-sm text-zinc-200">
+          <thead className="border-b border-zinc-800 text-xs uppercase tracking-wide text-zinc-500">
             <tr>
-              <th className="px-3 py-2 font-medium">Business</th>
-              <th className="px-3 py-2 font-medium">Phone</th>
-              <th className="px-3 py-2 font-medium">Link</th>
-              <th className="px-3 py-2 font-medium">Callback (PKT)</th>
-              <th className="px-3 py-2 font-medium">Notes</th>
-              <th className="px-3 py-2 font-medium">Status</th>
-              <th className="px-3 py-2 font-medium">Actions</th>
+              <th className="px-3 py-2.5 font-medium">Business</th>
+              <th className="px-3 py-2.5 font-medium">Phone</th>
+              <th className="px-3 py-2.5 font-medium">Link</th>
+              <th className="px-3 py-2.5 font-medium">Callback (PKT)</th>
+              <th className="px-3 py-2.5 font-medium">Notes</th>
+              <th className="px-3 py-2.5 font-medium">Status</th>
+              <th className="px-3 py-2.5 font-medium">Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -96,14 +96,14 @@ export default function CallbackTable({ callbacks = [] }) {
                   key={row._id}
                   data-reminder-row={`callback-${row._id}`}
                   className={[
-                    'border-b border-white/5 last:border-0 transition',
-                    overdue ? 'bg-flash-primary/10' : '',
+                    'border-b border-zinc-800/60 last:border-0 transition-colors hover:bg-zinc-800/30',
+                    overdue ? 'bg-orange-600/10' : '',
                   ].join(' ')}
                 >
                   <td className="px-3 py-2.5 font-medium">
                     {row.businessName}
                     {overdue ? (
-                      <span className="ml-2 inline-flex rounded-md bg-flash-primary/20 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-flash-secondary">
+                      <span className="ml-2 inline-flex rounded-full border border-orange-500/20 bg-orange-500/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-orange-400">
                         Overdue
                       </span>
                     ) : null}
@@ -114,7 +114,7 @@ export default function CallbackTable({ callbacks = [] }) {
                       href={row.businessLink}
                       target="_blank"
                       rel="noreferrer"
-                      className="text-flash-secondary hover:underline"
+                      className="text-orange-400 hover:text-orange-300 hover:underline"
                     >
                       {row.businessLink}
                     </a>
@@ -122,16 +122,16 @@ export default function CallbackTable({ callbacks = [] }) {
                   <td className="px-3 py-2.5 whitespace-nowrap">
                     {formatPkt(row.callbackAt)}
                   </td>
-                  <td className="px-3 py-2.5 max-w-[12rem] truncate text-ink/70">
+                  <td className="px-3 py-2.5 max-w-[12rem] truncate text-zinc-400">
                     {row.notes || '—'}
                   </td>
                   <td className="px-3 py-2.5">
                     <span
                       className={[
-                        'inline-flex rounded-md px-2 py-0.5 text-xs font-medium ring-1 ring-inset',
+                        'inline-flex rounded-full border px-2.5 py-0.5 text-xs font-semibold',
                         row.status === 'promoted'
-                          ? 'bg-emerald-500/15 text-emerald-300 ring-emerald-500/30'
-                          : 'bg-amber-500/15 text-amber-200 ring-amber-500/30',
+                          ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+                          : 'bg-amber-500/10 text-amber-400 border-amber-500/20',
                       ].join(' ')}
                     >
                       {row.status === 'promoted' ? 'Promoted' : 'Pending'}
@@ -139,7 +139,7 @@ export default function CallbackTable({ callbacks = [] }) {
                   </td>
                   <td className="px-3 py-2.5">
                     {row.status === 'promoted' ? (
-                      <span className="text-xs text-ink/50">—</span>
+                      <span className="text-xs text-zinc-600">—</span>
                     ) : (
                       <button
                         type="button"
@@ -148,7 +148,7 @@ export default function CallbackTable({ callbacks = [] }) {
                           setPromoteError('');
                           promoteMutation.mutate(row._id);
                         }}
-                        className="rounded-md bg-flash-tertiary/90 px-2.5 py-1.5 text-xs font-semibold text-obsidian hover:bg-flash-tertiary disabled:opacity-60"
+                        className="cursor-pointer rounded-full bg-orange-600 px-2.5 py-1.5 text-xs font-semibold text-white shadow-lg shadow-orange-600/20 hover:bg-orange-500 disabled:opacity-60"
                       >
                         {isPromoting ? 'Promoting…' : 'Promote to Lead'}
                       </button>

@@ -42,21 +42,21 @@ export default function AssignedLeadsPage() {
 
   return (
     <CloserShell title="Assigned Leads">
-      <section className="w-full rounded-xl border border-white/10 bg-white/5 p-4 sm:p-6">
+      <section className="w-full bg-zinc-900/50 border border-zinc-800/80 rounded-2xl p-6 shadow-xl">
         <div className="mb-4">
-          <h2 className="font-display text-xl font-semibold text-ink">
+          <h2 className="font-display text-xl font-semibold text-white">
             Leads assigned to me
           </h2>
-          <p className="mt-1 text-sm text-ink/70">
+          <p className="mt-1 text-sm text-zinc-400">
             Close or disqualify deals here · closed sales vanish from this list
             · follow-up reminders chime in this tab
           </p>
         </div>
 
         {isLoading ? (
-          <p className="py-8 text-center text-sm text-ink/60">Loading…</p>
+          <p className="py-8 text-center text-sm text-zinc-500">Loading…</p>
         ) : isError ? (
-          <p className="py-8 text-center text-sm text-red-300">
+          <p className="py-8 text-center text-sm text-red-400">
             {error?.response?.data?.message || 'Failed to load assigned leads.'}
           </p>
         ) : (

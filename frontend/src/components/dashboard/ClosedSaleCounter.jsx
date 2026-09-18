@@ -46,14 +46,14 @@ export default function ClosedSaleCounter() {
   }, [count]);
 
   return (
-    <div className="rounded-xl border border-white/10 bg-white/[0.04] px-5 py-4">
-      <p className="text-xs font-medium uppercase tracking-wide text-ink/55">
+    <div className="bg-zinc-900/50 border border-zinc-800/80 rounded-2xl px-5 py-5 shadow-xl">
+      <p className="text-xs font-medium uppercase tracking-wider text-zinc-500">
         Closed sales this month
       </p>
-      <p className="mt-2 font-display text-4xl font-semibold tabular-nums tracking-tight text-ink">
+      <p className="mt-2 font-display text-4xl font-semibold tabular-nums tracking-tight text-white">
         {isLoading ? '—' : isError ? '!' : display}
       </p>
-      <p className="mt-1 text-xs text-ink/50">Count only · no lead details</p>
+      <p className="mt-1 text-xs text-zinc-500">Count only · no lead details</p>
     </div>
   );
 }

@@ -118,13 +118,31 @@ export const getLeadById = asyncHandler(async (req, res) => {
 });
 
 export const updateLead = asyncHandler(async (req, res) => {
-  const lead = await Lead.findById(req.params.id);
+  const userId = req.user._id;
+  const isDepartment =
+    req.user.role === 'sales_agent' || req.user.role === 'closer';
+
+  const filter = isDepartment
+    ? {
+        _id: req.params.id,
+        stage: 'active',
+        $or: [{ agentId: userId }, { closerId: userId }],
+      }
+    : { _id: req.params.id };
+
+  const lead = await Lead.findOne(filter);
 
   if (!lead) {
-    throw new ApiError(404, 'Lead not found');
+    throw new ApiError(
+      404,
+      isDepartment
+        ? 'Lead not found or no longer editable.'
+        : 'Lead not found'
+    );
   }
 
-  if (!canAccessLead(lead, req.user)) {
+  // Super Admin may edit any stage; department users already filtered to active
+  if (!isDepartment && !canAccessLead(lead, req.user)) {
     throw new ApiError(
       403,
       'You can only update leads you own or are assigned to'
@@ -183,28 +201,42 @@ export const updateLead = asyncHandler(async (req, res) => {
 });
 
 export const disqualifyLead = asyncHandler(async (req, res) => {
-  const lead = await Lead.findById(req.params.id);
-
-  if (!lead) {
-    throw new ApiError(404, 'Lead not found');
-  }
-
-  if (!canAccessLead(lead, req.user)) {
-    throw new ApiError(
-      403,
-      'You can only disqualify leads you own or are assigned to'
-    );
-  }
-
   const { disqualifiedReason } = req.body;
 
   if (!disqualifiedReason || !String(disqualifiedReason).trim()) {
     throw new ApiError(400, 'disqualifiedReason is required');
   }
 
-  lead.stage = 'disqualified';
-  lead.disqualifiedReason = String(disqualifiedReason).trim();
-  await lead.save();
+  const userId = req.user._id;
+  // Super Admin may disqualify any active lead; agents/closers must own/be assigned
+  const filter =
+    req.user.role === 'super_admin'
+      ? { _id: req.params.id, stage: 'active' }
+      : {
+          _id: req.params.id,
+          stage: 'active',
+          $or: [{ agentId: userId }, { closerId: userId }],
+        };
+
+  const lead = await Lead.findOneAndUpdate(
+    filter,
+    {
+      $set: {
+        stage: 'disqualified',
+        disqualifiedReason: String(disqualifiedReason).trim(),
+        'followUp.alerts.fiveMinFired': true,
+        'followUp.alerts.exactTimeFired': true,
+      },
+    },
+    { returnDocument: 'after' }
+  );
+
+  if (!lead) {
+    throw new ApiError(
+      409,
+      'This lead is no longer active — it may have just been closed or disqualified.'
+    );
+  }
 
   res
     .status(200)
@@ -212,17 +244,16 @@ export const disqualifyLead = asyncHandler(async (req, res) => {
 });
 
 export const setFollowUp = asyncHandler(async (req, res) => {
-  const lead = await Lead.findById(req.params.id);
+  const userId = req.user._id;
+  const lead = await Lead.findOne({
+    _id: req.params.id,
+    stage: 'active',
+    $or: [{ agentId: userId }, { closerId: userId }],
+  });
 
   if (!lead) {
-    throw new ApiError(404, 'Lead not found');
-  }
-
-  if (!canAccessLead(lead, req.user)) {
-    throw new ApiError(
-      403,
-      'You can only manage follow-ups on leads you own or are assigned to'
-    );
+    // Flat 404 — do not reveal closed vs missing (also covers non-owners)
+    throw new ApiError(404, 'Lead not found or no longer editable.');
   }
 
   const payload =
@@ -325,26 +356,13 @@ export const markFollowUpAlert = asyncHandler(async (req, res) => {
 });
 
 export const closeLead = asyncHandler(async (req, res) => {
-  const lead = await Lead.findById(req.params.id);
-
-  if (!lead) {
-    throw new ApiError(404, 'Lead not found');
-  }
-
-  if (!canAccessLead(lead, req.user)) {
-    throw new ApiError(
-      403,
-      'You can only close leads you own or are assigned to'
-    );
-  }
-
-  if (lead.stage === 'closed_sale') {
-    throw new ApiError(400, 'Lead is already closed');
-  }
-
   const { payment } = req.body;
 
-  lead.payment = {
+  if (!payment?.method) {
+    throw new ApiError(400, 'payment is required');
+  }
+
+  const paymentDoc = {
     method: payment.method,
     linkUrl: payment.method === 'via_link' ? payment.linkUrl : null,
     cardLast4: payment.method === 'via_card' ? payment.cardLast4 : null,
@@ -354,17 +372,34 @@ export const closeLead = asyncHandler(async (req, res) => {
       payment.method === 'via_card' ? payment.cardReferenceToken : null,
   };
 
-  lead.stage = 'closed_sale';
-  lead.closedAt = new Date();
-  lead.closedBy = req.user._id;
-  lead.handover = {
-    cstStatus: 'pending_review',
-    assignedTechId: lead.handover?.assignedTechId || null,
-    assignedAt: lead.handover?.assignedAt || null,
-    completedAt: lead.handover?.completedAt || null,
-  };
+  const userId = req.user._id;
 
-  await lead.save();
+  const lead = await Lead.findOneAndUpdate(
+    {
+      _id: req.params.id,
+      stage: 'active',
+      $or: [{ agentId: userId }, { closerId: userId }],
+    },
+    {
+      $set: {
+        stage: 'closed_sale',
+        closedAt: new Date(),
+        closedBy: userId,
+        payment: paymentDoc,
+        'handover.cstStatus': 'pending_review',
+        'followUp.alerts.fiveMinFired': true,
+        'followUp.alerts.exactTimeFired': true,
+      },
+    },
+    { returnDocument: 'after' }
+  );
+
+  if (!lead) {
+    throw new ApiError(
+      409,
+      'This lead is no longer active — it may have just been closed or disqualified.'
+    );
+  }
 
   // Vanishing Rule: do not return the lead document — only a minimal ack
   res.status(200).json(new ApiResponse(200, { closedCount: 1 }, 'Lead closed'));

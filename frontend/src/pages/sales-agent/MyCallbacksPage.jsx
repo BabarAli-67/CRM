@@ -71,13 +71,13 @@ export default function MyCallbacksPage() {
 
   return (
     <SalesAgentShell title="My Callbacks">
-      <section className="w-full rounded-xl border border-white/10 bg-white/5 p-4 sm:p-6">
+      <section className="w-full bg-zinc-900/50 border border-zinc-800/80 rounded-2xl p-6 shadow-xl">
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h2 className="font-display text-xl font-semibold text-ink">
+            <h2 className="font-display text-xl font-semibold text-white">
               Scheduled callbacks
             </h2>
-            <p className="mt-1 text-sm text-ink/70">
+            <p className="mt-1 text-sm text-zinc-400">
               Sorted by time · overdue rows are highlighted · reminders chime in
               this tab
             </p>
@@ -85,25 +85,25 @@ export default function MyCallbacksPage() {
           <button
             type="button"
             onClick={() => setFormOpen(true)}
-            className="rounded-xl bg-flash-primary px-4 py-2.5 font-display text-sm font-semibold text-white transition hover:bg-flash-secondary"
+            className="cursor-pointer rounded-full bg-orange-600 px-4 py-2.5 font-display text-sm font-semibold text-white shadow-lg shadow-orange-600/20 transition hover:bg-orange-500"
           >
             + New Callback
           </button>
         </div>
 
         {actionError ? (
-          <p role="alert" className="mb-3 text-sm text-red-300">
+          <p role="alert" className="mb-3 text-sm text-red-400">
             {actionError}
           </p>
         ) : null}
         {actionMessage ? (
-          <p className="mb-3 text-sm text-emerald-300">{actionMessage}</p>
+          <p className="mb-3 text-sm text-emerald-400">{actionMessage}</p>
         ) : null}
 
         {isLoading ? (
-          <p className="py-8 text-center text-sm text-ink/60">Loading…</p>
+          <p className="py-8 text-center text-sm text-zinc-500">Loading…</p>
         ) : isError ? (
-          <p className="py-8 text-center text-sm text-red-300">
+          <p className="py-8 text-center text-sm text-red-400">
             {error?.response?.data?.message || 'Failed to load callbacks.'}
           </p>
         ) : (

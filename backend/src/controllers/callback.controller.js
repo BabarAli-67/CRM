@@ -110,26 +110,32 @@ export const deleteCallback = asyncHandler(async (req, res) => {
 });
 
 export const markAlert = asyncHandler(async (req, res) => {
-  const callback = await Callback.findById(req.params.id);
-
-  if (!callback) {
-    throw new ApiError(404, 'Callback not found');
-  }
-
-  if (!isOwnerOrSuperAdmin(callback, req.user)) {
-    throw new ApiError(403, 'You can only update alerts on your own callbacks');
-  }
-
   const { fiveMinFired, exactTimeFired } = req.body;
 
-  if (typeof fiveMinFired === 'boolean') {
-    callback.alerts.fiveMinFired = fiveMinFired;
-  }
-  if (typeof exactTimeFired === 'boolean') {
-    callback.alerts.exactTimeFired = exactTimeFired;
+  if (typeof fiveMinFired !== 'boolean' && typeof exactTimeFired !== 'boolean') {
+    throw new ApiError(
+      400,
+      'Provide fiveMinFired and/or exactTimeFired as boolean'
+    );
   }
 
-  await callback.save();
+  const $set = {};
+  if (typeof fiveMinFired === 'boolean') {
+    $set['alerts.fiveMinFired'] = fiveMinFired;
+  }
+  if (typeof exactTimeFired === 'boolean') {
+    $set['alerts.exactTimeFired'] = exactTimeFired;
+  }
+
+  const callback = await Callback.findOneAndUpdate(
+    { _id: req.params.id, agentId: req.user._id },
+    { $set },
+    { returnDocument: 'after' }
+  );
+
+  if (!callback) {
+    throw new ApiError(404, 'Callback not found for your account.');
+  }
 
   res
     .status(200)

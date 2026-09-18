@@ -27,6 +27,9 @@
 - [x] Disqualify flow — `stage: disqualified`, disappears from `/mine`
 - [x] Follow-up shared alert — closer `mark-alert` sets flag; agent re-call stays single `true`
 - [x] Auditor parity — `admin` GET matches `super_admin`; PATCH → 403
+- [x] `GET /api/v1/leads/:id` — ownership-checked fetch for agent/closer/super_admin;
+      `canAccessLead` reads populated `agentId`/`closerId` via `_id` (not `toString()` on
+      the populated doc) so promote → LeadEditPage does not 403 the owning agent
 
 ## Phase 3.3 — Close Sale + Stats
 
