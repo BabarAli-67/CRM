@@ -1,5 +1,6 @@
 import { createContext, useState } from 'react';
 import api from '../config/api.config.js';
+import { disconnectSocket } from '../utils/socketClient.util.js';
 
 const AuthContext = createContext(null);
 
@@ -33,6 +34,7 @@ const AuthProvider = ({ children }) => {
   };
 
   const logout = () => {
+    disconnectSocket();
     localStorage.removeItem('flashcrm_token');
     localStorage.removeItem('flashcrm_user');
     setUser(null);

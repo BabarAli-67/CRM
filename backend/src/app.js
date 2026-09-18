@@ -15,6 +15,7 @@ import statsRoutes from './routes/stats.routes.js';
 import handoverRoutes from './routes/handover.routes.js';
 import reportRoutes from './routes/report.routes.js';
 import userRoutes from './routes/user.routes.js';
+import chatRoutes from './routes/chat.route.js';
 
 const app = express();
 
@@ -72,6 +73,7 @@ app.use('/api/v1/stats', statsRoutes);
 app.use('/api/v1/handover', handoverRoutes);
 app.use('/api/v1/reports', reportRoutes);
 app.use('/api/v1/users', userRoutes);
+app.use('/api/v1/chat', chatRoutes);
 
 app.use(notFound);
 app.use(errorHandler);

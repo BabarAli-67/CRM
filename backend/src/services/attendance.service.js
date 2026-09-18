@@ -6,6 +6,7 @@ import {
   getShiftWindowForDate,
   getCurrentShiftDate,
   isWeekendShiftDate,
+  getCheckInOpensAt,
 } from '../utils/shiftTime.util.js';
 import { ApiError } from '../utils/apiError.util.js';
 
@@ -53,6 +54,14 @@ export const checkIn = async (userId) => {
   }
 
   const now = dayjs().tz(TZ).toDate();
+  const checkInOpensAt = getCheckInOpensAt(record.shiftStartAt);
+
+  if (now < checkInOpensAt) {
+    throw new ApiError(
+      400,
+      'Check-in window is not open yet. Check-in opens 20 minutes before shift start.'
+    );
+  }
 
   if (now > record.shiftStartAt) {
     throw new ApiError(
@@ -88,6 +97,13 @@ export const submitLateRequest = async (userId, reason) => {
   const now = dayjs().tz(TZ).toDate();
 
   if (now < record.shiftStartAt) {
+    const checkInOpensAt = getCheckInOpensAt(record.shiftStartAt);
+    if (now < checkInOpensAt) {
+      throw new ApiError(
+        400,
+        'Check-in window is not open yet. Check-in opens 20 minutes before shift start.'
+      );
+    }
     throw new ApiError(
       400,
       "You're still within the on-time check-in window — use Mark Attendance instead."

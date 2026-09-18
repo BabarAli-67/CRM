@@ -8,6 +8,9 @@ import {
   submitLateRequest,
 } from '../services/attendance.service.js';
 
+/** Minutes before dynamic shift.startTime when Mark Attendance becomes available. */
+const CHECK_IN_EARLY_MINUTES = 20;
+
 const formatTime = (value) => {
   if (!value) return '—';
   return new Date(value).toLocaleString('en-PK', {
@@ -118,69 +121,92 @@ export default function AttendanceBanner() {
 
   if (attendance.status === 'auto_absent') {
     const shiftStartAt = new Date(attendance.shiftStartAt);
-    const withinWindow = now() < shiftStartAt;
+    const checkInOpensAt = new Date(
+      shiftStartAt.getTime() - CHECK_IN_EARLY_MINUTES * 60 * 1000
+    );
+    const current = now();
+    const beforeCheckInOpens = current < checkInOpensAt;
+    const withinOnTimeWindow =
+      current >= checkInOpensAt && current < shiftStartAt;
+    const afterShiftStart = current >= shiftStartAt;
 
     return (
       <div className="border-b border-amber-500/20 bg-amber-500/10 px-4 py-4 text-amber-100">
         <div className="mx-auto max-w-7xl px-2 sm:px-4">
-          <p className="text-base font-semibold">
-            {withinWindow
-              ? 'Mark your attendance for today’s shift'
-              : 'On-time check-in window has closed'}
-          </p>
-          <p className="mt-1 text-sm text-amber-200/80">
-            Shift starts at {formatTime(attendance.shiftStartAt)}.
-          </p>
-
-          {withinWindow ? (
-            <button
-              type="button"
-              onClick={() => checkInMutation.mutate()}
-              disabled={checkInMutation.isPending}
-              className="mt-3 cursor-pointer rounded-full bg-amber-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-amber-500 disabled:opacity-60"
-            >
-              {checkInMutation.isPending ? 'Marking…' : 'Mark Attendance'}
-            </button>
-          ) : (
-            <div className="mt-3">
-              {!showLateForm ? (
-                <button
-                  type="button"
-                  onClick={() => setShowLateForm(true)}
-                  className="cursor-pointer rounded-full bg-amber-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-amber-500"
-                >
-                  Request Attendance
-                </button>
-              ) : (
-                <div className="max-w-lg space-y-2">
-                  <label
-                    htmlFor="late-reason"
-                    className="block text-sm font-medium text-amber-100"
-                  >
-                    Reason Note
-                  </label>
-                  <textarea
-                    id="late-reason"
-                    rows={3}
-                    value={lateReason}
-                    onChange={(e) => setLateReason(e.target.value)}
-                    placeholder="Explain why you are late (5–300 characters)"
-                    className="w-full rounded-lg border border-amber-500/30 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-400/40"
-                  />
+          {beforeCheckInOpens ? (
+            <>
+              <p className="text-base font-semibold">Check-in not open yet</p>
+              <p className="mt-1 text-sm text-amber-200/80">
+                Check-in opens 20 minutes before shift (at{' '}
+                {formatTime(checkInOpensAt)}). Shift starts at{' '}
+                {formatTime(attendance.shiftStartAt)}.
+              </p>
+            </>
+          ) : withinOnTimeWindow ? (
+            <>
+              <p className="text-base font-semibold">
+                Mark your attendance for today’s shift
+              </p>
+              <p className="mt-1 text-sm text-amber-200/80">
+                Shift starts at {formatTime(attendance.shiftStartAt)}.
+              </p>
+              <button
+                type="button"
+                onClick={() => checkInMutation.mutate()}
+                disabled={checkInMutation.isPending}
+                className="mt-3 cursor-pointer rounded-full bg-amber-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-amber-500 disabled:opacity-60"
+              >
+                {checkInMutation.isPending ? 'Marking…' : 'Mark Attendance'}
+              </button>
+            </>
+          ) : afterShiftStart ? (
+            <>
+              <p className="text-base font-semibold">
+                On-time check-in window has closed
+              </p>
+              <p className="mt-1 text-sm text-amber-200/80">
+                Shift started at {formatTime(attendance.shiftStartAt)}.
+              </p>
+              <div className="mt-3">
+                {!showLateForm ? (
                   <button
                     type="button"
-                    onClick={() => lateMutation.mutate(lateReason.trim())}
-                    disabled={
-                      lateMutation.isPending || lateReason.trim().length < 5
-                    }
-                    className="cursor-pointer rounded-full bg-amber-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-amber-500 disabled:opacity-60"
+                    onClick={() => setShowLateForm(true)}
+                    className="cursor-pointer rounded-full bg-amber-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-amber-500"
                   >
-                    {lateMutation.isPending ? 'Submitting…' : 'Submit Request'}
+                    Request Attendance
                   </button>
-                </div>
-              )}
-            </div>
-          )}
+                ) : (
+                  <div className="max-w-lg space-y-2">
+                    <label
+                      htmlFor="late-reason"
+                      className="block text-sm font-medium text-amber-100"
+                    >
+                      Reason Note
+                    </label>
+                    <textarea
+                      id="late-reason"
+                      rows={3}
+                      value={lateReason}
+                      onChange={(e) => setLateReason(e.target.value)}
+                      placeholder="Explain why you are late (5–300 characters)"
+                      className="w-full rounded-lg border border-amber-500/30 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-400/40"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => lateMutation.mutate(lateReason.trim())}
+                      disabled={
+                        lateMutation.isPending || lateReason.trim().length < 5
+                      }
+                      className="cursor-pointer rounded-full bg-amber-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-amber-500 disabled:opacity-60"
+                    >
+                      {lateMutation.isPending ? 'Submitting…' : 'Submit Request'}
+                    </button>
+                  </div>
+                )}
+              </div>
+            </>
+          ) : null}
           {errorLine}
         </div>
       </div>

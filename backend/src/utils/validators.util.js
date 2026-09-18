@@ -114,3 +114,26 @@ export const closeLeadValidator = [
     .optional({ nullable: true })
     .trim(),
 ];
+
+export const createConversationValidator = [
+  body('contactId')
+    .notEmpty()
+    .withMessage('contactId is required')
+    .isMongoId()
+    .withMessage('contactId must be a valid Mongo id'),
+];
+
+export const sendMessageValidator = [
+  body('type')
+    .isIn(['text', 'image', 'document', 'voice'])
+    .withMessage("type must be 'text', 'image', 'document', or 'voice'"),
+  body('text')
+    .optional({ nullable: true })
+    .trim()
+    .isLength({ max: 4000 })
+    .withMessage('text must be at most 4000 characters'),
+  body('attachment')
+    .optional({ nullable: true })
+    .isObject()
+    .withMessage('attachment must be an object'),
+];

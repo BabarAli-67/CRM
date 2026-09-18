@@ -9,6 +9,16 @@ dayjs.extend(customParseFormat);
 
 export const TZ = 'Asia/Karachi';
 
+/** Minutes before shift.startTime when on-time check-in becomes available. */
+export const CHECK_IN_EARLY_MINUTES = 20;
+
+/**
+ * Absolute PKT instant when check-in opens for a given shift start.
+ * Derived from dynamic shiftStartAt — never from a hardcoded clock time.
+ */
+export const getCheckInOpensAt = (shiftStartAt) =>
+  dayjs(shiftStartAt).tz(TZ).subtract(CHECK_IN_EARLY_MINUTES, 'minute').toDate();
+
 export const getShiftWindowForDate = (shiftDateStr, shiftSettings) => {
   const shiftStartAt = dayjs.tz(
     `${shiftDateStr} ${shiftSettings.startTime}`,
@@ -30,9 +40,14 @@ export const getShiftWindowForDate = (shiftDateStr, shiftSettings) => {
     shiftEndAt = shiftEndAt.add(1, 'day');
   }
 
+  const checkInOpensAt = shiftStartAt
+    .subtract(CHECK_IN_EARLY_MINUTES, 'minute')
+    .toDate();
+
   return {
     shiftStartAt: shiftStartAt.toDate(),
     shiftEndAt: shiftEndAt.toDate(),
+    checkInOpensAt,
   };
 };
 
