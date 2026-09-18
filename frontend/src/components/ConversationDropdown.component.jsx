@@ -17,6 +17,12 @@ const ROLE_LABEL = {
   admin: 'Auditor',
 };
 
+const TABS = [
+  { id: 'all', label: 'All' },
+  { id: 'unread', label: 'Unread' },
+  { id: 'contacts', label: 'Contacts' },
+];
+
 const formatRelative = (value) => {
   if (!value) return '';
   const then = new Date(value).getTime();
@@ -42,6 +48,7 @@ export default function ConversationDropdown({ onClose }) {
   const { onPresenceUpdate, onMessageNew } = useChatSocket();
   const [onlineIds, setOnlineIds] = useState(() => new Set());
   const [actionError, setActionError] = useState('');
+  const [activeTab, setActiveTab] = useState('all');
 
   const { data: contacts = [], isLoading: contactsLoading } = useQuery({
     queryKey: ['chatContacts'],
@@ -96,6 +103,20 @@ export default function ConversationDropdown({ onClose }) {
     });
   }, [conversations]);
 
+  const unreadConversations = useMemo(
+    () => sortedConversations.filter((c) => (c.unreadCount || 0) > 0),
+    [sortedConversations]
+  );
+
+  const unreadTotal = useMemo(
+    () =>
+      unreadConversations.reduce(
+        (sum, row) => sum + (typeof row.unreadCount === 'number' ? row.unreadCount : 0),
+        0
+      ),
+    [unreadConversations]
+  );
+
   const handleConversationClick = (row) => {
     const conversationId = row.conversation?._id || row._id;
     const contact = row.otherParticipant;
@@ -104,9 +125,118 @@ export default function ConversationDropdown({ onClose }) {
     onClose?.();
   };
 
+  const renderConversationRows = (rows) => (
+    <ul className="space-y-1">
+      {rows.map((row) => {
+        const conversationId = row.conversation?._id;
+        const peer = row.otherParticipant;
+        const unread = row.unreadCount || 0;
+        return (
+          <li key={conversationId}>
+            <button
+              type="button"
+              onClick={() => handleConversationClick(row)}
+              className="flex w-full cursor-pointer items-start gap-3 rounded-lg px-3 py-2.5 text-left transition hover:bg-zinc-800/50"
+            >
+              <span className="min-w-0 flex-1">
+                <span className="flex items-center justify-between gap-2">
+                  <span className="truncate text-sm font-medium text-zinc-100">
+                    {peer?.fullName || 'Unknown'}
+                  </span>
+                  <span className="shrink-0 text-[11px] text-zinc-500">
+                    {formatRelative(row.lastMessageAt)}
+                  </span>
+                </span>
+                <span className="mt-0.5 flex items-center gap-2">
+                  <span className="truncate text-xs text-zinc-500">
+                    {row.lastMessagePreview || 'No messages yet'}
+                  </span>
+                  {unread > 0 ? (
+                    <span className="inline-flex min-w-[1.125rem] shrink-0 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold leading-4 text-white">
+                      {unread > 99 ? '99+' : unread}
+                    </span>
+                  ) : null}
+                </span>
+              </span>
+            </button>
+          </li>
+        );
+      })}
+    </ul>
+  );
+
+  let bodyContent = null;
+  if (activeTab === 'all') {
+    if (conversationsLoading) {
+      bodyContent = <p className="px-2 py-6 text-center text-sm text-zinc-500">Loading…</p>;
+    } else if (sortedConversations.length === 0) {
+      bodyContent = (
+        <p className="px-2 py-6 text-center text-sm text-zinc-500">No conversations yet.</p>
+      );
+    } else {
+      bodyContent = renderConversationRows(sortedConversations);
+    }
+  } else if (activeTab === 'unread') {
+    if (conversationsLoading) {
+      bodyContent = <p className="px-2 py-6 text-center text-sm text-zinc-500">Loading…</p>;
+    } else if (unreadConversations.length === 0) {
+      bodyContent = (
+        <p className="px-2 py-6 text-center text-sm text-zinc-500">
+          All caught up! No unread messages
+        </p>
+      );
+    } else {
+      bodyContent = renderConversationRows(unreadConversations);
+    }
+  } else if (contactsLoading) {
+    bodyContent = <p className="px-2 py-6 text-center text-sm text-zinc-500">Loading…</p>;
+  } else if (contacts.length === 0) {
+    bodyContent = (
+      <p className="px-2 py-6 text-center text-sm text-zinc-500">No contacts yet.</p>
+    );
+  } else {
+    bodyContent = (
+      <ul className="space-y-1">
+        {contacts.map((contact) => {
+          const online = onlineIds.has(String(contact._id));
+          return (
+            <li key={contact._id}>
+              <button
+                type="button"
+                disabled={openMutation.isPending}
+                onClick={() => {
+                  setActionError('');
+                  openMutation.mutate(contact._id);
+                }}
+                className="flex w-full cursor-pointer items-center gap-3 rounded-lg px-3 py-2.5 text-left transition hover:bg-zinc-800/50 disabled:opacity-60"
+              >
+                <span
+                  className={`h-2.5 w-2.5 shrink-0 rounded-full ${
+                    online
+                      ? 'bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.7)]'
+                      : 'bg-zinc-600'
+                  }`}
+                  title={online ? 'Online' : 'Offline'}
+                />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm font-medium text-zinc-100">
+                    {contact.fullName}
+                  </span>
+                  <span className="block truncate text-xs text-zinc-500">
+                    {ROLE_LABEL[contact.role] || contact.role}
+                  </span>
+                </span>
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+    );
+  }
+
   return (
     <div
-      className="absolute right-0 z-50 mt-2 flex max-h-[480px] w-[22rem] max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-2xl border border-zinc-800/80 bg-zinc-950 shadow-2xl"
+      className="absolute right-0 z-50 mt-2 flex max-h-[460px] w-[22rem] max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-2xl border border-zinc-800/80 bg-zinc-950 shadow-2xl"
       role="dialog"
       aria-label="Messenger"
     >
@@ -121,108 +251,54 @@ export default function ConversationDropdown({ onClose }) {
         </button>
       </div>
 
+      <div className="shrink-0 border-b border-zinc-800 px-3 py-2">
+        <div
+          className="flex gap-1 rounded-lg border border-zinc-800 bg-zinc-900 p-1"
+          role="tablist"
+          aria-label="Messenger views"
+        >
+          {TABS.map((tab) => {
+            const isActive = activeTab === tab.id;
+            const showUnreadBadge = tab.id === 'unread' && unreadTotal > 0;
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                role="tab"
+                aria-selected={isActive}
+                onClick={() => setActiveTab(tab.id)}
+                className={`flex flex-1 cursor-pointer items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-semibold transition ${
+                  isActive
+                    ? 'bg-orange-600 text-white shadow-sm'
+                    : 'text-zinc-400 hover:text-zinc-200'
+                }`}
+              >
+                {tab.label}
+                {showUnreadBadge ? (
+                  <span
+                    className={`inline-flex min-w-[1.125rem] items-center justify-center rounded-full px-1 text-[10px] font-bold leading-4 ${
+                      isActive
+                        ? 'bg-white/20 text-white'
+                        : 'bg-red-500 text-white'
+                    }`}
+                  >
+                    {unreadTotal > 99 ? '99+' : unreadTotal}
+                  </span>
+                ) : null}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
       {actionError ? (
         <p className="shrink-0 border-b border-zinc-800 px-4 py-2 text-xs text-red-400">
           {actionError}
         </p>
       ) : null}
 
-      <div className="min-h-0 flex-1 overflow-y-auto scrollbar-thin scrollbar-thumb-zinc-800 scrollbar-track-transparent">
-        <section className="border-b border-zinc-800/80">
-          <h3 className="px-4 pt-3 pb-1 text-[11px] font-semibold uppercase tracking-wider text-zinc-500">
-            Recent Conversations
-          </h3>
-          {conversationsLoading ? (
-            <p className="px-4 py-3 text-sm text-zinc-500">Loading…</p>
-          ) : sortedConversations.length === 0 ? (
-            <p className="px-4 py-3 text-sm text-zinc-500">No conversations yet.</p>
-          ) : (
-            <ul>
-              {sortedConversations.map((row) => {
-                const conversationId = row.conversation?._id;
-                const peer = row.otherParticipant;
-                const unread = row.unreadCount || 0;
-                return (
-                  <li key={conversationId}>
-                    <button
-                      type="button"
-                      onClick={() => handleConversationClick(row)}
-                      className="flex w-full cursor-pointer items-start gap-3 px-4 py-2.5 text-left transition hover:bg-zinc-800/50"
-                    >
-                      <span className="min-w-0 flex-1">
-                        <span className="flex items-center justify-between gap-2">
-                          <span className="truncate text-sm font-medium text-zinc-100">
-                            {peer?.fullName || 'Unknown'}
-                          </span>
-                          <span className="shrink-0 text-[11px] text-zinc-500">
-                            {formatRelative(row.lastMessageAt)}
-                          </span>
-                        </span>
-                        <span className="mt-0.5 flex items-center gap-2">
-                          <span className="truncate text-xs text-zinc-500">
-                            {row.lastMessagePreview || 'No messages yet'}
-                          </span>
-                          {unread > 0 ? (
-                            <span className="inline-flex min-w-[1.125rem] shrink-0 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold leading-4 text-white">
-                              {unread > 99 ? '99+' : unread}
-                            </span>
-                          ) : null}
-                        </span>
-                      </span>
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-        </section>
-
-        <section>
-          <h3 className="px-4 pt-3 pb-1 text-[11px] font-semibold uppercase tracking-wider text-zinc-500">
-            All Contacts
-          </h3>
-          {contactsLoading ? (
-            <p className="px-4 py-3 text-sm text-zinc-500">Loading…</p>
-          ) : contacts.length === 0 ? (
-            <p className="px-4 py-3 text-sm text-zinc-500">No contacts yet.</p>
-          ) : (
-            <ul>
-              {contacts.map((contact) => {
-                const online = onlineIds.has(String(contact._id));
-                return (
-                  <li key={contact._id}>
-                    <button
-                      type="button"
-                      disabled={openMutation.isPending}
-                      onClick={() => {
-                        setActionError('');
-                        openMutation.mutate(contact._id);
-                      }}
-                      className="flex w-full cursor-pointer items-center gap-3 px-4 py-2.5 text-left transition hover:bg-zinc-800/50 disabled:opacity-60"
-                    >
-                      <span
-                        className={`h-2.5 w-2.5 shrink-0 rounded-full ${
-                          online
-                            ? 'bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.7)]'
-                            : 'bg-zinc-600'
-                        }`}
-                        title={online ? 'Online' : 'Offline'}
-                      />
-                      <span className="min-w-0 flex-1">
-                        <span className="block truncate text-sm font-medium text-zinc-100">
-                          {contact.fullName}
-                        </span>
-                        <span className="block truncate text-xs text-zinc-500">
-                          {ROLE_LABEL[contact.role] || contact.role}
-                        </span>
-                      </span>
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-        </section>
+      <div className="min-h-0 flex-1 space-y-1 overflow-y-auto p-2 scrollbar-thin scrollbar-thumb-zinc-800 scrollbar-track-transparent">
+        {bodyContent}
       </div>
     </div>
   );

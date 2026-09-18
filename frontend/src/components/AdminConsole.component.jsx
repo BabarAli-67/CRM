@@ -92,15 +92,63 @@ const getCurrentShiftDateStr = (now = new Date()) => {
   return pkt.dateStr;
 };
 
-const deriveShiftEndAt = (shiftDate, settings) => {
+/** PKT wall-clock instants for a shift calendar date (handles overnight windows). */
+const deriveShiftWindow = (shiftDate, settings) => {
   if (!shiftDate || !settings?.startTime || !settings?.endTime) return null;
-  const [sh, sm] = settings.startTime.split(':').map(Number);
-  const [eh, em] = settings.endTime.split(':').map(Number);
-  let end = new Date(`${shiftDate}T${settings.endTime}:00+05:00`);
+
+  const startTime = String(settings.startTime).slice(0, 5);
+  const endTime = String(settings.endTime).slice(0, 5);
+  const [sh, sm] = startTime.split(':').map(Number);
+  const [eh, em] = endTime.split(':').map(Number);
+  if ([sh, sm, eh, em].some((n) => Number.isNaN(n))) return null;
+
+  const start = new Date(`${shiftDate}T${startTime}:00+05:00`);
+  let end = new Date(`${shiftDate}T${endTime}:00+05:00`);
   if (eh * 60 + em <= sh * 60 + sm) {
     end = new Date(end.getTime() + 24 * 60 * 60 * 1000);
   }
-  return end;
+
+  return { start, end, startTime, endTime };
+};
+
+const addPktCalendarDays = (dateStr, days) => {
+  const base = new Date(`${dateStr}T12:00:00+05:00`);
+  base.setDate(base.getDate() + days);
+  return getPktParts(base).dateStr;
+};
+
+/**
+ * Two-phase pulse: active → countdown to dynamic end; idle → countdown to next dynamic start.
+ */
+const deriveShiftPulse = (nowDate, settings) => {
+  const window = deriveShiftWindow(getCurrentShiftDateStr(nowDate), settings);
+  if (!window) return null;
+
+  const t = nowDate.getTime();
+  const startMs = window.start.getTime();
+  const endMs = window.end.getTime();
+
+  if (t >= startMs && t < endMs) {
+    return {
+      phase: 'active',
+      remainingMs: endMs - t,
+      subtitleTime: window.endTime,
+    };
+  }
+
+  let nextStart = window.start;
+  if (t >= endMs) {
+    const nextDate = addPktCalendarDays(getCurrentShiftDateStr(nowDate), 1);
+    const nextWindow = deriveShiftWindow(nextDate, settings);
+    if (!nextWindow) return null;
+    nextStart = nextWindow.start;
+  }
+
+  return {
+    phase: 'idle',
+    remainingMs: Math.max(0, nextStart.getTime() - t),
+    subtitleTime: window.startTime,
+  };
 };
 
 const formatCountdown = (ms) => {
@@ -355,7 +403,14 @@ function AttendanceDonut({ records }) {
   );
 }
 
-function KpiCard({ icon: Icon, label, value, hint, accent }) {
+function KpiCard({ icon: Icon, label, value, hint, accent, iconTone }) {
+  const iconWrapClass =
+    iconTone === 'live'
+      ? 'rounded-xl border border-orange-500/40 bg-orange-500/10 p-2.5 text-orange-400 shadow-[0_0_14px_rgba(249,115,22,0.45)] animate-pulse'
+      : iconTone === 'idle'
+        ? 'rounded-xl border border-zinc-700/80 bg-zinc-900/70 p-2.5 text-zinc-500'
+        : 'rounded-xl border border-white/10 bg-white/[0.03] p-2.5 text-[#FF4B26]';
+
   return (
     <div className={`${ADMIN_CARD} relative overflow-hidden`}>
       {accent ? (
@@ -374,7 +429,7 @@ function KpiCard({ icon: Icon, label, value, hint, accent }) {
           </p>
           {hint ? <p className="mt-2 text-sm text-zinc-400">{hint}</p> : null}
         </div>
-        <div className="rounded-xl border border-white/10 bg-white/[0.03] p-2.5 text-[#FF4B26]">
+        <div className={iconWrapClass}>
           <Icon className="h-5 w-5" aria-hidden />
         </div>
       </div>
@@ -394,7 +449,7 @@ export default function AdminConsole({
   const { user, logout } = useAuth();
   const { settings, now, loading: clockLoading } = useShiftClock();
   const [tab, setTab] = useState('operations');
-  const [, setTick] = useState(0);
+  const [tick, setTick] = useState(0);
 
   useEffect(() => {
     const id = setInterval(() => setTick((t) => t + 1), 1000);
@@ -430,14 +485,21 @@ export default function AdminConsole({
     return { present, late, absent };
   }, [todayRecords]);
 
-  const shiftEndAt = deriveShiftEndAt(shiftDate, settings);
-  const remainingMs = shiftEndAt ? shiftEndAt.getTime() - now().getTime() : null;
-  const shiftLive =
-    !clockLoading && remainingMs != null && remainingMs > 0
-      ? formatCountdown(remainingMs)
-      : remainingMs != null && remainingMs <= 0
-        ? 'Shift ended'
-        : '—';
+  const shiftPulse = useMemo(() => {
+    if (clockLoading || !settings?.startTime || !settings?.endTime) return null;
+    return deriveShiftPulse(now(), settings);
+  }, [clockLoading, settings, now, tick]);
+
+  const shiftIsActive = shiftPulse?.phase === 'active';
+  const shiftCountdown = shiftPulse
+    ? formatCountdown(shiftPulse.remainingMs)
+    : '—';
+  const shiftHint = shiftIsActive
+    ? `Shift ends in · ${shiftPulse.subtitleTime} PKT`
+    : shiftPulse
+      ? `Shift starts in · ${shiftPulse.subtitleTime} PKT`
+      : 'Waiting for shift settings';
+  const shiftLabel = shiftIsActive ? 'ACTIVE SHIFT PULSE' : 'UPCOMING SHIFT';
 
   return (
     <div className={ADMIN_CANVAS}>
@@ -516,9 +578,10 @@ export default function AdminConsole({
               />
               <KpiCard
                 icon={Clock3}
-                label="Active Shift Status"
-                value={shiftLive}
-                hint={`Cutoff countdown · ${settings?.endTime || '—'} PKT`}
+                label={shiftLabel}
+                value={shiftCountdown}
+                hint={shiftHint}
+                iconTone={shiftIsActive ? 'live' : 'idle'}
               />
               <KpiCard
                 icon={Workflow}
