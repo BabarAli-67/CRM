@@ -10,7 +10,10 @@ export const getPendingUsers = asyncHandler(async (req, res) => {
 });
 
 export const getAllUsers = asyncHandler(async (req, res) => {
-  const filter = {};
+  const filter = {
+    // Super Admin is never an operational "system user" for listings/KPIs.
+    role: { $ne: 'super_admin' },
+  };
 
   if (req.query.role) {
     filter.role = req.query.role;
@@ -100,10 +103,10 @@ export const updateUserProfile = asyncHandler(async (req, res) => {
     throw new ApiError(404, 'User not found');
   }
 
-  const { fullName, email, phone, role } = req.body;
+  const { fullName, username, phone, role } = req.body;
 
   if (fullName !== undefined) user.fullName = fullName;
-  if (email !== undefined) user.email = email;
+  if (username !== undefined) user.username = String(username).trim().toLowerCase();
   if (phone !== undefined) user.phone = phone;
   if (role !== undefined) user.role = role;
 

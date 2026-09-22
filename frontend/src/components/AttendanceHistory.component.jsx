@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { getHistory } from '../services/attendance.service.js';
+import { formatLateDuration } from '../utils/formatLateDuration.util.js';
 
 const STATUS_BADGE = {
   present: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20',
@@ -45,16 +46,26 @@ const formatDateTime = (value) => {
   });
 };
 
-const StatusBadge = ({ status }) => {
+const StatusBadge = ({ status, lateMinutes }) => {
   const classes =
     STATUS_BADGE[status] || 'bg-zinc-500/10 text-zinc-400 border-zinc-500/20';
   const label = STATUS_LABEL[status] || status;
+  const lateLabel =
+    (status === 'late' || status === 'pending_approval') &&
+    lateMinutes != null
+      ? formatLateDuration(lateMinutes)
+      : '';
 
   return (
-    <span
-      className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold ${classes}`}
-    >
-      {label}
+    <span className="inline-flex flex-col items-start gap-1">
+      <span
+        className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold ${classes}`}
+      >
+        {label}
+      </span>
+      {lateLabel ? (
+        <span className="text-xs font-medium text-amber-400/90">{lateLabel}</span>
+      ) : null}
     </span>
   );
 };
@@ -142,7 +153,10 @@ export default function AttendanceHistory() {
                     {formatWorkedDuration(row.workedMinutes)}
                   </td>
                   <td className="px-3 py-3">
-                    <StatusBadge status={row.status} />
+                    <StatusBadge
+                      status={row.status}
+                      lateMinutes={row.lateMinutes}
+                    />
                   </td>
                 </tr>
               ))}

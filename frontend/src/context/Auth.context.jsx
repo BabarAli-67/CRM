@@ -17,8 +17,8 @@ const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(getStoredUser);
   const [loading] = useState(false);
 
-  const login = async (email, password) => {
-    const { data } = await api.post('/auth/login', { email, password });
+  const login = async (username, password) => {
+    const { data } = await api.post('/auth/login', { username, password });
     const { user: loggedInUser, token } = data.data;
 
     localStorage.setItem('flashcrm_token', token);

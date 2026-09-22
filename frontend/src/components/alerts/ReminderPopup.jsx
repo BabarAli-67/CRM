@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import useAuth from '../../hooks/useAuth.hook.js';
 import { startAlarmLoop, stopChime } from '../../utils/audioAlert.js';
+import { showBrowserNotification } from '../../utils/browserNotification.util.js';
 
 /** Auto-stop alarm + dismiss if the agent never interacts */
 const AUTO_STOP_MS = 60_000;
@@ -99,28 +100,38 @@ function scrollToReminderRow(kind, id) {
 }
 
 /**
- * Single toast card — amber banner language from Phase 2 attendance alerts.
+ * Single toast card — prominent callback / follow-up alert.
  */
 function ReminderPopup({ reminder, onClose, onView }) {
   if (!reminder) return null;
 
   const isExact = reminder.alertType === 'exact';
+  const headline = isExact
+    ? `Callback DUE NOW: ${reminder.businessName} - ${reminder.phone}`
+    : `Upcoming Callback in 5 mins: ${reminder.businessName} - ${reminder.phone}`;
+
+  const followupHeadline = isExact
+    ? `Follow-up DUE NOW: ${reminder.businessName} - ${reminder.phone}`
+    : `Upcoming Follow-up in 5 mins: ${reminder.businessName} - ${reminder.phone}`;
+
+  const title =
+    reminder.kind === 'followup' ? followupHeadline : headline;
 
   return (
     <div
       role="alert"
       aria-live="assertive"
-      className="pointer-events-auto w-full max-w-md overflow-hidden rounded-md border border-amber-200 bg-amber-50 shadow-lg shadow-slate-900/10"
+      className="pointer-events-auto w-full max-w-md overflow-hidden rounded-xl border border-amber-400/40 bg-amber-50 shadow-2xl shadow-slate-900/30"
     >
-      <div className="border-b border-amber-200/80 bg-amber-100/60 px-4 py-2">
+      <div className="border-b border-amber-200/80 bg-amber-100/80 px-4 py-3">
         <div className="flex items-start justify-between gap-3">
           <div>
             <p className="text-xs font-semibold uppercase tracking-wide text-amber-800/80">
               {kindLabel(reminder.kind)}
               {isExact ? ' · Due now' : ' · In 5 minutes'}
             </p>
-            <p className="mt-0.5 text-sm font-semibold text-amber-950">
-              {reminder.businessName}
+            <p className="mt-1 text-sm font-semibold leading-snug text-amber-950">
+              {title}
             </p>
           </div>
           <button
@@ -135,9 +146,6 @@ function ReminderPopup({ reminder, onClose, onView }) {
       </div>
 
       <div className="space-y-2 px-4 py-3 text-amber-950">
-        <p className="text-sm">
-          <span className="font-medium">Phone:</span> {reminder.phone}
-        </p>
         <p className="text-sm">
           <span className="font-medium">Scheduled (PKT):</span>{' '}
           {formatPkt(reminder.triggerAt)}
@@ -202,12 +210,28 @@ export function ReminderPopupHost() {
     }, 120);
   }, [active, navigate, user?.role]);
 
-  // Start / restart looping alarm whenever the front reminder changes
+  // Start / restart looping alarm + OS notification whenever the front reminder changes
   useEffect(() => {
     if (!active) {
       stopChime();
       return undefined;
     }
+
+    const isExact = active.alertType === 'exact';
+    const label =
+      active.kind === 'followup'
+        ? isExact
+          ? `Follow-up DUE NOW: ${active.businessName} - ${active.phone}`
+          : `Upcoming Follow-up in 5 mins: ${active.businessName} - ${active.phone}`
+        : isExact
+          ? `Callback DUE NOW: ${active.businessName} - ${active.phone}`
+          : `Upcoming Callback in 5 mins: ${active.businessName} - ${active.phone}`;
+
+    showBrowserNotification({
+      title: isExact ? 'Flash CRM · Due Now' : 'Flash CRM · 5 min warning',
+      body: label,
+      tag: `flashcrm-${active.kind}-${active.id}-${active.alertType}`,
+    });
 
     startAlarmLoop();
 

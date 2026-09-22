@@ -41,6 +41,12 @@ const attendanceSchema = new mongoose.Schema(
       type: Date,
       default: null,
     },
+    /** Minutes after shiftStartAt when the late request was submitted. */
+    lateMinutes: {
+      type: Number,
+      default: null,
+      min: 0,
+    },
     approvedBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
@@ -48,7 +54,7 @@ const attendanceSchema = new mongoose.Schema(
     },
     approvalAction: {
       type: String,
-      enum: ['present', 'late', null],
+      enum: ['present', 'late', 'absent', null],
       default: null,
     },
     approvedAt: {

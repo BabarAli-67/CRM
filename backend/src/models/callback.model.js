@@ -14,7 +14,7 @@ const callbackSchema = new mongoose.Schema(
     },
     businessLink: {
       type: String,
-      required: true,
+      default: null,
       trim: true,
     },
     callbackAt: {
@@ -32,9 +32,22 @@ const callbackSchema = new mongoose.Schema(
       required: true,
       index: true,
     },
+    /** When set, callback is scheduled against an existing lead (no re-entry of lead fields). */
+    leadId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Lead',
+      default: null,
+      index: true,
+    },
     status: {
       type: String,
-      enum: ['pending', 'promoted'],
+      enum: [
+        'pending',
+        'promoted',
+        'completed',
+        'transferred',
+        'cancelled',
+      ],
       default: 'pending',
     },
     promotedLeadId: {

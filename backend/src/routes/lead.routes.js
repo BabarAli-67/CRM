@@ -5,6 +5,11 @@ import {
   createLead,
   getMyLeads,
   getAssignedLeads,
+  getCloserPool,
+  getCloserClosedSales,
+  sendLeadToCloserPool,
+  claimLead,
+  moveLeadToCst,
   getAllLeads,
   getLeadById,
   updateLead,
@@ -26,6 +31,31 @@ router.get('/mine', restrictTo('sales_agent'), getMyLeads);
 
 router.get('/assigned-to-me', restrictTo('closer'), getAssignedLeads);
 
+router.get('/closer-pool', restrictTo('closer'), getCloserPool);
+
+router.get('/closer-closed', restrictTo('closer'), getCloserClosedSales);
+
+router.patch(
+  '/:id/send-to-pool',
+  restrictTo('sales_agent'),
+  blockReadOnlyAdmin,
+  sendLeadToCloserPool
+);
+
+router.patch(
+  '/:id/claim',
+  restrictTo('closer'),
+  blockReadOnlyAdmin,
+  claimLead
+);
+
+router.patch(
+  '/:id/move-to-cst',
+  restrictTo('closer', 'super_admin'),
+  blockReadOnlyAdmin,
+  moveLeadToCst
+);
+
 router.get(
   '/',
   restrictTo('super_admin', 'admin'),
@@ -35,7 +65,7 @@ router.get(
 
 router.get(
   '/:id',
-  restrictTo('sales_agent', 'closer', 'super_admin'),
+  restrictTo('sales_agent', 'closer', 'super_admin', 'admin', 'cst_manager'),
   getLeadById
 );
 

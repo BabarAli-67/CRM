@@ -1,17 +1,74 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
+import { Eye, EyeOff } from 'lucide-react';
 import useAuth from '../hooks/useAuth.hook.js';
 
 const inputClassName =
   'w-full rounded-xl border border-obsidian-border bg-obsidian-elevated px-4 py-3 text-ink outline-none transition placeholder:text-ink-soft focus:border-flash-secondary focus:ring-2 focus:ring-flash-secondary/30';
 
+const ROLE_OPTIONS = [
+  { value: 'sales_agent', label: 'Sales Agent' },
+  { value: 'closer', label: 'Closer' },
+  { value: 'cst_manager', label: 'CST Manager' },
+  { value: 'tech_team', label: 'Tech Team' },
+  { value: 'admin', label: 'Admin (Auditor)' },
+];
+
+function PasswordField({
+  id,
+  label,
+  value,
+  onChange,
+  show,
+  onToggleShow,
+  placeholder,
+  autoComplete = 'new-password',
+}) {
+  return (
+    <div>
+      <label htmlFor={id} className="mb-2 block font-display text-sm font-medium text-ink">
+        {label}
+      </label>
+      <div className="relative">
+        <input
+          id={id}
+          type={show ? 'text' : 'password'}
+          autoComplete={autoComplete}
+          required
+          minLength={8}
+          value={value}
+          onChange={onChange}
+          className={`${inputClassName} pr-12`}
+          placeholder={placeholder}
+        />
+        <button
+          type="button"
+          onClick={onToggleShow}
+          className="absolute inset-y-0 right-0 flex cursor-pointer items-center px-3 text-zinc-400 transition hover:text-white"
+          aria-label={show ? `Hide ${label}` : `Show ${label}`}
+        >
+          {show ? (
+            <EyeOff className="h-5 w-5" aria-hidden />
+          ) : (
+            <Eye className="h-5 w-5" aria-hidden />
+          )}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function RegisterPage() {
   const { register } = useAuth();
 
   const [fullName, setFullName] = useState('');
-  const [email, setEmail] = useState('');
+  const [username, setUsername] = useState('');
   const [phone, setPhone] = useState('');
+  const [requestedRole, setRequestedRole] = useState('sales_agent');
   const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [submitted, setSubmitted] = useState(false);
@@ -19,10 +76,23 @@ export default function RegisterPage() {
   const handleSubmit = async (event) => {
     event.preventDefault();
     setError('');
+
+    if (password !== confirmPassword) {
+      setError('New password and confirm password do not match.');
+      return;
+    }
+
     setLoading(true);
 
     try {
-      await register({ fullName, email, phone, password });
+      await register({
+        fullName: fullName.trim(),
+        username: username.trim(),
+        phone: phone.trim(),
+        password,
+        confirmPassword,
+        requestedRole,
+      });
       setSubmitted(true);
     } catch (err) {
       setError(err.response?.data?.message || 'Registration failed. Please try again.');
@@ -102,20 +172,24 @@ export default function RegisterPage() {
 
               <div>
                 <label
-                  htmlFor="email"
+                  htmlFor="username"
                   className="mb-2 block font-display text-sm font-medium text-ink"
                 >
-                  Email
+                  Username
                 </label>
                 <input
-                  id="email"
-                  type="email"
-                  autoComplete="email"
+                  id="username"
+                  type="text"
+                  autoComplete="username"
                   required
-                  value={email}
-                  onChange={(event) => setEmail(event.target.value)}
+                  minLength={3}
+                  maxLength={32}
+                  pattern="[A-Za-z0-9._\-]+"
+                  title="3–32 characters: letters, numbers, dots, underscores, or hyphens"
+                  value={username}
+                  onChange={(event) => setUsername(event.target.value)}
                   className={inputClassName}
-                  placeholder="you@company.com"
+                  placeholder="jane.doe"
                 />
               </div>
 
@@ -124,7 +198,7 @@ export default function RegisterPage() {
                   htmlFor="phone"
                   className="mb-2 block font-display text-sm font-medium text-ink"
                 >
-                  Phone
+                  Phone number
                 </label>
                 <input
                   id="phone"
@@ -140,23 +214,45 @@ export default function RegisterPage() {
 
               <div>
                 <label
-                  htmlFor="password"
+                  htmlFor="requestedRole"
                   className="mb-2 block font-display text-sm font-medium text-ink"
                 >
-                  Password
+                  Role
                 </label>
-                <input
-                  id="password"
-                  type="password"
-                  autoComplete="new-password"
+                <select
+                  id="requestedRole"
                   required
-                  minLength={8}
-                  value={password}
-                  onChange={(event) => setPassword(event.target.value)}
+                  value={requestedRole}
+                  onChange={(event) => setRequestedRole(event.target.value)}
                   className={inputClassName}
-                  placeholder="At least 8 characters"
-                />
+                >
+                  {ROLE_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
               </div>
+
+              <PasswordField
+                id="password"
+                label="New password"
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                show={showPassword}
+                onToggleShow={() => setShowPassword((v) => !v)}
+                placeholder="At least 8 characters"
+              />
+
+              <PasswordField
+                id="confirmPassword"
+                label="Confirm new password"
+                value={confirmPassword}
+                onChange={(event) => setConfirmPassword(event.target.value)}
+                show={showConfirmPassword}
+                onToggleShow={() => setShowConfirmPassword((v) => !v)}
+                placeholder="Re-enter your password"
+              />
 
               <button
                 type="submit"

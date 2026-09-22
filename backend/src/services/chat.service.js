@@ -19,7 +19,7 @@ export async function getContactsForUser(user) {
     status: 'approved',
     _id: { $ne: user._id },
   })
-    .select('fullName email role')
+    .select('fullName username role')
     .sort({ fullName: 1 });
 
   return contacts;
@@ -64,7 +64,7 @@ export async function getOrCreateConversation(userA, contactId) {
 export async function listConversationsForUser(userId) {
   const conversations = await Conversation.find({ participants: userId })
     .sort({ lastMessageAt: -1 })
-    .populate('participants', 'fullName email role');
+    .populate('participants', 'fullName username role');
 
   const unreadCounts = await Promise.all(
     conversations.map((conversation) =>

@@ -10,12 +10,14 @@ export default function LeadCreatePage() {
       <div className="bg-zinc-900/50 border border-zinc-800/80 rounded-2xl p-6 shadow-xl">
         <LeadForm
           title="Create Lead"
-          onCancel={() => navigate('/dashboard/sales-agent')}
-          onSaved={(lead) => {
+          onCancel={() => navigate('/dashboard/sales-agent/leads')}
+          onSaved={(lead, meta) => {
+            if (meta?.sentToPool) {
+              navigate('/dashboard/sales-agent/leads', { replace: true });
+              return;
+            }
             if (lead?._id) {
-              navigate(`/dashboard/sales-agent/leads/${lead._id}/edit`, {
-                replace: true,
-              });
+              navigate('/dashboard/sales-agent/leads', { replace: true });
             }
           }}
         />

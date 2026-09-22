@@ -3,44 +3,33 @@ import { enqueueReminderPopup } from '../components/alerts/ReminderPopup.jsx';
 import useAuth from './useAuth.hook.js';
 
 const FIVE_MIN_MS = 5 * 60 * 1000;
-const CATCHUP_WINDOW_MS = 60 * 1000;
+const CATCHUP_WINDOW_MS = 90 * 1000;
+/** Backup poll — catches timers throttled while the tab was backgrounded. */
+const POLL_MS = 15_000;
 
 /**
  * Schedule 5-minute and exact-time reminder chimes for callbacks / lead follow-ups.
- *
- * @param {Array<{
- *   id: string,
- *   kind: 'callback' | 'followup',
- *   triggerAt: string | number | Date,
- *   notifyUserIds: Array<string>,
- *   alerts?: { fiveMinFired?: boolean, exactTimeFired?: boolean }
- * }>} items
- * @param {{
- *   showPopup?: (payload: object) => void,
- *   markAlert?: (payload: {
- *     id: string,
- *     kind: 'callback' | 'followup',
- *     fiveMinFired?: boolean,
- *     exactTimeFired?: boolean
- *   }) => void | Promise<void>,
- *   currentUserId?: string
- * }} [options]
+ * Uses setTimeout plus a visibility/poll safety net so alerts still fire when
+ * the agent is on another dashboard tab or the browser throttles timers.
  */
 export default function useReminderScheduler(items = [], options = {}) {
   const { user } = useAuth();
-  const currentUserId = String(options.currentUserId ?? user?._id ?? user?.id ?? '');
+  const currentUserId = String(
+    options.currentUserId ?? user?._id ?? user?.id ?? ''
+  );
   const showPopup = options.showPopup ?? enqueueReminderPopup;
   const markAlert = options.markAlert;
 
   const showPopupRef = useRef(showPopup);
   const markAlertRef = useRef(markAlert);
+  const itemsRef = useRef(items);
   showPopupRef.current = showPopup;
   markAlertRef.current = markAlert;
+  itemsRef.current = items;
 
-  // Session guard so a slow mark-alert mutation / rapid refetch doesn't double-chime
+  // Session guard — once per callbackId + interval (fiveMin / exact)
   const firedRef = useRef(new Set());
 
-  // Re-derive when schedule-relevant fields change (TanStack Query refetch / edits)
   const scheduleKey = useMemo(
     () =>
       JSON.stringify(
@@ -75,6 +64,8 @@ export default function useReminderScheduler(items = [], options = {}) {
           kind: item.kind,
           alertType,
           triggerAt: item.triggerAt,
+          businessName: item.businessName,
+          phone: item.phone,
           item,
         });
       } catch {
@@ -88,8 +79,27 @@ export default function useReminderScheduler(items = [], options = {}) {
             : { id: item.id, kind: item.kind, exactTimeFired: true };
         await markAlertRef.current?.(payload);
       } catch {
-        // Allow a later refetch to retry if mark failed
         firedRef.current.delete(key);
+      }
+    };
+
+    const maybeFire = (item, alertType, targetMs, alreadyFired) => {
+      if (alreadyFired) {
+        firedRef.current.add(`${item.kind}:${item.id}:${alertType}`);
+        return;
+      }
+
+      const key = `${item.kind}:${item.id}:${alertType}`;
+      if (firedRef.current.has(key)) return;
+
+      const now = Date.now();
+      const delta = targetMs - now;
+
+      if (delta > 0) return;
+
+      // Catch-up: fire if we are within the window after the target
+      if (delta >= -CATCHUP_WINDOW_MS) {
+        fire(item, alertType);
       }
     };
 
@@ -110,9 +120,29 @@ export default function useReminderScheduler(items = [], options = {}) {
         return;
       }
 
-      // Catch-up: user loaded during / just after the window (~60s)
       if (delta >= -CATCHUP_WINDOW_MS) {
         fire(item, alertType);
+      }
+    };
+
+    const scanAll = () => {
+      const live = itemsRef.current || [];
+      for (const item of live) {
+        if (!item?.id || !item?.triggerAt) continue;
+        const notifyIds = (item.notifyUserIds || []).map(String);
+        if (!notifyIds.includes(currentUserId)) continue;
+
+        const triggerAt = new Date(item.triggerAt).getTime();
+        if (Number.isNaN(triggerAt)) continue;
+
+        const alerts = item.alerts || {};
+        maybeFire(
+          item,
+          'fiveMin',
+          triggerAt - FIVE_MIN_MS,
+          Boolean(alerts.fiveMinFired)
+        );
+        maybeFire(item, 'exact', triggerAt, Boolean(alerts.exactTimeFired));
       }
     };
 
@@ -132,7 +162,6 @@ export default function useReminderScheduler(items = [], options = {}) {
       schedule(item, 'exact', triggerAt, Boolean(alerts.exactTimeFired));
     }
 
-    // Drop session keys for items no longer present so a re-added schedule can fire
     const liveKeys = new Set();
     for (const item of list) {
       liveKeys.add(`${item.kind}:${item.id}:fiveMin`);
@@ -142,10 +171,17 @@ export default function useReminderScheduler(items = [], options = {}) {
       if (!liveKeys.has(key)) firedRef.current.delete(key);
     }
 
+    const pollId = window.setInterval(scanAll, POLL_MS);
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') scanAll();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+
     return () => {
       for (const timerId of timers) clearTimeout(timerId);
+      window.clearInterval(pollId);
+      document.removeEventListener('visibilitychange', onVisible);
     };
-    // scheduleKey captures items content; `items` read from closure for full objects
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scheduleKey, currentUserId]);
 }

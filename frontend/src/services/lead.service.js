@@ -15,6 +15,31 @@ export const getAssignedLeads = async () => {
   return response.data.data.leads;
 };
 
+export const getCloserPool = async () => {
+  const response = await api.get('/leads/closer-pool');
+  return response.data.data.leads;
+};
+
+export const sendLeadToCloserPool = async (id) => {
+  const response = await api.patch(`/leads/${id}/send-to-pool`);
+  return response.data.data.lead;
+};
+
+export const claimLead = async (id) => {
+  const response = await api.patch(`/leads/${id}/claim`);
+  return response.data.data.lead;
+};
+
+export const getCloserClosedSales = async () => {
+  const response = await api.get('/leads/closer-closed');
+  return response.data.data.leads;
+};
+
+export const moveLeadToCst = async (id) => {
+  const response = await api.patch(`/leads/${id}/move-to-cst`);
+  return response.data.data.lead;
+};
+
 export const getLeadById = async (id) => {
   const response = await api.get(`/leads/${id}`);
   return response.data.data.lead;

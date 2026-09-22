@@ -34,8 +34,10 @@ export default function LeadEditPage() {
             initialValues={lead}
             title={lead?.businessName ? `Lead — ${lead.businessName}` : 'Edit Lead'}
             onCancel={() => navigate('/dashboard/sales-agent/leads')}
-            onSaved={() => {
-              // Stay on edit so follow-up section remains available
+            onSaved={(_lead, meta) => {
+              if (meta?.sentToPool) {
+                navigate('/dashboard/sales-agent/leads', { replace: true });
+              }
             }}
           />
         </div>

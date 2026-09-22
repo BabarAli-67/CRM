@@ -105,7 +105,7 @@ export default function AssignTechModal({ open, lead, onClose, onSuccess }) {
               )
               .map((t) => (
                 <option key={t._id} value={t._id}>
-                  {t.fullName} ({t.email})
+                  {t.fullName} ({t.username})
                 </option>
               ))}
           </select>

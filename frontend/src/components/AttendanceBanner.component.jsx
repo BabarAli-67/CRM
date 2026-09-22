@@ -103,7 +103,6 @@ export default function AttendanceBanner() {
         <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3 px-2 sm:px-4">
           <p className="text-sm font-medium">
             Checked in at {formatTime(attendance.checkInTime)}
-            {attendance.status === 'late' ? ' (late)' : ''}
           </p>
           <button
             type="button"

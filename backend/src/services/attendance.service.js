@@ -114,9 +114,15 @@ export const submitLateRequest = async (userId, reason) => {
     throw new ApiError(409, 'A late request is already pending Super Admin review.');
   }
 
+  const lateMinutes = Math.max(
+    0,
+    Math.round((now.getTime() - new Date(record.shiftStartAt).getTime()) / 60000)
+  );
+
   record.status = 'pending_approval';
   record.lateReason = reason;
   record.lateRequestedAt = now;
+  record.lateMinutes = lateMinutes;
   await record.save();
 
   return record;
@@ -178,8 +184,8 @@ export const getPendingLateRequests = async () => {
 };
 
 export const approveLateRequest = async (recordId, decision, approverId) => {
-  if (!['present', 'late'].includes(decision)) {
-    throw new ApiError(400, "decision must be 'present' or 'late'");
+  if (!['present', 'late', 'absent'].includes(decision)) {
+    throw new ApiError(400, "decision must be 'present', 'late', or 'absent'");
   }
 
   const record = await Attendance.findById(recordId);
@@ -189,14 +195,40 @@ export const approveLateRequest = async (recordId, decision, approverId) => {
   }
 
   if (record.status !== 'pending_approval') {
-    throw new ApiError(400, 'Only pending requests can be approved');
+    throw new ApiError(400, 'Only pending requests can be reviewed');
   }
 
-  record.status = decision;
-  record.checkInTime = record.lateRequestedAt;
+  const submittedAt = record.lateRequestedAt || new Date();
+  const computedLateMinutes = Math.max(
+    0,
+    Math.round(
+      (new Date(submittedAt).getTime() -
+        new Date(record.shiftStartAt).getTime()) /
+        60000
+    )
+  );
+
+  if (record.lateMinutes == null) {
+    record.lateMinutes = computedLateMinutes;
+  }
+
   record.approvedBy = approverId;
   record.approvalAction = decision;
   record.approvedAt = new Date();
+
+  if (decision === 'absent') {
+    record.status = 'absent';
+    record.checkInTime = null;
+    record.forcedAbsentBy = approverId;
+    record.forcedAbsentReason =
+      record.forcedAbsentReason ||
+      'Marked absent from late attendance request review';
+    record.forcedAbsentAt = new Date();
+  } else {
+    record.status = decision;
+    record.checkInTime = submittedAt;
+  }
+
   await record.save();
 
   return record;
@@ -256,6 +288,6 @@ export const getAttendanceGrid = async ({ from, to, userId, status } = {}) => {
   }
 
   return Attendance.find(filter)
-    .populate('user', 'fullName email role')
+    .populate('user', 'fullName username role')
     .sort({ shiftDate: -1 });
 };

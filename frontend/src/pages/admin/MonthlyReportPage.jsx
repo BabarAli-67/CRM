@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { ArrowLeft, Download } from 'lucide-react';
 import useAuth from '../../hooks/useAuth.hook.js';
 import { getMonthlyReport } from '../../services/report.service.js';
+import SessionIdentityBadge from '../../components/SessionIdentityBadge.component.jsx';
 import {
   ADMIN_BTN_GHOST,
   ADMIN_BTN_PRIMARY,
@@ -92,46 +93,46 @@ export default function MonthlyReportPage() {
     if (!data) return;
 
     const rows = [
-      ['Section', 'Name', 'Email', 'Metric', 'Value'],
+      ['Section', 'Name', 'Username', 'Metric', 'Value'],
       ...(data.perAgent || []).map((r) => [
         'Agent',
         r.fullName || '',
-        r.email || '',
+        r.username || r.email || '',
         'closedCount',
         r.closedCount,
       ]),
       ...(data.perAgent || []).map((r) => [
         'Agent',
         r.fullName || '',
-        r.email || '',
+        r.username || r.email || '',
         'totalSalesAmount',
         r.totalSalesAmount,
       ]),
       ...(data.perCloser || []).map((r) => [
         'Closer',
         r.fullName || '',
-        r.email || '',
+        r.username || r.email || '',
         'closedCount',
         r.closedCount,
       ]),
       ...(data.perCloser || []).map((r) => [
         'Closer',
         r.fullName || '',
-        r.email || '',
+        r.username || r.email || '',
         'totalSalesAmount',
         r.totalSalesAmount,
       ]),
       ...(data.perTech || []).map((r) => [
         'Tech',
         r.fullName || '',
-        r.email || '',
+        r.username || r.email || '',
         'completedCount',
         r.completedCount,
       ]),
       ...(data.perTech || []).map((r) => [
         'Tech',
         r.fullName || '',
-        r.email || '',
+        r.username || r.email || '',
         'avgCompletionHours',
         r.avgCompletionHours,
       ]),
@@ -168,9 +169,7 @@ export default function MonthlyReportPage() {
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-3">
-            <span className="text-sm text-zinc-400">
-              {user?.fullName || user?.email}
-            </span>
+            <SessionIdentityBadge user={user} />
             <button type="button" onClick={logout} className={ADMIN_BTN_GHOST}>
               Log out
             </button>
@@ -238,10 +237,10 @@ export default function MonthlyReportPage() {
             <ReportTable
               title="Sales Agents"
               empty="No agent closes this month."
-              columns={['Name', 'Email', 'Closed', 'Total sales']}
+              columns={['Name', 'Username', 'Closed', 'Total sales']}
               rows={(data?.perAgent || []).map((r) => [
                 r.fullName || '—',
-                r.email || '—',
+                r.username || r.email || '—',
                 r.closedCount ?? 0,
                 formatAmount(r.totalSalesAmount),
               ])}
@@ -249,10 +248,10 @@ export default function MonthlyReportPage() {
             <ReportTable
               title="Closers"
               empty="No closer closes this month."
-              columns={['Name', 'Email', 'Closed', 'Total sales']}
+              columns={['Name', 'Username', 'Closed', 'Total sales']}
               rows={(data?.perCloser || []).map((r) => [
                 r.fullName || '—',
-                r.email || '—',
+                r.username || r.email || '—',
                 r.closedCount ?? 0,
                 formatAmount(r.totalSalesAmount),
               ])}
@@ -262,13 +261,13 @@ export default function MonthlyReportPage() {
               empty="No tech completions this month."
               columns={[
                 'Name',
-                'Email',
+                'Username',
                 'Completed',
                 'Avg completion (hrs)',
               ]}
               rows={(data?.perTech || []).map((r) => [
                 r.fullName || '—',
-                r.email || '—',
+                r.username || r.email || '—',
                 r.completedCount ?? 0,
                 r.avgCompletionHours ?? '—',
               ])}

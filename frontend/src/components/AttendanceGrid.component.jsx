@@ -6,6 +6,7 @@ import {
   forceAbsent,
   getGrid,
 } from '../services/attendance.service.js';
+import { formatLateDuration } from '../utils/formatLateDuration.util.js';
 import {
   ADMIN_BTN_GHOST,
   ADMIN_BTN_PRIMARY,
@@ -84,6 +85,18 @@ const StatusBadge = ({ status }) => {
       {label}
     </span>
   );
+};
+
+const lateByLabel = (row) => {
+  if (
+    row.lateMinutes == null ||
+    (row.status !== 'late' &&
+      row.status !== 'pending_approval' &&
+      row.approvalAction !== 'late')
+  ) {
+    return null;
+  }
+  return formatLateDuration(row.lateMinutes);
 };
 
 const defaultDateRange = () => {
@@ -250,6 +263,7 @@ export default function AttendanceGrid({ readOnly = false }) {
                 <th className="px-3 py-3 font-medium">Check-Out</th>
                 <th className="px-3 py-3 font-medium">Worked Duration</th>
                 <th className="px-3 py-3 font-medium">Status</th>
+                <th className="px-3 py-3 font-medium">Late By</th>
                 {!readOnly ? (
                   <th className="px-3 py-3 font-medium">Actions</th>
                 ) : null}
@@ -262,6 +276,7 @@ export default function AttendanceGrid({ readOnly = false }) {
                 const busy =
                   forceAbsentMutation.isPending &&
                   forceAbsentMutation.variables?.id === row._id;
+                const lateLabel = lateByLabel(row);
 
                 return (
                   <tr key={row._id} className={`${ADMIN_ROW} align-top`}>
@@ -287,6 +302,15 @@ export default function AttendanceGrid({ readOnly = false }) {
                     </td>
                     <td className="px-3 py-3">
                       <StatusBadge status={row.status} />
+                    </td>
+                    <td className="px-3 py-3 whitespace-nowrap">
+                      {lateLabel ? (
+                        <span className="inline-flex rounded-full bg-amber-500/15 px-2.5 py-0.5 text-xs font-semibold text-amber-300 ring-1 ring-amber-500/30">
+                          {lateLabel}
+                        </span>
+                      ) : (
+                        <span className="text-zinc-500">—</span>
+                      )}
                     </td>
                     {!readOnly ? (
                       <td className="px-3 py-3">

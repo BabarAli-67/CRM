@@ -2,13 +2,19 @@
  * Continuous loud alarm for callback / follow-up reminders.
  * Prefers `/alarm.mp3` (looped HTML5 Audio); falls back to a pulsating
  * 1200Hz Web Audio chime. Call stopChime() to silence immediately.
+ *
+ * Audio unlock: first user gesture resumes AudioContext + primes HTMLAudio
+ * so autoplay policies never block the reminder chime.
  */
 
 let audioCtx = null;
 let unlockBound = false;
+let audioUnlocked = false;
 
 /** @type {HTMLAudioElement | null} */
 let htmlAlarm = null;
+/** @type {HTMLAudioElement | null} */
+let primedAudio = null;
 /** @type {ReturnType<typeof setInterval> | null} */
 let pulseTimer = null;
 /** @type {Array<{ stop: (when?: number) => void }>} */
@@ -36,27 +42,54 @@ const resumeContext = async (ctx) => {
   }
 };
 
+/**
+ * Unlock media playback after a user gesture (required by browsers).
+ * Safe to call repeatedly.
+ */
+export async function unlockAudioPlayback() {
+  try {
+    const ctx = ensureContext();
+    if (ctx) await resumeContext(ctx);
+
+    if (typeof Audio !== 'undefined') {
+      if (!primedAudio) {
+        primedAudio = new Audio(ALARM_MP3);
+        primedAudio.preload = 'auto';
+        primedAudio.volume = 0.01;
+      }
+      // Silent/near-silent play primes HTML5 Audio for later looping alarm
+      primedAudio.currentTime = 0;
+      const playPromise = primedAudio.play();
+      if (playPromise?.then) {
+        await playPromise.catch(() => {});
+      }
+      primedAudio.pause();
+      primedAudio.currentTime = 0;
+      primedAudio.volume = 1;
+    }
+
+    audioUnlocked = true;
+  } catch {
+    // visual + OS notifications still work
+  }
+}
+
+export const isAudioUnlocked = () => audioUnlocked;
+
 const bindUnlockOnGesture = () => {
   if (unlockBound || typeof window === 'undefined') return;
   unlockBound = true;
 
-  const unlock = async () => {
-    try {
-      const ctx = ensureContext();
-      if (!ctx) return;
-      await resumeContext(ctx);
-    } catch {
-      // visual alerts still work
-    } finally {
-      window.removeEventListener('pointerdown', unlock);
-      window.removeEventListener('keydown', unlock);
-      window.removeEventListener('touchstart', unlock);
-    }
+  const unlock = () => {
+    unlockAudioPlayback();
   };
 
-  window.addEventListener('pointerdown', unlock, { once: true, passive: true });
-  window.addEventListener('keydown', unlock, { once: true, passive: true });
-  window.addEventListener('touchstart', unlock, { once: true, passive: true });
+  // Keep listening across the session — first gesture unlocks; later gestures
+  // re-resume if the OS suspended the context while the tab was backgrounded.
+  window.addEventListener('pointerdown', unlock, { passive: true });
+  window.addEventListener('keydown', unlock, { passive: true });
+  window.addEventListener('touchstart', unlock, { passive: true });
+  window.addEventListener('click', unlock, { passive: true });
 };
 
 bindUnlockOnGesture();
@@ -69,8 +102,14 @@ function tryLoadAlarmMp3() {
       return;
     }
 
-    const audio = new Audio(ALARM_MP3);
-    audio.preload = 'auto';
+    const audio = primedAudio
+      ? primedAudio
+      : (() => {
+          const a = new Audio(ALARM_MP3);
+          a.preload = 'auto';
+          return a;
+        })();
+
     audio.loop = true;
     audio.volume = 1.0;
 
@@ -88,10 +127,8 @@ function tryLoadAlarmMp3() {
     audio.addEventListener('canplaythrough', onOk, { once: true });
     audio.addEventListener('error', onErr, { once: true });
 
-    // Force network check
     audio.load();
 
-    // Safety if neither event fires
     window.setTimeout(() => {
       if (settled) return;
       if (audio.readyState >= 2) finish(audio);
@@ -100,9 +137,6 @@ function tryLoadAlarmMp3() {
   });
 }
 
-/**
- * One loud 1200Hz chime burst with simple delay “reverb” tail.
- */
 function playPulseBurst(ctx) {
   const t0 = ctx.currentTime + 0.01;
   const duration = 0.55;
@@ -116,7 +150,6 @@ function playPulseBurst(ctx) {
   osc.type = 'square';
   osc.frequency.setValueAtTime(PULSE_HZ, t0);
 
-  // Loud attack, quick decay — urgent ring
   gain.gain.setValueAtTime(0.0001, t0);
   gain.gain.exponentialRampToValueAtTime(0.55, t0 + 0.02);
   gain.gain.exponentialRampToValueAtTime(0.18, t0 + 0.18);
@@ -129,7 +162,6 @@ function playPulseBurst(ctx) {
   osc.connect(gain);
   gain.connect(ctx.destination);
 
-  // Feedback delay path for reverberating ring
   gain.connect(delay);
   delay.connect(feedback);
   feedback.connect(delay);
@@ -163,9 +195,6 @@ function startWebAudioPulseLoop(generation) {
   pulseTimer = window.setInterval(tick, PULSE_EVERY_MS);
 }
 
-/**
- * Immediately silence any looping HTML5 or Web Audio alarm.
- */
 export function stopChime() {
   alarmPlaying = false;
   alarmGeneration += 1;
@@ -175,9 +204,16 @@ export function stopChime() {
       htmlAlarm.pause();
       htmlAlarm.currentTime = 0;
       htmlAlarm.loop = false;
-      htmlAlarm.src = '';
     } catch {
       // ignore
+    }
+    // Keep primedAudio reference for next unlock; don't nuke src if shared
+    if (htmlAlarm !== primedAudio) {
+      try {
+        htmlAlarm.src = '';
+      } catch {
+        // ignore
+      }
     }
     htmlAlarm = null;
   }
@@ -199,16 +235,15 @@ export function stopChime() {
   activeNodes = [];
 }
 
-/**
- * Start a continuous looping alarm (MP3 if present, else Web Audio pulse).
- * Safe to call repeatedly — restarts cleanly.
- */
 export async function startAlarmLoop() {
   stopChime();
   alarmPlaying = true;
   const generation = alarmGeneration;
 
   try {
+    await unlockAudioPlayback();
+    if (!alarmPlaying || generation !== alarmGeneration) return;
+
     const mp3 = await tryLoadAlarmMp3();
     if (!alarmPlaying || generation !== alarmGeneration) return;
 
@@ -216,6 +251,7 @@ export async function startAlarmLoop() {
       htmlAlarm = mp3;
       htmlAlarm.loop = true;
       htmlAlarm.volume = 1.0;
+      htmlAlarm.currentTime = 0;
       await htmlAlarm.play();
       return;
     }
@@ -226,14 +262,12 @@ export async function startAlarmLoop() {
     if (!alarmPlaying || generation !== alarmGeneration) return;
     startWebAudioPulseLoop(generation);
   } catch {
-    // Audio blocked — visual popup still works
     alarmPlaying = false;
   }
 }
 
 /**
- * @deprecated Prefer startAlarmLoop for reminders. Kept for harness / short tests.
- * Starts the continuous alarm (pattern ignored — looping alert is the product behavior).
+ * @deprecated Prefer startAlarmLoop for reminders.
  * @param {'single' | 'double'} [_pattern]
  */
 export async function playChime(_pattern = 'single') {

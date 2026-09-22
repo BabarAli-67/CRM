@@ -5,7 +5,8 @@ import { reassignHandover } from '../../services/handover.service.js';
 import { ADMIN_BTN_GHOST, ADMIN_BTN_PRIMARY, ADMIN_INPUT } from '../adminBrand.js';
 
 const CST_STATUSES = [
-  { value: 'pending_review', label: 'Pending review' },
+  { value: 'awaiting_handover', label: 'Awaiting CST handover' },
+  { value: 'pending_review', label: 'Handed over to CST' },
   { value: 'assigned', label: 'Assigned' },
   { value: 'in_progress', label: 'In progress' },
   { value: 'completed', label: 'Completed' },
@@ -110,7 +111,7 @@ export default function OverrideReassignModal({
             <option value="">— Unchanged / none —</option>
             {techs.map((t) => (
               <option key={t._id} value={t._id}>
-                {t.fullName} ({t.email})
+                {t.fullName} ({t.username})
               </option>
             ))}
           </select>

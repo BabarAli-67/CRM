@@ -4,11 +4,12 @@ import { useQuery } from '@tanstack/react-query';
 import { Clock3 } from 'lucide-react';
 import AttendanceBanner from '../AttendanceBanner.component.jsx';
 import GracefulExitModal from '../GracefulExitModal.component.jsx';
+import GlobalRemindersBridge from '../alerts/GlobalRemindersBridge.component.jsx';
+import SessionIdentityBadge from '../SessionIdentityBadge.component.jsx';
 import useAuth from '../../hooks/useAuth.hook.js';
 import { getHistory, getTodayStatus } from '../../services/attendance.service.js';
 import { getMyClosedCount } from '../../services/stats.service.js';
 import { getShift } from '../../services/shift.service.js';
-
 const ROLE_LABELS = {
   sales_agent: 'Sales Agent',
   closer: 'Closer',
@@ -225,24 +226,21 @@ export default function DepartmentShell({ title, roleLabel, navItems, children }
     <div className="flex min-h-screen flex-col bg-[#0B0C0E] text-white">
       <AttendanceBanner />
       <GracefulExitModal />
+      <GlobalRemindersBridge />
 
       <header className="bg-zinc-900/60 backdrop-blur-md border-b border-zinc-800/80 sticky top-0 z-30 px-4 py-4 sm:px-8">
         <div className="mx-auto flex w-full max-w-7xl flex-wrap items-center justify-between gap-4">
-          <div className="flex min-w-0 flex-wrap items-center gap-3">
-            <div className="min-w-0">
-              <p className="bg-gradient-to-r from-[#FF4B26] via-[#F23B18] to-[#C92000] bg-clip-text text-xs font-bold italic tracking-wide text-transparent">
-                FLASH TECH
-              </p>
-              <h1 className="font-display text-xl font-semibold tracking-tight text-white sm:text-2xl">
-                {title}
-              </h1>
-            </div>
-            <span className="bg-orange-500/10 text-orange-400 border border-orange-500/20 text-xs px-2.5 py-1 rounded-full uppercase tracking-wider font-semibold">
-              {displayRole}
-            </span>
+          <div className="min-w-0">
+            <p className="bg-gradient-to-r from-[#FF4B26] via-[#F23B18] to-[#C92000] bg-clip-text text-xs font-bold italic tracking-wide text-transparent">
+              FLASH TECH
+            </p>
+            <h1 className="font-display text-xl font-semibold tracking-tight text-white sm:text-2xl">
+              {title}
+            </h1>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center gap-3 sm:gap-4">
+            <SessionIdentityBadge user={user} roleLabel={displayRole} />
             <nav
               className="flex flex-wrap items-center gap-1 rounded-full border border-zinc-800/80 bg-zinc-900/40 p-1"
               aria-label={`${displayRole} navigation`}
@@ -251,7 +249,7 @@ export default function DepartmentShell({ title, roleLabel, navItems, children }
                 <NavLink
                   key={item.to}
                   to={item.to}
-                  end={item.end}
+                  end={item.end ?? true}
                   className={navLinkClass}
                 >
                   {item.label}

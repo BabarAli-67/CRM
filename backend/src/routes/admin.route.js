@@ -10,12 +10,15 @@ import {
   updateUserProfile,
   deleteUser,
 } from '../controllers/admin.controller.js';
+import { getAdminCallbacks } from '../controllers/callback.controller.js';
 import { approveUserValidator, updateUserValidator } from '../utils/validators.util.js';
 import { validate } from '../middlewares/validate.middleware.js';
 
 const router = Router();
 
 router.use(protect, restrictTo('super_admin', 'admin'), blockReadOnlyAdmin);
+
+router.get('/callbacks', getAdminCallbacks);
 
 router.get('/users/pending', getPendingUsers);
 router.patch('/users/:id/approve', approveUserValidator, validate, approveUser);

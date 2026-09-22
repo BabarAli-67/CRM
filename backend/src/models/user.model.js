@@ -1,7 +1,7 @@
 import mongoose from 'mongoose';
 import bcrypt from 'bcryptjs';
 
-const emailRegex = /^\S+@\S+\.\S+$/;
+const usernameRegex = /^[a-zA-Z0-9._-]{3,32}$/;
 
 const userSchema = new mongoose.Schema(
   {
@@ -10,13 +10,18 @@ const userSchema = new mongoose.Schema(
       required: true,
       trim: true,
     },
-    email: {
+    username: {
       type: String,
       required: true,
       unique: true,
       lowercase: true,
       trim: true,
-      match: [emailRegex, 'Please provide a valid email address'],
+      minlength: 3,
+      maxlength: 32,
+      match: [
+        usernameRegex,
+        'Username must be 3–32 characters and may contain letters, numbers, dots, underscores, or hyphens',
+      ],
     },
     phone: {
       type: String,
@@ -28,6 +33,12 @@ const userSchema = new mongoose.Schema(
       required: true,
       minlength: 8,
       select: false,
+    },
+    /** Role requested at signup; final role is set on admin approval. */
+    requestedRole: {
+      type: String,
+      enum: ['admin', 'sales_agent', 'closer', 'cst_manager', 'tech_team'],
+      default: undefined,
     },
     role: {
       type: String,

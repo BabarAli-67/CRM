@@ -2,6 +2,7 @@ import asyncHandler from '../utils/asyncHandler.util.js';
 import { ApiError } from '../utils/apiError.util.js';
 import { ApiResponse } from '../utils/apiResponse.util.js';
 import Lead from '../models/lead.model.js';
+import { resolveCallbacksForLead } from '../utils/callbackResolve.util.js';
 
 const refId = (ref) => {
   if (!ref) return null;
@@ -10,13 +11,24 @@ const refId = (ref) => {
 };
 
 const canAccessLead = (lead, user) => {
-  if (user.role === 'super_admin') return true;
+  if (
+    user.role === 'super_admin' ||
+    user.role === 'admin' ||
+    user.role === 'cst_manager'
+  ) {
+    return true;
+  }
 
   const userId = String(user._id);
   const isOwningAgent = refId(lead.agentId) === userId;
   const isAssignedCloser = refId(lead.closerId) === userId;
+  const isPoolLead =
+    user.role === 'closer' &&
+    lead.stage === 'active' &&
+    lead.status === 'pending_closer_claim' &&
+    !lead.closerId;
 
-  return isOwningAgent || isAssignedCloser;
+  return isOwningAgent || isAssignedCloser || isPoolLead;
 };
 
 const UPDATABLE_FIELDS = [
@@ -31,7 +43,6 @@ const UPDATABLE_FIELDS = [
   'servicesArea',
   'serviceOffered',
   'salesAmount',
-  'closerId',
   'notes',
 ];
 
@@ -42,14 +53,34 @@ export const createLead = asyncHandler(async (req, res) => {
     throw new ApiError(400, 'businessName and phone are required');
   }
 
+  const sendToCloserPool = Boolean(req.body.sendToCloserPool);
+
   const payload = {
-    businessName,
-    phone,
+    businessName: String(businessName).trim(),
+    phone: String(phone).trim(),
     agentId: req.user._id,
+    status: sendToCloserPool ? 'pending_closer_claim' : 'with_agent',
+    closerId: null,
   };
 
+  if (req.body.websiteLink !== undefined) {
+    payload.websiteLink =
+      req.body.websiteLink === '' ? null : req.body.websiteLink;
+  }
+  if (req.body.notes !== undefined) {
+    payload.notes = req.body.notes === '' ? null : req.body.notes;
+  }
+
+  // Allow optional legacy fields if still posted (edit paths / promote)
   for (const field of UPDATABLE_FIELDS) {
-    if (field === 'businessName' || field === 'phone') continue;
+    if (
+      field === 'businessName' ||
+      field === 'phone' ||
+      field === 'websiteLink' ||
+      field === 'notes'
+    ) {
+      continue;
+    }
     if (req.body[field] !== undefined) {
       payload[field] = req.body[field] === '' ? null : req.body[field];
     }
@@ -60,10 +91,17 @@ export const createLead = asyncHandler(async (req, res) => {
   }
 
   const lead = await Lead.create(payload);
+  await lead.populate('agentId', 'fullName username role');
 
-  res
-    .status(201)
-    .json(new ApiResponse(201, { lead }, 'Lead created successfully'));
+  res.status(201).json(
+    new ApiResponse(
+      201,
+      { lead },
+      sendToCloserPool
+        ? 'Lead created and sent to closer pool'
+        : 'Lead created successfully'
+    )
+  );
 });
 
 export const getMyLeads = asyncHandler(async (req, res) => {
@@ -71,7 +109,9 @@ export const getMyLeads = asyncHandler(async (req, res) => {
   const leads = await Lead.find({
     agentId: req.user._id,
     stage: 'active',
-  }).sort({ updatedAt: -1 });
+  })
+    .populate('closerId', 'fullName username role')
+    .sort({ updatedAt: -1 });
 
   res
     .status(200)
@@ -82,18 +122,169 @@ export const getAssignedLeads = asyncHandler(async (req, res) => {
   const leads = await Lead.find({
     closerId: req.user._id,
     stage: 'active',
-  }).sort({ updatedAt: -1 });
+  })
+    .populate('agentId', 'fullName username role')
+    .sort({ updatedAt: -1 });
 
   res
     .status(200)
     .json(new ApiResponse(200, { leads }, 'Assigned active leads retrieved'));
 });
 
+export const getCloserPool = asyncHandler(async (req, res) => {
+  const leads = await Lead.find({
+    stage: 'active',
+    status: 'pending_closer_claim',
+    closerId: null,
+  })
+    .populate('agentId', 'fullName username role')
+    .sort({ updatedAt: -1 });
+
+  res
+    .status(200)
+    .json(new ApiResponse(200, { leads }, 'Closer pool retrieved'));
+});
+
+/** Closed sales owned by this closer — awaiting CST handover or already handed over. */
+export const getCloserClosedSales = asyncHandler(async (req, res) => {
+  const leads = await Lead.find({
+    closerId: req.user._id,
+    stage: 'closed_sale',
+  })
+    .populate('agentId', 'fullName username role')
+    .populate('closerId', 'fullName username role')
+    .populate('closedBy', 'fullName username role')
+    .sort({ closedAt: -1 });
+
+  res
+    .status(200)
+    .json(new ApiResponse(200, { leads }, 'Closer closed sales retrieved'));
+});
+
+/**
+ * Closer hands a closed sale to CST (pending_review → CST handover queue).
+ */
+export const moveLeadToCst = asyncHandler(async (req, res) => {
+  const filter =
+    req.user.role === 'super_admin'
+      ? { _id: req.params.id, stage: 'closed_sale' }
+      : {
+          _id: req.params.id,
+          closerId: req.user._id,
+          stage: 'closed_sale',
+        };
+
+  const lead = await Lead.findOne(filter);
+
+  if (!lead) {
+    throw new ApiError(404, 'Closed sale not found or not assigned to you.');
+  }
+
+  const current = lead.handover?.cstStatus;
+  if (
+    current === 'pending_review' ||
+    current === 'assigned' ||
+    current === 'in_progress' ||
+    current === 'completed'
+  ) {
+    throw new ApiError(409, 'This lead has already been handed over to CST.');
+  }
+
+  if (!lead.handover) {
+    lead.handover = {};
+  }
+  lead.handover.cstStatus = 'pending_review';
+  lead.handover.handedOverAt = new Date();
+  await lead.save();
+
+  await lead.populate([
+    { path: 'agentId', select: 'fullName username role' },
+    { path: 'closerId', select: 'fullName username role' },
+    { path: 'closedBy', select: 'fullName username role' },
+  ]);
+
+  res
+    .status(200)
+    .json(
+      new ApiResponse(200, { lead }, 'Lead handed over to CST successfully')
+    );
+});
+
+export const sendLeadToCloserPool = asyncHandler(async (req, res) => {
+  const lead = await Lead.findOneAndUpdate(
+    {
+      _id: req.params.id,
+      agentId: req.user._id,
+      stage: 'active',
+      status: { $in: ['with_agent', 'pending_closer_claim'] },
+    },
+    {
+      $set: {
+        status: 'pending_closer_claim',
+        closerId: null,
+        // Silence agent follow-up chimes — lead left the agent's desk
+        'followUp.alerts.fiveMinFired': true,
+        'followUp.alerts.exactTimeFired': true,
+      },
+    },
+    { returnDocument: 'after' }
+  );
+
+  if (!lead) {
+    throw new ApiError(
+      404,
+      'Lead not found, already claimed, or no longer active.'
+    );
+  }
+
+  await resolveCallbacksForLead(lead._id, 'transferred');
+  await lead.populate('agentId', 'fullName username role');
+
+  res
+    .status(200)
+    .json(new ApiResponse(200, { lead }, 'Lead sent to closer pool'));
+});
+
+export const claimLead = asyncHandler(async (req, res) => {
+  const lead = await Lead.findOneAndUpdate(
+    {
+      _id: req.params.id,
+      stage: 'active',
+      status: 'pending_closer_claim',
+      closerId: null,
+    },
+    {
+      $set: {
+        closerId: req.user._id,
+        status: 'in_progress',
+      },
+    },
+    { returnDocument: 'after' }
+  );
+
+  if (!lead) {
+    throw new ApiError(
+      409,
+      'This lead is no longer available — another closer may have claimed it.'
+    );
+  }
+
+  await lead.populate([
+    { path: 'agentId', select: 'fullName username role' },
+    { path: 'closerId', select: 'fullName username role' },
+  ]);
+
+  res
+    .status(200)
+    .json(new ApiResponse(200, { lead }, 'Lead claimed successfully'));
+});
+
 export const getAllLeads = asyncHandler(async (req, res) => {
   const leads = await Lead.find()
-    .populate('agentId', 'fullName email role')
-    .populate('closerId', 'fullName email role')
-    .populate('handover.assignedTechId', 'fullName email role')
+    .populate('agentId', 'fullName username role')
+    .populate('closerId', 'fullName username role')
+    .populate('closedBy', 'fullName username role')
+    .populate('handover.assignedTechId', 'fullName username role')
     .sort({ updatedAt: -1 });
 
   res
@@ -103,8 +294,10 @@ export const getAllLeads = asyncHandler(async (req, res) => {
 
 export const getLeadById = asyncHandler(async (req, res) => {
   const lead = await Lead.findById(req.params.id)
-    .populate('agentId', 'fullName email role')
-    .populate('closerId', 'fullName email role');
+    .populate('agentId', 'fullName username role')
+    .populate('closerId', 'fullName username role')
+    .populate('closedBy', 'fullName username role')
+    .populate('handover.assignedTechId', 'fullName username role');
 
   if (!lead) {
     throw new ApiError(404, 'Lead not found');
@@ -114,6 +307,7 @@ export const getLeadById = asyncHandler(async (req, res) => {
     throw new ApiError(403, 'You can only view leads you own or are assigned to');
   }
 
+  // Full document including payment + creator fields (authorized roles only)
   res.status(200).json(new ApiResponse(200, { lead }, 'Lead retrieved'));
 });
 
@@ -122,15 +316,30 @@ export const updateLead = asyncHandler(async (req, res) => {
   const isDepartment =
     req.user.role === 'sales_agent' || req.user.role === 'closer';
 
-  const filter = isDepartment
-    ? {
-        _id: req.params.id,
-        stage: 'active',
-        $or: [{ agentId: userId }, { closerId: userId }],
-      }
-    : { _id: req.params.id };
+  let lead;
 
-  const lead = await Lead.findOne(filter);
+  if (req.user.role === 'closer') {
+    // Closers may edit assigned active leads, or closed sales still awaiting CST handover
+    lead = await Lead.findOne({
+      _id: req.params.id,
+      closerId: userId,
+      $or: [
+        { stage: 'active' },
+        {
+          stage: 'closed_sale',
+          'handover.cstStatus': 'awaiting_handover',
+        },
+      ],
+    });
+  } else if (req.user.role === 'sales_agent') {
+    lead = await Lead.findOne({
+      _id: req.params.id,
+      agentId: userId,
+      stage: 'active',
+    });
+  } else {
+    lead = await Lead.findById(req.params.id);
+  }
 
   if (!lead) {
     throw new ApiError(
@@ -141,7 +350,7 @@ export const updateLead = asyncHandler(async (req, res) => {
     );
   }
 
-  // Super Admin may edit any stage; department users already filtered to active
+  // Super Admin may edit any stage; Auditor (admin) is read-only via middleware
   if (!isDepartment && !canAccessLead(lead, req.user)) {
     throw new ApiError(
       403,
@@ -195,6 +404,12 @@ export const updateLead = asyncHandler(async (req, res) => {
 
   await lead.save();
 
+  await lead.populate([
+    { path: 'agentId', select: 'fullName username role' },
+    { path: 'closerId', select: 'fullName username role' },
+    { path: 'closedBy', select: 'fullName username role' },
+  ]);
+
   res
     .status(200)
     .json(new ApiResponse(200, { lead }, 'Lead updated successfully'));
@@ -237,6 +452,8 @@ export const disqualifyLead = asyncHandler(async (req, res) => {
       'This lead is no longer active — it may have just been closed or disqualified.'
     );
   }
+
+  await resolveCallbacksForLead(lead._id, 'cancelled');
 
   res
     .status(200)
@@ -364,13 +581,22 @@ export const closeLead = asyncHandler(async (req, res) => {
 
   const paymentDoc = {
     method: payment.method,
-    linkUrl: payment.method === 'via_link' ? payment.linkUrl : null,
-    cardLast4: payment.method === 'via_card' ? payment.cardLast4 : null,
-    cardBrand:
-      payment.method === 'via_card' ? payment.cardBrand || null : null,
-    cardReferenceToken:
-      payment.method === 'via_card' ? payment.cardReferenceToken : null,
+    linkUrl: null,
+    cardLast4: null,
+    cardBrand: null,
+    cardReferenceToken: null,
+    otherDetails: null,
   };
+
+  if (payment.method === 'via_link') {
+    paymentDoc.linkUrl = payment.linkUrl || null;
+  } else if (payment.method === 'via_card') {
+    paymentDoc.cardLast4 = payment.cardLast4;
+    paymentDoc.cardBrand = payment.cardBrand || null;
+    paymentDoc.cardReferenceToken = payment.cardReferenceToken;
+  } else if (payment.method === 'other') {
+    paymentDoc.otherDetails = String(payment.otherDetails || '').trim() || null;
+  }
 
   const userId = req.user._id;
 
@@ -386,7 +612,8 @@ export const closeLead = asyncHandler(async (req, res) => {
         closedAt: new Date(),
         closedBy: userId,
         payment: paymentDoc,
-        'handover.cstStatus': 'pending_review',
+        // Closer must explicitly "Move to CST" before CST queue receives it
+        'handover.cstStatus': 'awaiting_handover',
         'followUp.alerts.fiveMinFired': true,
         'followUp.alerts.exactTimeFired': true,
       },
@@ -400,6 +627,8 @@ export const closeLead = asyncHandler(async (req, res) => {
       'This lead is no longer active — it may have just been closed or disqualified.'
     );
   }
+
+  await resolveCallbacksForLead(lead._id, 'completed');
 
   // Vanishing Rule: do not return the lead document — only a minimal ack
   res.status(200).json(new ApiResponse(200, { closedCount: 1 }, 'Lead closed'));

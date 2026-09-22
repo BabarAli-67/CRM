@@ -36,3 +36,9 @@ export const getAllCallbacks = async () => {
   const response = await api.get('/callbacks');
   return response.data.data.callbacks;
 };
+
+/** Super Admin / Auditor — full audit feed with lead + assignee. */
+export const getAdminCallbacks = async () => {
+  const response = await api.get('/admin/callbacks');
+  return response.data.data.callbacks;
+};

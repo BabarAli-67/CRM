@@ -8,7 +8,10 @@ const env = cleanEnv(process.env, {
   JWT_SECRET: str(),
   JWT_EXPIRES_IN: str(),
   ADMIN_NAME: str(),
-  ADMIN_EMAIL: email(),
+  /** Login username for the seeded Super Admin (case-insensitive). */
+  ADMIN_USERNAME: str({ default: 'admin' }),
+  /** Legacy seed lookup only — auth no longer uses email. */
+  ADMIN_EMAIL: email({ default: 'admin@flashdigital.com' }),
   ADMIN_PASSWORD: str(),
   CORS_ORIGIN: str(),
 });

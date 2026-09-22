@@ -4,6 +4,7 @@ import {
   approveAttendance,
   getLateQueue,
 } from '../services/attendance.service.js';
+import { formatLateDuration } from '../utils/formatLateDuration.util.js';
 import {
   ADMIN_BTN_PRIMARY,
   ADMIN_CARD,
@@ -43,23 +44,26 @@ export default function LateRequestsQueue({ readOnly = false }) {
   const invalidateQueues = () => {
     queryClient.invalidateQueries({ queryKey: ['lateRequests'] });
     queryClient.invalidateQueries({ queryKey: ['attendanceGrid'] });
+    queryClient.invalidateQueries({ queryKey: ['todayAttendance'] });
+    queryClient.invalidateQueries({ queryKey: ['attendanceHistory'] });
   };
 
-  const approveMutation = useMutation({
+  const reviewMutation = useMutation({
     mutationFn: ({ id, decision }) => approveAttendance(id, decision),
     onSuccess: (_data, variables) => {
       setActionError('');
-      setActionSuccess(
-        variables.decision === 'present'
-          ? 'Request approved as present.'
-          : 'Request approved as late.'
-      );
+      const messages = {
+        present: 'Request approved as present.',
+        late: 'Request approved as late.',
+        absent: 'Request marked as absent.',
+      };
+      setActionSuccess(messages[variables.decision] || 'Request updated.');
       invalidateQueues();
     },
     onError: (err) => {
       setActionSuccess('');
       setActionError(
-        err.response?.data?.message || 'Failed to approve attendance request.'
+        err.response?.data?.message || 'Failed to review attendance request.'
       );
     },
   });
@@ -96,6 +100,7 @@ export default function LateRequestsQueue({ readOnly = false }) {
               <tr>
                 <th className="px-3 py-3 font-medium">Employee</th>
                 <th className="px-3 py-3 font-medium">Submitted At</th>
+                <th className="px-3 py-3 font-medium">Late By</th>
                 <th className="px-3 py-3 font-medium">Reason Note</th>
                 {!readOnly ? (
                   <th className="px-3 py-3 font-medium">Actions</th>
@@ -105,8 +110,23 @@ export default function LateRequestsQueue({ readOnly = false }) {
             <tbody>
               {requests.map((request) => {
                 const busy =
-                  approveMutation.isPending &&
-                  approveMutation.variables?.id === request._id;
+                  reviewMutation.isPending &&
+                  reviewMutation.variables?.id === request._id;
+                const computedMinutes =
+                  request.lateMinutes != null
+                    ? request.lateMinutes
+                    : request.lateRequestedAt && request.shiftStartAt
+                      ? Math.max(
+                          0,
+                          Math.round(
+                            (new Date(request.lateRequestedAt).getTime() -
+                              new Date(request.shiftStartAt).getTime()) /
+                              60000
+                          )
+                        )
+                      : null;
+                const lateLabel =
+                  formatLateDuration(computedMinutes) || '—';
 
                 return (
                   <tr key={request._id} className={`${ADMIN_ROW} align-top`}>
@@ -115,11 +135,16 @@ export default function LateRequestsQueue({ readOnly = false }) {
                         {request.user?.fullName || '—'}
                       </div>
                       <div className="text-xs text-zinc-500">
-                        {request.user?.email || ''}
+                        {request.user?.username || ''}
                       </div>
                     </td>
                     <td className="px-3 py-3 whitespace-nowrap text-zinc-400">
                       {formatSubmittedAt(request.lateRequestedAt)}
+                    </td>
+                    <td className="px-3 py-3 whitespace-nowrap">
+                      <span className="inline-flex rounded-full bg-amber-500/15 px-2.5 py-0.5 text-xs font-semibold text-amber-300 ring-1 ring-amber-500/30">
+                        {lateLabel}
+                      </span>
                     </td>
                     <td className="px-3 py-3 max-w-md">
                       <p className="whitespace-pre-wrap break-words text-zinc-300">
@@ -133,7 +158,7 @@ export default function LateRequestsQueue({ readOnly = false }) {
                             type="button"
                             disabled={busy}
                             onClick={() =>
-                              approveMutation.mutate({
+                              reviewMutation.mutate({
                                 id: request._id,
                                 decision: 'present',
                               })
@@ -146,7 +171,7 @@ export default function LateRequestsQueue({ readOnly = false }) {
                             type="button"
                             disabled={busy}
                             onClick={() =>
-                              approveMutation.mutate({
+                              reviewMutation.mutate({
                                 id: request._id,
                                 decision: 'late',
                               })
@@ -154,6 +179,19 @@ export default function LateRequestsQueue({ readOnly = false }) {
                             className="inline-flex items-center justify-center rounded-xl bg-amber-600 px-4 py-2 font-display text-sm font-semibold text-white shadow-lg shadow-amber-950/30 transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
                           >
                             Approve &amp; Mark Late
+                          </button>
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() =>
+                              reviewMutation.mutate({
+                                id: request._id,
+                                decision: 'absent',
+                              })
+                            }
+                            className="inline-flex items-center justify-center rounded-xl border border-red-500/40 bg-red-600/20 px-4 py-2 font-display text-sm font-semibold text-red-200 transition hover:bg-red-600/35 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            Mark as Absent
                           </button>
                         </div>
                       </td>

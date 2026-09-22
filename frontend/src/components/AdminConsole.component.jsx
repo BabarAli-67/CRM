@@ -20,6 +20,7 @@ import {
 } from 'recharts';
 import AttendanceGrid from './AttendanceGrid.component.jsx';
 import LateRequestsQueue from './LateRequestsQueue.component.jsx';
+import SessionIdentityBadge from './SessionIdentityBadge.component.jsx';
 import UserAccessManagement from './UserAccessManagement.component.jsx';
 import UserRoster from './UserRoster.component.jsx';
 import useAuth from '../hooks/useAuth.hook.js';
@@ -469,8 +470,13 @@ export default function AdminConsole({
     refetchInterval: 30000,
   });
 
-  const activeUsers = users.filter((u) => u.status === 'approved').length;
-  const pendingUsers = users.filter((u) => u.status === 'pending').length;
+  // Operational staff only — Super Admin is never part of system-user KPIs.
+  const staffUsers = useMemo(
+    () => users.filter((u) => u.role !== 'super_admin'),
+    [users]
+  );
+  const activeUsers = staffUsers.filter((u) => u.status === 'approved').length;
+  const pendingUsers = staffUsers.filter((u) => u.status === 'pending').length;
 
   const pulse = useMemo(() => {
     let present = 0;
@@ -517,7 +523,7 @@ export default function AdminConsole({
           <div className="flex items-center gap-3">
             <Link to="/admin/callbacks" className={ADMIN_BTN_GHOST}>
               <PhoneCall className="mr-2 h-4 w-4" aria-hidden />
-              Callbacks
+              Callbacks Monitor
             </Link>
             <Link to="/admin/pipeline" className={ADMIN_BTN_GHOST}>
               <Workflow className="mr-2 h-4 w-4" aria-hidden />
@@ -527,9 +533,7 @@ export default function AdminConsole({
               <PieChartIcon className="mr-2 h-4 w-4" aria-hidden />
               Reports
             </Link>
-            <span className="text-sm text-zinc-400">
-              {user?.fullName || user?.email}
-            </span>
+            <SessionIdentityBadge user={user} />
             <button type="button" onClick={logout} className={ADMIN_BTN_GHOST}>
               <LogOut className="mr-2 h-4 w-4" aria-hidden />
               Log out
@@ -566,7 +570,7 @@ export default function AdminConsole({
               <KpiCard
                 icon={Users}
                 label="Total System Users"
-                value={users.length}
+                value={staffUsers.length}
                 hint={`${activeUsers} active · ${pendingUsers} pending`}
                 accent
               />

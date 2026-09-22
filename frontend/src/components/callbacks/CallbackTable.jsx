@@ -58,7 +58,7 @@ export default function CallbackTable({ callbacks = [] }) {
   if (rows.length === 0) {
     return (
       <p className="py-10 text-center text-sm text-zinc-500">
-        No upcoming callbacks. Create one to get started.
+        No upcoming callbacks. Schedule one from My Leads.
       </p>
     );
   }
@@ -77,7 +77,6 @@ export default function CallbackTable({ callbacks = [] }) {
             <tr>
               <th className="px-3 py-2.5 font-medium">Business</th>
               <th className="px-3 py-2.5 font-medium">Phone</th>
-              <th className="px-3 py-2.5 font-medium">Link</th>
               <th className="px-3 py-2.5 font-medium">Callback (PKT)</th>
               <th className="px-3 py-2.5 font-medium">Notes</th>
               <th className="px-3 py-2.5 font-medium">Status</th>
@@ -88,8 +87,11 @@ export default function CallbackTable({ callbacks = [] }) {
             {rows.map((row) => {
               const at = new Date(row.callbackAt).getTime();
               const overdue =
-                !Number.isNaN(at) && at < now && row.status !== 'promoted';
+                !Number.isNaN(at) &&
+                at < now &&
+                row.status === 'pending';
               const isPromoting = promotingId === row._id;
+              const linkedLeadId = row.leadId?._id || row.leadId || null;
 
               return (
                 <tr
@@ -109,16 +111,6 @@ export default function CallbackTable({ callbacks = [] }) {
                     ) : null}
                   </td>
                   <td className="px-3 py-2.5 whitespace-nowrap">{row.phone}</td>
-                  <td className="px-3 py-2.5 max-w-[10rem] truncate">
-                    <a
-                      href={row.businessLink}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-orange-400 hover:text-orange-300 hover:underline"
-                    >
-                      {row.businessLink}
-                    </a>
-                  </td>
                   <td className="px-3 py-2.5 whitespace-nowrap">
                     {formatPkt(row.callbackAt)}
                   </td>
@@ -138,7 +130,15 @@ export default function CallbackTable({ callbacks = [] }) {
                     </span>
                   </td>
                   <td className="px-3 py-2.5">
-                    {row.status === 'promoted' ? (
+                    {linkedLeadId ? (
+                      <button
+                        type="button"
+                        onClick={() => navigate(leadEditPath(linkedLeadId))}
+                        className="cursor-pointer rounded-full border border-zinc-700 px-2.5 py-1.5 text-xs font-semibold text-zinc-300 hover:bg-zinc-800/50"
+                      >
+                        Open Lead
+                      </button>
+                    ) : row.status === 'promoted' ? (
                       <span className="text-xs text-zinc-600">—</span>
                     ) : (
                       <button

@@ -12,9 +12,9 @@ export const getHandoverQueue = asyncHandler(async (req, res) => {
     .select(
       'clientName businessName phone workEmail personalEmail yelpLink websiteLink gmbLink servicesArea serviceOffered salesAmount payment handover closedAt closedBy agentId closerId notes createdAt updatedAt'
     )
-    .populate('agentId', 'fullName email role')
-    .populate('closerId', 'fullName email role')
-    .populate('closedBy', 'fullName email role')
+    .populate('agentId', 'fullName username role')
+    .populate('closerId', 'fullName username role')
+    .populate('closedBy', 'fullName username role')
     .sort({ closedAt: 1 });
 
   res
@@ -27,7 +27,7 @@ export const getTechList = asyncHandler(async (req, res) => {
     role: 'tech_team',
     status: 'approved',
   })
-    .select('fullName email')
+    .select('fullName username')
     .sort({ fullName: 1 });
 
   res
@@ -158,6 +158,7 @@ export const updateMilestone = asyncHandler(async (req, res) => {
 });
 
 const VALID_CST_STATUSES = [
+  'awaiting_handover',
   'pending_review',
   'assigned',
   'in_progress',

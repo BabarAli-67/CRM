@@ -32,7 +32,7 @@ export default function UserRoster({ readOnly = false }) {
   const [editingId, setEditingId] = useState(null);
   const [draft, setDraft] = useState({
     fullName: '',
-    email: '',
+    username: '',
     phone: '',
     role: '',
   });
@@ -56,7 +56,7 @@ export default function UserRoster({ readOnly = false }) {
     return users.filter(
       (u) =>
         u.fullName?.toLowerCase().includes(q) ||
-        u.email?.toLowerCase().includes(q) ||
+        u.username?.toLowerCase().includes(q) ||
         u.role?.toLowerCase().includes(q) ||
         u.status?.toLowerCase().includes(q)
     );
@@ -95,7 +95,7 @@ export default function UserRoster({ readOnly = false }) {
     setEditingId(user._id);
     setDraft({
       fullName: user.fullName || '',
-      email: user.email || '',
+      username: user.username || '',
       phone: user.phone || '',
       role: user.role && user.role !== 'super_admin' ? user.role : 'sales_agent',
     });
@@ -108,7 +108,7 @@ export default function UserRoster({ readOnly = false }) {
       userId,
       payload: {
         fullName: draft.fullName,
-        email: draft.email,
+        username: draft.username,
         phone: draft.phone,
         role: draft.role,
       },
@@ -153,7 +153,7 @@ export default function UserRoster({ readOnly = false }) {
           type="search"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search name, email, role, status…"
+          placeholder="Search name, username, role, status…"
           className={`w-full max-w-md ${ADMIN_INPUT}`}
           aria-label="Search users"
         />
@@ -188,7 +188,7 @@ export default function UserRoster({ readOnly = false }) {
             <thead className={ADMIN_THEAD}>
               <tr>
                 <th className="px-4 py-3 font-medium">Full Name</th>
-                <th className="px-4 py-3 font-medium">Email</th>
+                <th className="px-4 py-3 font-medium">Username</th>
                 <th className="px-4 py-3 font-medium">Phone</th>
                 <th className="px-4 py-3 font-medium">Role</th>
                 <th className="px-4 py-3 font-medium">Status</th>
@@ -222,15 +222,15 @@ export default function UserRoster({ readOnly = false }) {
                     <td className="px-4 py-4 text-zinc-400">
                       {!readOnly && isEditing ? (
                         <input
-                          type="email"
-                          value={draft.email}
+                          type="text"
+                          value={draft.username}
                           onChange={(event) =>
-                            setDraft((prev) => ({ ...prev, email: event.target.value }))
+                            setDraft((prev) => ({ ...prev, username: event.target.value }))
                           }
                           className={ADMIN_INPUT}
                         />
                       ) : (
-                        user.email
+                        user.username
                       )}
                     </td>
                     <td className="px-4 py-4 text-zinc-400">

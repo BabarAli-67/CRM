@@ -4,8 +4,14 @@ import { registerUser, loginUser } from '../services/auth.service.js';
 import env from '../config/env.config.js';
 
 export const register = asyncHandler(async (req, res) => {
-  const { fullName, email, phone, password } = req.body;
-  const user = await registerUser({ fullName, email, phone, password });
+  const { fullName, username, phone, password, requestedRole, role } = req.body;
+  const user = await registerUser({
+    fullName,
+    username,
+    phone,
+    password,
+    requestedRole: requestedRole || role,
+  });
 
   res
     .status(201)
@@ -19,8 +25,8 @@ export const register = asyncHandler(async (req, res) => {
 });
 
 export const login = asyncHandler(async (req, res) => {
-  const { email, password } = req.body;
-  const { user, token } = await loginUser({ email, password });
+  const { username, password } = req.body;
+  const { user, token } = await loginUser({ username, password });
 
   res.cookie('token', token, {
     httpOnly: true,

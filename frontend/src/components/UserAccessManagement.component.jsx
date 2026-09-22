@@ -154,7 +154,7 @@ export default function UserAccessManagement({ readOnly = false }) {
             <thead className={ADMIN_THEAD}>
               <tr>
                 <th className="px-4 py-3 font-medium">Full Name</th>
-                <th className="px-4 py-3 font-medium">Email</th>
+                <th className="px-4 py-3 font-medium">Username</th>
                 <th className="px-4 py-3 font-medium">Phone</th>
                 <th className="px-4 py-3 font-medium">Requested At</th>
                 <th className="px-4 py-3 font-medium">Role</th>
@@ -163,13 +163,14 @@ export default function UserAccessManagement({ readOnly = false }) {
             </thead>
             <tbody>
               {users.map((user) => {
-                const selectedRole = selectedRoles[user._id] || '';
+                const selectedRole =
+                  selectedRoles[user._id] || user.requestedRole || '';
                 const isResetting = resetTargetId === user._id;
 
                 return (
                   <tr key={user._id} className={ADMIN_ROW}>
                     <td className="px-4 py-4 text-white">{user.fullName}</td>
-                    <td className="px-4 py-4 text-zinc-400">{user.email}</td>
+                    <td className="px-4 py-4 text-zinc-400">{user.username}</td>
                     <td className="px-4 py-4 text-zinc-400">{user.phone}</td>
                     <td className="px-4 py-4 text-zinc-400">
                       {formatRequestedAt(user.createdAt)}

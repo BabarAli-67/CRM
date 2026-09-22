@@ -97,10 +97,14 @@ export const exportGrid = asyncHandler(async (req, res) => {
 
   const rows = records.map((record) => ({
     employeeName: record.user?.fullName ?? '',
-    email: record.user?.email ?? '',
+    username: record.user?.username ?? '',
     role: record.user?.role ?? '',
     shiftDate: record.shiftDate ?? '',
     status: record.status ?? '',
+    lateMinutes:
+      record.lateMinutes === null || record.lateMinutes === undefined
+        ? ''
+        : record.lateMinutes,
     checkInTime: record.checkInTime ? record.checkInTime.toISOString() : '',
     checkOutTime: record.checkOutTime ? record.checkOutTime.toISOString() : '',
     workedMinutes:
@@ -111,10 +115,11 @@ export const exportGrid = asyncHandler(async (req, res) => {
 
   const csvString = toCsv(rows, [
     { key: 'employeeName', label: 'Employee' },
-    { key: 'email', label: 'Email' },
+    { key: 'username', label: 'Username' },
     { key: 'role', label: 'Role' },
     { key: 'shiftDate', label: 'Shift Date' },
     { key: 'status', label: 'Status' },
+    { key: 'lateMinutes', label: 'Late Minutes' },
     { key: 'checkInTime', label: 'Check In' },
     { key: 'checkOutTime', label: 'Check Out' },
     { key: 'workedMinutes', label: 'Worked Minutes' },
@@ -133,9 +138,14 @@ export const approveAttendance = asyncHandler(async (req, res) => {
   const { id } = req.params;
   const attendance = await approveLateRequest(id, decision, req.user._id);
 
-  res
-    .status(200)
-    .json(new ApiResponse(200, { attendance }, 'Attendance approved'));
+  const message =
+    decision === 'absent'
+      ? 'Attendance request marked as absent'
+      : decision === 'late'
+        ? 'Attendance approved as late'
+        : 'Attendance approved as present';
+
+  res.status(200).json(new ApiResponse(200, { attendance }, message));
 });
 
 export const overrideForceAbsent = asyncHandler(async (req, res) => {

@@ -14,6 +14,25 @@ const CARD_BRANDS = [
   { value: 'other', label: 'Other' },
 ];
 
+const METHOD_OPTIONS = [
+  { value: 'via_link', label: 'Via link' },
+  { value: 'via_card', label: 'Via card' },
+  { value: 'other', label: 'Other' },
+];
+
+/** Format PAN digits as #### #### #### #### for display only. */
+const formatCardNumber = (digits) => {
+  const clean = String(digits || '').replace(/\D/g, '').slice(0, 19);
+  return clean.replace(/(\d{4})(?=\d)/g, '$1 ').trim();
+};
+
+/** Format expiry as MM/YY while typing. */
+const formatExpiry = (raw) => {
+  const digits = String(raw || '').replace(/\D/g, '').slice(0, 4);
+  if (digits.length <= 2) return digits;
+  return `${digits.slice(0, 2)}/${digits.slice(2)}`;
+};
+
 /**
  * Instantly drop a closed lead from mine / assigned-to-me caches (Vanishing Rule).
  */
@@ -28,7 +47,12 @@ function vanishLeadFromCaches(queryClient, leadId) {
   queryClient.removeQueries({ queryKey: ['lead', leadId] });
   queryClient.invalidateQueries({ queryKey: ['myLeads'] });
   queryClient.invalidateQueries({ queryKey: ['assignedLeads'] });
+  queryClient.invalidateQueries({ queryKey: ['closerPool'] });
+  queryClient.invalidateQueries({ queryKey: ['allLeads'] });
+  queryClient.invalidateQueries({ queryKey: ['pipeline', 'leads'] });
   queryClient.invalidateQueries({ queryKey: ['myClosedCount'] });
+  queryClient.invalidateQueries({ queryKey: ['closerClosedSales'] });
+  queryClient.invalidateQueries({ queryKey: ['pipeline', 'leads'] });
   queryClient.setQueryData(['myClosedCount'], (old) =>
     typeof old === 'number' ? old + 1 : old
   );
@@ -36,30 +60,28 @@ function vanishLeadFromCaches(queryClient, leadId) {
 
 /**
  * Payment capture modal for closing a sale.
- * Never collects raw PAN/CVV — token + last4 + brand only for via_card.
- *
- * @param {boolean} open
- * @param {object|null} lead
- * @param {() => void} onClose
- * @param {() => void} [onSuccess]
+ * Via card UI collects full card fields for the agent, but only last4 + brand
+ * + an opaque reference token are sent to the API (no raw PAN / CVV stored).
  */
 export default function CloseSaleModal({ open, lead, onClose, onSuccess }) {
   const queryClient = useQueryClient();
   const [method, setMethod] = useState('via_link');
-  const [linkUrl, setLinkUrl] = useState('');
-  const [cardLast4, setCardLast4] = useState('');
   const [cardBrand, setCardBrand] = useState('');
-  const [cardReferenceToken, setCardReferenceToken] = useState('');
+  const [cardNumber, setCardNumber] = useState('');
+  const [cardExpiry, setCardExpiry] = useState('');
+  const [cardCvv, setCardCvv] = useState('');
+  const [otherDetails, setOtherDetails] = useState('');
   const [error, setError] = useState('');
   const [toast, setToast] = useState(false);
 
   useEffect(() => {
     if (!open) return;
     setMethod('via_link');
-    setLinkUrl('');
-    setCardLast4('');
     setCardBrand('');
-    setCardReferenceToken('');
+    setCardNumber('');
+    setCardExpiry('');
+    setCardCvv('');
+    setOtherDetails('');
     setError('');
   }, [open, lead?._id]);
 
@@ -85,30 +107,50 @@ export default function CloseSaleModal({ open, lead, onClose, onSuccess }) {
 
   const buildPayment = () => {
     if (method === 'via_link') {
-      if (!linkUrl.trim()) {
-        return { error: 'Payment link URL is required.' };
+      return { payment: { method: 'via_link' } };
+    }
+
+    if (method === 'other') {
+      const details = otherDetails.trim();
+      if (details.length < 2) {
+        return {
+          error: 'Enter the payment method / details (e.g. Bank Transfer, Cash).',
+        };
       }
       return {
-        payment: { method: 'via_link', linkUrl: linkUrl.trim() },
+        payment: { method: 'other', otherDetails: details },
       };
     }
 
-    if (!/^\d{4}$/.test(cardLast4.trim())) {
-      return { error: 'Enter exactly 4 digits for card last 4.' };
+    // via_card
+    const digits = cardNumber.replace(/\D/g, '');
+    if (digits.length < 13 || digits.length > 19) {
+      return { error: 'Enter a valid card number (13–19 digits).' };
     }
     if (!cardBrand) {
       return { error: 'Select a card brand.' };
     }
-    if (!cardReferenceToken.trim()) {
-      return { error: 'Card reference token is required.' };
+    if (!/^\d{2}\/\d{2}$/.test(cardExpiry.trim())) {
+      return { error: 'Enter expiry as MM/YY.' };
     }
+    const [mm, yy] = cardExpiry.split('/').map(Number);
+    if (mm < 1 || mm > 12) {
+      return { error: 'Expiry month must be between 01 and 12.' };
+    }
+    if (!/^\d{3,4}$/.test(cardCvv.trim())) {
+      return { error: 'Enter a valid 3 or 4 digit CVC / CVV.' };
+    }
+
+    const cardLast4 = digits.slice(-4);
+    // Opaque placeholder — never send raw PAN, expiry, or CVV to the API
+    const cardReferenceToken = `local_${cardBrand}_${cardLast4}_${Date.now()}`;
 
     return {
       payment: {
         method: 'via_card',
-        cardLast4: cardLast4.trim(),
+        cardLast4,
         cardBrand,
-        cardReferenceToken: cardReferenceToken.trim(),
+        cardReferenceToken,
       },
     };
   };
@@ -146,6 +188,7 @@ export default function CloseSaleModal({ open, lead, onClose, onSuccess }) {
           <form
             onSubmit={handleSubmit}
             className="w-full max-w-md space-y-4 rounded-xl border border-white/10 bg-obsidian-surface p-5 shadow-xl"
+            autoComplete="off"
           >
             <div>
               <h3
@@ -161,65 +204,38 @@ export default function CloseSaleModal({ open, lead, onClose, onSuccess }) {
 
             <fieldset className="space-y-2">
               <legend className="text-sm text-ink/80">Payment method</legend>
-              <div className="flex flex-wrap gap-4">
-                <label className="flex items-center gap-2 text-sm text-ink">
-                  <input
-                    type="radio"
-                    name="payment-method"
-                    value="via_link"
-                    checked={method === 'via_link'}
-                    onChange={() => setMethod('via_link')}
-                    className="accent-flash-primary"
-                  />
-                  Via link
-                </label>
-                <label className="flex items-center gap-2 text-sm text-ink">
-                  <input
-                    type="radio"
-                    name="payment-method"
-                    value="via_card"
-                    checked={method === 'via_card'}
-                    onChange={() => setMethod('via_card')}
-                    className="accent-flash-primary"
-                  />
-                  Via card
-                </label>
+              <div className="flex flex-wrap gap-2">
+                {METHOD_OPTIONS.map((opt) => {
+                  const active = method === opt.value;
+                  return (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      onClick={() => setMethod(opt.value)}
+                      className={`rounded-full px-3.5 py-1.5 text-sm font-medium transition ${
+                        active
+                          ? 'bg-orange-600 text-white shadow-lg shadow-orange-950/30'
+                          : 'border border-white/15 text-ink/80 hover:bg-white/5'
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  );
+                })}
               </div>
             </fieldset>
 
             {method === 'via_link' ? (
-              <label className="block space-y-1.5 text-sm text-ink/80">
-                <span>Payment link URL</span>
-                <input
-                  type="url"
-                  required
-                  value={linkUrl}
-                  onChange={(e) => setLinkUrl(e.target.value)}
-                  placeholder="https://"
-                  className={fieldClass}
-                />
-              </label>
-            ) : (
+              <p className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2.5 text-sm text-ink/70">
+                No extra details needed — confirm to close this sale as paid via
+                link.
+              </p>
+            ) : null}
+
+            {method === 'via_card' ? (
               <div className="space-y-3">
                 <label className="block space-y-1.5 text-sm text-ink/80">
-                  <span>Last 4 digits</span>
-                  <input
-                    required
-                    maxLength={4}
-                    inputMode="numeric"
-                    pattern="\d{4}"
-                    value={cardLast4}
-                    onChange={(e) =>
-                      setCardLast4(e.target.value.replace(/\D/g, '').slice(0, 4))
-                    }
-                    placeholder="4242"
-                    className={fieldClass}
-                    autoComplete="off"
-                  />
-                </label>
-
-                <label className="block space-y-1.5 text-sm text-ink/80">
-                  <span>Card brand</span>
+                  <span>Card Brand</span>
                   <select
                     required
                     value={cardBrand}
@@ -235,23 +251,67 @@ export default function CloseSaleModal({ open, lead, onClose, onSuccess }) {
                 </label>
 
                 <label className="block space-y-1.5 text-sm text-ink/80">
-                  <span>Card reference token</span>
+                  <span>Card Number</span>
                   <input
                     required
-                    value={cardReferenceToken}
-                    onChange={(e) => setCardReferenceToken(e.target.value)}
-                    placeholder="tok_…"
+                    inputMode="numeric"
+                    value={cardNumber}
+                    onChange={(e) =>
+                      setCardNumber(formatCardNumber(e.target.value))
+                    }
+                    placeholder="ACCT-000035"
                     className={fieldClass}
                     autoComplete="off"
                   />
-                  <span className="block text-xs leading-relaxed text-ink/55">
-                    Must come from a real payment processor / tokenizer in
-                    production. Do not enter a raw card number or CVV — that is a
-                    PCI-DSS violation and out of scope for this internal tool.
-                  </span>
                 </label>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <label className="block space-y-1.5 text-sm text-ink/80">
+                    <span>Expiry (MM/YY)</span>
+                    <input
+                      required
+                      inputMode="numeric"
+                      value={cardExpiry}
+                      onChange={(e) =>
+                        setCardExpiry(formatExpiry(e.target.value))
+                      }
+                      placeholder="09/28"
+                      className={fieldClass}
+                      autoComplete="off"
+                    />
+                  </label>
+                  <label className="block space-y-1.5 text-sm text-ink/80">
+                    <span>CVC / CVV</span>
+                    <input
+                      required
+                      inputMode="numeric"
+                      maxLength={4}
+                      value={cardCvv}
+                      onChange={(e) =>
+                        setCardCvv(e.target.value.replace(/\D/g, '').slice(0, 4))
+                      }
+                      placeholder="123"
+                      className={fieldClass}
+                      autoComplete="off"
+                    />
+                  </label>
+                </div>
               </div>
-            )}
+            ) : null}
+
+            {method === 'other' ? (
+              <label className="block space-y-1.5 text-sm text-ink/80">
+                <span>Payment Method / Details</span>
+                <input
+                  required
+                  value={otherDetails}
+                  onChange={(e) => setOtherDetails(e.target.value)}
+                  placeholder="Bank Transfer, Cash, PayPal, etc."
+                  maxLength={200}
+                  className={fieldClass}
+                />
+              </label>
+            ) : null}
 
             {error ? (
               <p role="alert" className="text-sm text-red-300">

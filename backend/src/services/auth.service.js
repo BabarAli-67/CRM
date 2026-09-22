@@ -2,28 +2,43 @@ import User from '../models/user.model.js';
 import { ApiError } from '../utils/apiError.util.js';
 import { generateToken } from '../utils/token.util.js';
 
-export const registerUser = async ({ fullName, email, phone, password }) => {
-  const existingUser = await User.findOne({ email });
+const normalizeUsername = (username) =>
+  String(username || '')
+    .trim()
+    .toLowerCase();
+
+export const registerUser = async ({
+  fullName,
+  username,
+  phone,
+  password,
+  requestedRole,
+}) => {
+  const normalized = normalizeUsername(username);
+
+  const existingUser = await User.findOne({ username: normalized });
 
   if (existingUser) {
-    throw new ApiError(409, 'An account with this email already exists');
+    throw new ApiError(409, 'An account with this username already exists');
   }
 
   const user = await User.create({
     fullName,
-    email,
+    username: normalized,
     phone,
     password,
+    requestedRole: requestedRole || null,
   });
 
   return user.toSafeObject();
 };
 
-export const loginUser = async ({ email, password }) => {
-  const user = await User.findOne({ email }).select('+password');
+export const loginUser = async ({ username, password }) => {
+  const normalized = normalizeUsername(username);
+  const user = await User.findOne({ username: normalized }).select('+password');
 
   if (!user || !(await user.comparePassword(password))) {
-    throw new ApiError(401, 'Invalid email or password');
+    throw new ApiError(401, 'Invalid username or password');
   }
 
   if (user.status === 'pending') {

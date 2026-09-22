@@ -7,6 +7,13 @@ import { getAllCallbacks } from '../../services/callback.service.js';
 import { getAllLeads } from '../../services/lead.service.js';
 import { getHandoverQueue } from '../../services/handover.service.js';
 import OverrideReassignModal from '../../components/handover/OverrideReassignModal.jsx';
+import SessionIdentityBadge from '../../components/SessionIdentityBadge.component.jsx';
+import LeadDetailModal from '../../components/leads/LeadDetailModal.jsx';
+import { formatUserRef } from '../../utils/formatUserRef.util.js';
+import {
+  formatCstStatus,
+  formatPaymentSummary,
+} from '../../utils/formatPayment.util.js';
 import {
   ADMIN_BTN_GHOST,
   ADMIN_BTN_PRIMARY,
@@ -36,38 +43,11 @@ const formatPkt = (value) => {
   });
 };
 
-const personLabel = (ref) => {
-  if (!ref) return '—';
-  if (typeof ref === 'string') return ref;
-  return ref.fullName || ref.email || '—';
-};
+const personLabel = (ref) => formatUserRef(ref) || '—';
 
 /** Payment summary — never render cardReferenceToken. */
 function paymentSummary(payment) {
-  if (!payment?.method) return '—';
-  if (payment.method === 'via_link') {
-    return payment.linkUrl ? `Link` : 'Via link';
-  }
-  if (payment.method === 'via_card') {
-    const brand = payment.cardBrand || 'Card';
-    const last4 = payment.cardLast4 ? `•••• ${payment.cardLast4}` : '••••';
-    return `${brand} · ${last4}`;
-  }
-  return payment.method;
-}
-
-function ExtLink({ href, label }) {
-  if (!href) return <span className="text-zinc-600">—</span>;
-  return (
-    <a
-      href={href}
-      target="_blank"
-      rel="noreferrer"
-      className="text-[#FF8A6A] hover:underline"
-    >
-      {label}
-    </a>
-  );
+  return formatPaymentSummary(payment);
 }
 
 /**
@@ -80,6 +60,7 @@ export default function PipelineOverviewPage() {
   const queryClient = useQueryClient();
   const [tab, setTab] = useState('callbacks');
   const [overrideTarget, setOverrideTarget] = useState(null);
+  const [detailLead, setDetailLead] = useState(null);
   const [flash, setFlash] = useState('');
 
   // Spec: isAdmin true ONLY for super_admin — Auditor is byte-identical minus writes
@@ -97,7 +78,7 @@ export default function PipelineOverviewPage() {
     queryKey: ['pipeline', 'leads'],
     queryFn: getAllLeads,
     enabled: ['activeLeads', 'closedSales', 'techProjects'].includes(tab),
-    refetchInterval: 60_000,
+    refetchInterval: 30_000,
   });
 
   const handoverQuery = useQuery({
@@ -165,9 +146,7 @@ export default function PipelineOverviewPage() {
             </p>
           </div>
           <div className="flex items-center gap-3">
-            <span className="text-sm text-zinc-400">
-              {user?.fullName || user?.email}
-            </span>
+            <SessionIdentityBadge user={user} />
             <button type="button" onClick={logout} className={ADMIN_BTN_GHOST}>
               Log out
             </button>
@@ -214,6 +193,7 @@ export default function PipelineOverviewPage() {
             isLoading={leadsQuery.isLoading}
             isError={leadsQuery.isError}
             error={leadsQuery.error}
+            onViewDetails={setDetailLead}
           />
         ) : null}
 
@@ -224,6 +204,7 @@ export default function PipelineOverviewPage() {
             isError={leadsQuery.isError}
             error={leadsQuery.error}
             canWrite={canWrite}
+            onViewDetails={setDetailLead}
             onOverride={(lead) => {
               setFlash('');
               setOverrideTarget(lead);
@@ -235,6 +216,7 @@ export default function PipelineOverviewPage() {
           <HandoverPanel
             query={handoverQuery}
             canWrite={canWrite}
+            onViewDetails={setDetailLead}
             onOverride={(lead) => {
               setFlash('');
               setOverrideTarget(lead);
@@ -268,6 +250,12 @@ export default function PipelineOverviewPage() {
           }}
         />
       ) : null}
+
+      <LeadDetailModal
+        open={Boolean(detailLead)}
+        lead={detailLead}
+        onClose={() => setDetailLead(null)}
+      />
     </div>
   );
 }
@@ -335,7 +323,14 @@ function CallbacksPanel({ query }) {
   );
 }
 
-function ActiveLeadsPanel({ leads, isLoading, isError, error }) {
+function ActiveLeadsPanel({ leads, isLoading, isError, error, onViewDetails }) {
+  const statusLabel = (status) => {
+    if (status === 'pending_closer_claim') return 'Pending Closer Claim';
+    if (status === 'in_progress') return 'In Progress';
+    if (status === 'with_agent') return 'With Agent';
+    return status || 'With Agent';
+  };
+
   return (
     <section className={ADMIN_TABLE_WRAP}>
       <LoadingOrError
@@ -349,10 +344,10 @@ function ActiveLeadsPanel({ leads, isLoading, isError, error }) {
           <thead className={ADMIN_THEAD}>
             <tr>
               <th className="px-4 py-3">Business</th>
-              <th className="px-4 py-3">Agent</th>
+              <th className="px-4 py-3">Agent / Created By</th>
               <th className="px-4 py-3">Closer</th>
+              <th className="px-4 py-3">Status</th>
               <th className="px-4 py-3">Phone</th>
-              <th className="px-4 py-3">Amount</th>
               <th className="px-4 py-3">Actions</th>
             </tr>
           </thead>
@@ -364,11 +359,17 @@ function ActiveLeadsPanel({ leads, isLoading, isError, error }) {
                 </td>
                 <td className="px-4 py-3">{personLabel(row.agentId)}</td>
                 <td className="px-4 py-3">{personLabel(row.closerId)}</td>
+                <td className="px-4 py-3">{statusLabel(row.status)}</td>
                 <td className="px-4 py-3 whitespace-nowrap">{row.phone}</td>
                 <td className="px-4 py-3">
-                  {row.salesAmount != null ? row.salesAmount : '—'}
+                  <button
+                    type="button"
+                    onClick={() => onViewDetails?.(row)}
+                    className={`${ADMIN_BTN_GHOST} !px-2.5 !py-1.5 text-xs`}
+                  >
+                    View details
+                  </button>
                 </td>
-                <td className="px-4 py-3 text-xs text-zinc-500">—</td>
               </tr>
             ))}
           </tbody>
@@ -385,6 +386,7 @@ function ClosedSalesPanel({
   error,
   canWrite,
   onOverride,
+  onViewDetails,
 }) {
   return (
     <section className={ADMIN_TABLE_WRAP}>
@@ -399,7 +401,7 @@ function ClosedSalesPanel({
           <thead className={ADMIN_THEAD}>
             <tr>
               <th className="px-4 py-3">Business</th>
-              <th className="px-4 py-3">Agent</th>
+              <th className="px-4 py-3">Agent / Created By</th>
               <th className="px-4 py-3">Payment</th>
               <th className="px-4 py-3">CST status</th>
               <th className="px-4 py-3">Closed (PKT)</th>
@@ -415,23 +417,30 @@ function ClosedSalesPanel({
                 <td className="px-4 py-3">{personLabel(row.agentId)}</td>
                 <td className="px-4 py-3">{paymentSummary(row.payment)}</td>
                 <td className="px-4 py-3">
-                  {row.handover?.cstStatus || '—'}
+                  {formatCstStatus(row.handover?.cstStatus)}
                 </td>
                 <td className="px-4 py-3 whitespace-nowrap">
                   {formatPkt(row.closedAt)}
                 </td>
                 <td className="px-4 py-3">
-                  {canWrite ? (
+                  <div className="flex flex-wrap gap-2">
                     <button
                       type="button"
-                      onClick={() => onOverride(row)}
-                      className={`${ADMIN_BTN_PRIMARY} !px-2.5 !py-1.5 text-xs`}
+                      onClick={() => onViewDetails?.(row)}
+                      className={`${ADMIN_BTN_GHOST} !px-2.5 !py-1.5 text-xs`}
                     >
-                      Override
+                      View details
                     </button>
-                  ) : (
-                    <span className="text-xs text-zinc-500">—</span>
-                  )}
+                    {canWrite ? (
+                      <button
+                        type="button"
+                        onClick={() => onOverride(row)}
+                        className={`${ADMIN_BTN_PRIMARY} !px-2.5 !py-1.5 text-xs`}
+                      >
+                        Override
+                      </button>
+                    ) : null}
+                  </div>
                 </td>
               </tr>
             ))}
@@ -442,7 +451,7 @@ function ClosedSalesPanel({
   );
 }
 
-function HandoverPanel({ query, canWrite, onOverride }) {
+function HandoverPanel({ query, canWrite, onOverride, onViewDetails }) {
   const rows = (query.data || []).filter(
     (l) => l.handover?.cstStatus === 'pending_review'
   );
@@ -459,7 +468,7 @@ function HandoverPanel({ query, canWrite, onOverride }) {
           <thead className={ADMIN_THEAD}>
             <tr>
               <th className="px-4 py-3">Business</th>
-              <th className="px-4 py-3">Links</th>
+              <th className="px-4 py-3">Agent / Created By</th>
               <th className="px-4 py-3">Payment</th>
               <th className="px-4 py-3">Closed (PKT)</th>
               <th className="px-4 py-3">Actions</th>
@@ -471,29 +480,30 @@ function HandoverPanel({ query, canWrite, onOverride }) {
                 <td className="px-4 py-3 font-medium text-white">
                   {row.businessName}
                 </td>
-                <td className="px-4 py-3">
-                  <div className="flex flex-wrap gap-2">
-                    <ExtLink href={row.yelpLink} label="Yelp" />
-                    <ExtLink href={row.websiteLink} label="Web" />
-                    <ExtLink href={row.gmbLink} label="GMB" />
-                  </div>
-                </td>
+                <td className="px-4 py-3">{personLabel(row.agentId)}</td>
                 <td className="px-4 py-3">{paymentSummary(row.payment)}</td>
                 <td className="px-4 py-3 whitespace-nowrap">
                   {formatPkt(row.closedAt)}
                 </td>
                 <td className="px-4 py-3">
-                  {canWrite ? (
+                  <div className="flex flex-wrap gap-2">
                     <button
                       type="button"
-                      onClick={() => onOverride(row)}
-                      className={`${ADMIN_BTN_PRIMARY} !px-2.5 !py-1.5 text-xs`}
+                      onClick={() => onViewDetails?.(row)}
+                      className={`${ADMIN_BTN_GHOST} !px-2.5 !py-1.5 text-xs`}
                     >
-                      Assign / Override
+                      View details
                     </button>
-                  ) : (
-                    <span className="text-xs text-zinc-500">—</span>
-                  )}
+                    {canWrite ? (
+                      <button
+                        type="button"
+                        onClick={() => onOverride(row)}
+                        className={`${ADMIN_BTN_PRIMARY} !px-2.5 !py-1.5 text-xs`}
+                      >
+                        Assign / Override
+                      </button>
+                    ) : null}
+                  </div>
                 </td>
               </tr>
             ))}

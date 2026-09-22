@@ -2,7 +2,17 @@ import { body } from 'express-validator';
 
 export const registerValidator = [
   body('fullName').notEmpty().withMessage('Full name is required').trim(),
-  body('email').isEmail().withMessage('Valid email is required').normalizeEmail(),
+  body('username')
+    .trim()
+    .notEmpty()
+    .withMessage('Username is required')
+    .isLength({ min: 3, max: 32 })
+    .withMessage('Username must be 3–32 characters')
+    .matches(/^[a-zA-Z0-9._-]+$/)
+    .withMessage(
+      'Username may only contain letters, numbers, dots, underscores, or hyphens'
+    )
+    .customSanitizer((value) => String(value).toLowerCase()),
   body('phone')
     .notEmpty()
     .withMessage('Phone is required')
@@ -12,10 +22,34 @@ export const registerValidator = [
   body('password')
     .isLength({ min: 8 })
     .withMessage('Password must be at least 8 characters'),
+  body('confirmPassword')
+    .optional()
+    .custom((value, { req }) => {
+      if (value !== undefined && value !== req.body.password) {
+        throw new Error('Passwords do not match');
+      }
+      return true;
+    }),
+  body('requestedRole')
+    .optional()
+    .isIn(['admin', 'sales_agent', 'closer', 'cst_manager', 'tech_team'])
+    .withMessage(
+      'Role must be one of: admin, sales_agent, closer, cst_manager, tech_team'
+    ),
+  body('role')
+    .optional()
+    .isIn(['admin', 'sales_agent', 'closer', 'cst_manager', 'tech_team'])
+    .withMessage(
+      'Role must be one of: admin, sales_agent, closer, cst_manager, tech_team'
+    ),
 ];
 
 export const loginValidator = [
-  body('email').isEmail().withMessage('Valid email is required'),
+  body('username')
+    .trim()
+    .notEmpty()
+    .withMessage('Username is required')
+    .customSanitizer((value) => String(value).toLowerCase()),
   body('password').notEmpty().withMessage('Password is required'),
 ];
 
@@ -31,11 +65,16 @@ export const updateUserValidator = [
     .trim()
     .notEmpty()
     .withMessage('Full name cannot be empty'),
-  body('email')
+  body('username')
     .optional()
-    .isEmail()
-    .withMessage('Valid email is required')
-    .normalizeEmail(),
+    .trim()
+    .isLength({ min: 3, max: 32 })
+    .withMessage('Username must be 3–32 characters')
+    .matches(/^[a-zA-Z0-9._-]+$/)
+    .withMessage(
+      'Username may only contain letters, numbers, dots, underscores, or hyphens'
+    )
+    .customSanitizer((value) => String(value).toLowerCase()),
   body('phone').optional().trim(),
   body('role')
     .optional()
@@ -73,8 +112,8 @@ export const lateRequestValidator = [
 
 export const approveAttendanceValidator = [
   body('decision')
-    .isIn(['present', 'late'])
-    .withMessage("decision must be 'present' or 'late'"),
+    .isIn(['present', 'late', 'absent'])
+    .withMessage("decision must be 'present', 'late', or 'absent'"),
 ];
 
 export const forceAbsentValidator = [
@@ -87,15 +126,11 @@ export const forceAbsentValidator = [
 
 export const closeLeadValidator = [
   body('payment.method')
-    .isIn(['via_link', 'via_card'])
-    .withMessage("payment.method must be 'via_link' or 'via_card'"),
+    .isIn(['via_link', 'via_card', 'other'])
+    .withMessage("payment.method must be 'via_link', 'via_card', or 'other'"),
   body('payment.linkUrl')
-    .if(body('payment.method').equals('via_link'))
-    .notEmpty()
-    .withMessage('payment.linkUrl is required when method is via_link')
-    .trim()
-    .isURL()
-    .withMessage('payment.linkUrl must be a valid URL'),
+    .optional({ nullable: true })
+    .trim(),
   body('payment.cardLast4')
     .if(body('payment.method').equals('via_card'))
     .notEmpty()
@@ -111,8 +146,17 @@ export const closeLeadValidator = [
     .withMessage('payment.cardReferenceToken is required when method is via_card')
     .trim(),
   body('payment.cardBrand')
-    .optional({ nullable: true })
+    .if(body('payment.method').equals('via_card'))
+    .notEmpty()
+    .withMessage('payment.cardBrand is required when method is via_card')
     .trim(),
+  body('payment.otherDetails')
+    .if(body('payment.method').equals('other'))
+    .notEmpty()
+    .withMessage('payment.otherDetails is required when method is other')
+    .trim()
+    .isLength({ min: 2, max: 200 })
+    .withMessage('payment.otherDetails must be 2–200 characters'),
 ];
 
 export const createConversationValidator = [

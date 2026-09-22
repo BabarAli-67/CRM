@@ -1,20 +1,10 @@
-import { useMemo } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import LeadTable from '../../components/leads/LeadTable.jsx';
 import SalesAgentShell from '../../components/sales-agent/SalesAgentShell.jsx';
-import useAuth from '../../hooks/useAuth.hook.js';
-import useReminderScheduler from '../../hooks/useReminderScheduler.js';
-import {
-  getMyLeads,
-  markLeadFollowUpAlert,
-} from '../../services/lead.service.js';
-import { buildLeadFollowUpReminders } from '../../utils/leadReminders.js';
+import { getMyLeads } from '../../services/lead.service.js';
 
 export default function MyLeadsPage() {
-  const { user } = useAuth();
-  const queryClient = useQueryClient();
-
   const {
     data: leads = [],
     isLoading,
@@ -26,21 +16,6 @@ export default function MyLeadsPage() {
     refetchInterval: 30_000,
   });
 
-  const reminderItems = useMemo(
-    () => buildLeadFollowUpReminders(leads, user?._id),
-    [leads, user?._id]
-  );
-
-  useReminderScheduler(reminderItems, {
-    markAlert: async ({ id, fiveMinFired, exactTimeFired }) => {
-      await markLeadFollowUpAlert(id, {
-        ...(typeof fiveMinFired === 'boolean' ? { fiveMinFired } : {}),
-        ...(typeof exactTimeFired === 'boolean' ? { exactTimeFired } : {}),
-      });
-      queryClient.invalidateQueries({ queryKey: ['myLeads'] });
-    },
-  });
-
   return (
     <SalesAgentShell title="My Leads">
       <section className="w-full bg-zinc-900/50 border border-zinc-800/80 rounded-2xl p-6 shadow-xl">
@@ -50,8 +25,8 @@ export default function MyLeadsPage() {
               Active leads
             </h2>
             <p className="mt-1 text-sm text-zinc-400">
-              Closed sales vanish from this list · follow-up reminders chime in
-              this tab
+              Log calls fast · send ready leads to the closer pool · closed sales
+              vanish from this list
             </p>
           </div>
           <Link

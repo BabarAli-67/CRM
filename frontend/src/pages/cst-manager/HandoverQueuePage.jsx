@@ -1,8 +1,11 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import AssignTechModal from '../../components/handover/AssignTechModal.jsx';
+import LeadDetailModal from '../../components/leads/LeadDetailModal.jsx';
 import CstManagerShell from '../../components/cst-manager/CstManagerShell.jsx';
 import { getHandoverQueue } from '../../services/handover.service.js';
+import { formatUserRef } from '../../utils/formatUserRef.util.js';
+import { formatPaymentSummary } from '../../utils/formatPayment.util.js';
 
 const formatPkt = (value) => {
   if (!value) return '—';
@@ -18,40 +21,13 @@ const formatPkt = (value) => {
 
 /** Payment summary for CST — never render cardReferenceToken. */
 function paymentSummary(payment) {
-  if (!payment?.method) return '—';
-
-  if (payment.method === 'via_link') {
-    return payment.linkUrl ? `Link · ${payment.linkUrl}` : 'Via link';
-  }
-
-  if (payment.method === 'via_card') {
-    const brand = payment.cardBrand || 'Card';
-    const last4 = payment.cardLast4 ? `•••• ${payment.cardLast4}` : '••••';
-    return `${brand} · ${last4}`;
-  }
-
-  return payment.method;
-}
-
-function ExternalLink({ href, label }) {
-  if (!href) {
-    return <span className="text-zinc-600">—</span>;
-  }
-  return (
-    <a
-      href={href}
-      target="_blank"
-      rel="noreferrer"
-      className="text-orange-400 hover:text-orange-300 hover:underline"
-    >
-      {label}
-    </a>
-  );
+  return formatPaymentSummary(payment);
 }
 
 export default function HandoverQueuePage() {
   const queryClient = useQueryClient();
   const [assignTarget, setAssignTarget] = useState(null);
+  const [detailLead, setDetailLead] = useState(null);
   const [message, setMessage] = useState('');
 
   const {
@@ -102,7 +78,7 @@ export default function HandoverQueuePage() {
               <thead className="border-b border-zinc-800 text-xs uppercase tracking-wide text-zinc-500">
                 <tr>
                   <th className="px-3 py-2.5 font-medium">Business</th>
-                  <th className="px-3 py-2.5 font-medium">Technical links</th>
+                  <th className="px-3 py-2.5 font-medium">Created By</th>
                   <th className="px-3 py-2.5 font-medium">Payment</th>
                   <th className="px-3 py-2.5 font-medium">Closed (PKT)</th>
                   <th className="px-3 py-2.5 font-medium">Actions</th>
@@ -114,20 +90,11 @@ export default function HandoverQueuePage() {
                     key={row._id}
                     className="border-b border-zinc-800/60 last:border-0 hover:bg-zinc-800/30 transition-colors"
                   >
-                    <td className="px-3 py-3 font-medium">
+                    <td className="px-3 py-3 font-medium text-white">
                       {row.businessName}
-                      {row.clientName ? (
-                        <span className="mt-0.5 block text-xs font-normal text-zinc-500">
-                          {row.clientName}
-                        </span>
-                      ) : null}
                     </td>
-                    <td className="px-3 py-3">
-                      <div className="flex flex-wrap gap-x-3 gap-y-1">
-                        <ExternalLink href={row.yelpLink} label="Yelp" />
-                        <ExternalLink href={row.websiteLink} label="Website" />
-                        <ExternalLink href={row.gmbLink} label="GMB" />
-                      </div>
+                    <td className="px-3 py-3 text-zinc-400">
+                      {formatUserRef(row.agentId) || '—'}
                     </td>
                     <td className="px-3 py-3 max-w-[14rem] truncate text-zinc-300">
                       {paymentSummary(row.payment)}
@@ -136,16 +103,25 @@ export default function HandoverQueuePage() {
                       {formatPkt(row.closedAt)}
                     </td>
                     <td className="px-3 py-3">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setMessage('');
-                          setAssignTarget(row);
-                        }}
-                        className="cursor-pointer rounded-full bg-orange-600 px-3 py-1.5 text-xs font-semibold text-white shadow-lg shadow-orange-600/20 hover:bg-orange-500"
-                      >
-                        Assign to Tech
-                      </button>
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setDetailLead(row)}
+                          className="cursor-pointer rounded-full border border-zinc-700 px-3 py-1.5 text-xs font-semibold text-zinc-300 hover:bg-zinc-800/50"
+                        >
+                          View details
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setMessage('');
+                            setAssignTarget(row);
+                          }}
+                          className="cursor-pointer rounded-full bg-orange-600 px-3 py-1.5 text-xs font-semibold text-white shadow-lg shadow-orange-600/20 hover:bg-orange-500"
+                        >
+                          Assign to Tech
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -168,6 +144,12 @@ export default function HandoverQueuePage() {
           // Refetch so the row leaves pending_review view immediately
           queryClient.invalidateQueries({ queryKey: ['handoverQueue'] });
         }}
+      />
+
+      <LeadDetailModal
+        open={Boolean(detailLead)}
+        lead={detailLead}
+        onClose={() => setDetailLead(null)}
       />
     </CstManagerShell>
   );

@@ -16,7 +16,7 @@ export const listUsers = asyncHandler(async (req, res) => {
   filter.status = req.query.status || 'approved';
 
   const users = await User.find(filter)
-    .select('fullName email role status')
+    .select('fullName username role status')
     .sort({ fullName: 1 });
 
   res
