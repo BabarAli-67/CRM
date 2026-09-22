@@ -176,3 +176,27 @@ static scan of `PipelineOverviewPage.jsx` / `OverrideReassignModal.jsx` /
       super_admin monthly payloads match
 - [x] CSV export — MonthlyReportPage Export CSV button + client-side escaping;
       commas/quotes produce correctly formatted CSV
+
+## Phase 5 — Internal Real-Time Messaging
+
+Verified live against backend + frontend with Socket.io polling `200`, plus
+`backend/scripts/verify-phase5-checklist.mjs` (15/15) and the full prior-phase
+regression suite (callbacks → reports + hardening + chat API/upload/files) —
+all scripts exit 0. Auth rate-limit was skipped in `development`/`test` only
+(`rateLimiter.middleware.js`) so the multi-script suite is not blocked by the
+production login cap.
+
+- [x] Contacts list is correctly silo-scoped for every one of the six roles
+- [x] A newly approved employee appears in the correct existing users' contact lists immediately, with no separate chat-registration step
+- [x] Creating a conversation is idempotent — repeated attempts with the same contact never create a duplicate
+- [x] All eight disallowed cross-silo pairings are blocked with 403 at the API, and never even shown as an option in the UI
+- [x] Leadership (Super Admin, Auditor) can message and be messaged by every role, including each other
+- [x] Text messages, typing indicators, and seen receipts all update live across two independent sessions with no manual refresh
+- [x] Presence (online/offline) dots update live and correctly reflect actual connection state
+- [x] Images, documents, and recorded voice notes all upload, send, render/play, and download correctly
+- [x] The raw attachment-serving endpoint rejects a non-participant with 403, confirmed by direct URL access, not just UI behavior
+- [x] A path-traversal attempt against the file-serving endpoint is rejected
+- [x] The messenger icon and docked-window host are present and functional on all six dashboards
+- [x] Multiple docked windows can be open at once, with the documented cap and auto-minimize behavior working correctly
+- [x] The Auditor has full, unrestricted chat interactivity — no blockReadOnlyAdmin behavior anywhere in this module
+- [x] All Phase 1 / Phase 1.7 / Phase 2 / hardened Phase 3 & 4 flows remain unaffected by the Socket.io server, the new uploads directory, and the six dashboard-page edits
