@@ -1,4 +1,4 @@
-import { createContext, useState } from 'react';
+import { createContext, useEffect, useState } from 'react';
 import api from '../config/api.config.js';
 import { disconnectSocket } from '../utils/socketClient.util.js';
 
@@ -15,7 +15,42 @@ const getStoredUser = () => {
 
 const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(getStoredUser);
-  const [loading] = useState(false);
+  const [loading, setLoading] = useState(() =>
+    Boolean(localStorage.getItem('flashcrm_token'))
+  );
+
+  // Re-sync role from DB so restrictTo matches the UI (stale localStorage / admin role edits)
+  useEffect(() => {
+    const token = localStorage.getItem('flashcrm_token');
+    if (!token) {
+      setLoading(false);
+      return undefined;
+    }
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data } = await api.get('/auth/me');
+        const fresh = data?.data?.user;
+        if (!cancelled && fresh) {
+          localStorage.setItem('flashcrm_user', JSON.stringify(fresh));
+          setUser(fresh);
+        }
+      } catch {
+        if (!cancelled) {
+          localStorage.removeItem('flashcrm_token');
+          localStorage.removeItem('flashcrm_user');
+          setUser(null);
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const login = async (username, password) => {
     const { data } = await api.post('/auth/login', { username, password });

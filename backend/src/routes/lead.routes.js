@@ -25,6 +25,7 @@ const router = Router();
 
 router.use(protect);
 
+// Sales Agent lead desk — role key is `sales_agent` (not `agent` / `sales`)
 router.post('/', restrictTo('sales_agent'), createLead);
 
 router.get('/mine', restrictTo('sales_agent'), getMyLeads);

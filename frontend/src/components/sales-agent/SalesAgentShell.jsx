@@ -9,11 +9,7 @@ const NAV_ITEMS = [
 
 export default function SalesAgentShell({ title, children }) {
   return (
-    <DepartmentShell
-      title={title}
-      roleLabel="Sales Agent"
-      navItems={NAV_ITEMS}
-    >
+    <DepartmentShell title={title} navItems={NAV_ITEMS}>
       {children}
     </DepartmentShell>
   );

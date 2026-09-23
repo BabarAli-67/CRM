@@ -38,3 +38,12 @@ export const login = asyncHandler(async (req, res) => {
 
   res.status(200).json(new ApiResponse(200, { user, token }, 'Login successful'));
 });
+
+/** Fresh role/status from DB — keeps client session aligned with restrictTo. */
+export const getMe = asyncHandler(async (req, res) => {
+  res
+    .status(200)
+    .json(
+      new ApiResponse(200, { user: req.user.toSafeObject() }, 'Session user retrieved')
+    );
+});

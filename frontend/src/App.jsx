@@ -32,7 +32,7 @@ function App() {
       <Route
         path="/admin"
         element={
-          <RoleRoute allowedRoles={[]}>
+          <RoleRoute allowedRoles={['super_admin']}>
             <AdminDashboardPage />
           </RoleRoute>
         }
