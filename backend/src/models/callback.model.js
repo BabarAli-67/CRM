@@ -77,12 +77,11 @@ const callbackSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-callbackSchema.pre('validate', function ensureOwner(next) {
+callbackSchema.pre('validate', function ensureOwner() {
+  // Mongoose 9+: sync middleware — do not use next(); throw instead.
   if (!this.agentId && !this.closerId) {
-    next(new Error('agentId or closerId is required'));
-    return;
+    throw new Error('agentId or closerId is required');
   }
-  next();
 });
 
 callbackSchema.index({ agentId: 1, callbackAt: 1 });
