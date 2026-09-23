@@ -1,18 +1,16 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { closeLead } from '../../services/lead.service.js';
+import {
+  brandPayloadId,
+  cardDigitsOnly,
+  detectCardBrand,
+  formatCardNumber,
+  maxCardDigits,
+} from '../../utils/cardBrand.util.js';
 
 const fieldClass =
   'w-full rounded-md border border-white/15 bg-obsidian px-3 py-2 text-sm text-ink outline-none focus:border-flash-secondary';
-
-const CARD_BRANDS = [
-  { value: '', label: 'Select brand' },
-  { value: 'visa', label: 'Visa' },
-  { value: 'mastercard', label: 'Mastercard' },
-  { value: 'amex', label: 'American Express' },
-  { value: 'discover', label: 'Discover' },
-  { value: 'other', label: 'Other' },
-];
 
 const METHOD_OPTIONS = [
   { value: 'via_link', label: 'Via link' },
@@ -20,18 +18,58 @@ const METHOD_OPTIONS = [
   { value: 'other', label: 'Other' },
 ];
 
-/** Format PAN digits as #### #### #### #### for display only. */
-const formatCardNumber = (digits) => {
-  const clean = String(digits || '').replace(/\D/g, '').slice(0, 19);
-  return clean.replace(/(\d{4})(?=\d)/g, '$1 ').trim();
-};
-
 /** Format expiry as MM/YY while typing. */
 const formatExpiry = (raw) => {
   const digits = String(raw || '').replace(/\D/g, '').slice(0, 4);
   if (digits.length <= 2) return digits;
   return `${digits.slice(0, 2)}/${digits.slice(2)}`;
 };
+
+const BRAND_BADGE = {
+  visa: 'bg-[#1A1F71]/text-white',
+  mastercard: 'bg-[#EB001B]/text-white',
+  amex: 'bg-[#2E77BC] text-white',
+  discover: 'bg-[#FF6000] text-white',
+  jcb: 'bg-[#0E4C96] text-white',
+  diners: 'bg-[#0079BE] text-white',
+  unionpay: 'bg-[#E21836] text-white',
+  maestro: 'bg-[#009CDE] text-white',
+  elo: 'bg-[#00A4E0] text-white',
+  other: 'bg-zinc-700 text-zinc-200',
+};
+
+function CardBrandBadge({ brand }) {
+  if (!brand?.id) {
+    return (
+      <span
+        className="inline-flex h-7 w-10 items-center justify-center rounded-md border border-white/10 bg-white/5 text-zinc-500"
+        title="Card brand"
+        aria-hidden
+      >
+        <svg
+          viewBox="0 0 24 24"
+          className="h-4 w-4"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.75"
+        >
+          <rect x="2" y="5" width="20" height="14" rx="2" />
+          <path d="M2 10h20" />
+        </svg>
+      </span>
+    );
+  }
+
+  const tone = BRAND_BADGE[brand.id] || BRAND_BADGE.other;
+  return (
+    <span
+      className={`inline-flex h-7 max-w-[5.5rem] items-center truncate rounded-md px-1.5 text-[10px] font-bold uppercase tracking-wide ${tone}`}
+      title={brand.label}
+    >
+      {brand.label}
+    </span>
+  );
+}
 
 /**
  * Instantly drop a closed lead from mine / assigned-to-me caches (Vanishing Rule).
@@ -52,7 +90,6 @@ function vanishLeadFromCaches(queryClient, leadId) {
   queryClient.invalidateQueries({ queryKey: ['pipeline', 'leads'] });
   queryClient.invalidateQueries({ queryKey: ['myClosedCount'] });
   queryClient.invalidateQueries({ queryKey: ['closerClosedSales'] });
-  queryClient.invalidateQueries({ queryKey: ['pipeline', 'leads'] });
   queryClient.setQueryData(['myClosedCount'], (old) =>
     typeof old === 'number' ? old + 1 : old
   );
@@ -66,7 +103,6 @@ function vanishLeadFromCaches(queryClient, leadId) {
 export default function CloseSaleModal({ open, lead, onClose, onSuccess }) {
   const queryClient = useQueryClient();
   const [method, setMethod] = useState('via_link');
-  const [cardBrand, setCardBrand] = useState('');
   const [cardNumber, setCardNumber] = useState('');
   const [cardExpiry, setCardExpiry] = useState('');
   const [cardCvv, setCardCvv] = useState('');
@@ -74,10 +110,16 @@ export default function CloseSaleModal({ open, lead, onClose, onSuccess }) {
   const [error, setError] = useState('');
   const [toast, setToast] = useState(false);
 
+  const detectedBrand = useMemo(
+    () => detectCardBrand(cardNumber),
+    [cardNumber]
+  );
+  const cardBrand = brandPayloadId(detectedBrand);
+  const cvvMax = detectedBrand.cvvLength || 3;
+
   useEffect(() => {
     if (!open) return;
     setMethod('via_link');
-    setCardBrand('');
     setCardNumber('');
     setCardExpiry('');
     setCardCvv('');
@@ -90,6 +132,11 @@ export default function CloseSaleModal({ open, lead, onClose, onSuccess }) {
     const timerId = window.setTimeout(() => setToast(false), 2800);
     return () => window.clearTimeout(timerId);
   }, [toast]);
+
+  // Trim CVV if brand switches Amex (4) ↔ standard (3)
+  useEffect(() => {
+    setCardCvv((prev) => prev.slice(0, cvvMax));
+  }, [cvvMax]);
 
   const mutation = useMutation({
     mutationFn: ({ id, payment }) => closeLead(id, payment),
@@ -105,6 +152,11 @@ export default function CloseSaleModal({ open, lead, onClose, onSuccess }) {
     },
   });
 
+  const handleCardNumberChange = (raw) => {
+    const brand = detectCardBrand(raw);
+    setCardNumber(formatCardNumber(raw, brand));
+  };
+
   const buildPayment = () => {
     if (method === 'via_link') {
       return { payment: { method: 'via_link' } };
@@ -114,7 +166,8 @@ export default function CloseSaleModal({ open, lead, onClose, onSuccess }) {
       const details = otherDetails.trim();
       if (details.length < 2) {
         return {
-          error: 'Enter the payment method / details (e.g. Bank Transfer, Cash).',
+          error:
+            'Enter the payment method / details (e.g. Bank Transfer, Cash).',
         };
       }
       return {
@@ -123,33 +176,39 @@ export default function CloseSaleModal({ open, lead, onClose, onSuccess }) {
     }
 
     // via_card
-    const digits = cardNumber.replace(/\D/g, '');
-    if (digits.length < 13 || digits.length > 19) {
-      return { error: 'Enter a valid card number (13–19 digits).' };
-    }
-    if (!cardBrand) {
-      return { error: 'Select a card brand.' };
+    const digits = cardDigitsOnly(cardNumber);
+    const brand = detectCardBrand(digits);
+    const brandId = brandPayloadId(brand);
+    const maxLen = maxCardDigits(brand);
+    const minLen = brand.id === 'amex' ? 15 : brand.id === 'diners' ? 14 : 13;
+
+    if (digits.length < minLen || digits.length > maxLen) {
+      return {
+        error: `Enter a valid ${brand.label || 'card'} number (${minLen}–${maxLen} digits).`,
+      };
     }
     if (!/^\d{2}\/\d{2}$/.test(cardExpiry.trim())) {
       return { error: 'Enter expiry as MM/YY.' };
     }
-    const [mm, yy] = cardExpiry.split('/').map(Number);
+    const [mm] = cardExpiry.split('/').map(Number);
     if (mm < 1 || mm > 12) {
       return { error: 'Expiry month must be between 01 and 12.' };
     }
-    if (!/^\d{3,4}$/.test(cardCvv.trim())) {
-      return { error: 'Enter a valid 3 or 4 digit CVC / CVV.' };
+    const cvvRe = new RegExp(`^\\d{${brand.cvvLength}}$`);
+    if (!cvvRe.test(cardCvv.trim())) {
+      return {
+        error: `Enter a valid ${brand.cvvLength}-digit CVC / CVV.`,
+      };
     }
 
     const cardLast4 = digits.slice(-4);
-    // Opaque placeholder — never send raw PAN, expiry, or CVV to the API
-    const cardReferenceToken = `local_${cardBrand}_${cardLast4}_${Date.now()}`;
+    const cardReferenceToken = `local_${brandId}_${cardLast4}_${Date.now()}`;
 
     return {
       payment: {
         method: 'via_card',
         cardLast4,
-        cardBrand,
+        cardBrand: brandId,
         cardReferenceToken,
       },
     };
@@ -235,34 +294,35 @@ export default function CloseSaleModal({ open, lead, onClose, onSuccess }) {
             {method === 'via_card' ? (
               <div className="space-y-3">
                 <label className="block space-y-1.5 text-sm text-ink/80">
-                  <span>Card Brand</span>
-                  <select
-                    required
-                    value={cardBrand}
-                    onChange={(e) => setCardBrand(e.target.value)}
-                    className={fieldClass}
-                  >
-                    {CARD_BRANDS.map((b) => (
-                      <option key={b.value || 'empty'} value={b.value}>
-                        {b.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-
-                <label className="block space-y-1.5 text-sm text-ink/80">
                   <span>Card Number</span>
-                  <input
-                    required
-                    inputMode="numeric"
-                    value={cardNumber}
-                    onChange={(e) =>
-                      setCardNumber(formatCardNumber(e.target.value))
-                    }
-                    placeholder="ACCT-000035"
-                    className={fieldClass}
-                    autoComplete="off"
-                  />
+                  <div className="relative">
+                    <input
+                      required
+                      inputMode="numeric"
+                      value={cardNumber}
+                      onChange={(e) => handleCardNumberChange(e.target.value)}
+                      placeholder="Card number"
+                      className={`${fieldClass} pr-24`}
+                      autoComplete="off"
+                      aria-describedby="detected-card-brand"
+                    />
+                    <span
+                      id="detected-card-brand"
+                      className="pointer-events-none absolute inset-y-0 right-2 flex items-center"
+                    >
+                      <CardBrandBadge brand={detectedBrand} />
+                    </span>
+                  </div>
+                  {detectedBrand.id ? (
+                    <span className="text-[11px] text-ink/50">
+                      Detected: {detectedBrand.label}
+                      {cardBrand ? ` · saved as “${cardBrand}”` : ''}
+                    </span>
+                  ) : (
+                    <span className="text-[11px] text-ink/45">
+                      Brand is detected automatically as you type
+                    </span>
+                  )}
                 </label>
 
                 <div className="grid grid-cols-2 gap-3">
@@ -285,12 +345,14 @@ export default function CloseSaleModal({ open, lead, onClose, onSuccess }) {
                     <input
                       required
                       inputMode="numeric"
-                      maxLength={4}
+                      maxLength={cvvMax}
                       value={cardCvv}
                       onChange={(e) =>
-                        setCardCvv(e.target.value.replace(/\D/g, '').slice(0, 4))
+                        setCardCvv(
+                          e.target.value.replace(/\D/g, '').slice(0, cvvMax)
+                        )
                       }
-                      placeholder="123"
+                      placeholder={cvvMax === 4 ? '1234' : '123'}
                       className={fieldClass}
                       autoComplete="off"
                     />
