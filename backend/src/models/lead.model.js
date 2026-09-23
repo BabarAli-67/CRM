@@ -204,6 +204,18 @@ const leadSchema = new mongoose.Schema(
           type: Date,
           default: null,
         },
+        /** CST intake notes for tech execution. */
+        onboardingNotes: {
+          type: String,
+          default: null,
+          trim: true,
+        },
+        /** Tech execution progress (mirrors assigned → in_progress → completed). */
+        techStatus: {
+          type: String,
+          enum: ['assigned', 'in_progress', 'completed'],
+          default: null,
+        },
         overrideLog: {
           type: [
             {
@@ -236,5 +248,6 @@ leadSchema.index({ agentId: 1, stage: 1 });
 leadSchema.index({ closerId: 1, stage: 1 });
 leadSchema.index({ status: 1, stage: 1, closerId: 1 });
 leadSchema.index({ 'followUp.callbackAt': 1 });
+leadSchema.index({ 'handover.assignedTechId': 1, 'handover.cstStatus': 1 });
 
 export default mongoose.model('Lead', leadSchema);

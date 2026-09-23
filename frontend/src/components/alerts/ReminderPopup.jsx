@@ -75,6 +75,9 @@ const viewPathFor = (kind, id, role) => {
   if (kind === 'callback') {
     return `/dashboard/sales-agent/callbacks#${hash}`;
   }
+  if (kind === 'closer_callback') {
+    return `/dashboard/closer/callbacks#${hash}`;
+  }
   if (kind === 'followup') {
     if (role === 'closer') {
       return `/dashboard/closer/leads#${hash}`;

@@ -42,3 +42,25 @@ export const getAdminCallbacks = async () => {
   const response = await api.get('/admin/callbacks');
   return response.data.data.callbacks;
 };
+
+/* ─── Closer callbacks (isolated from sales-agent APIs) ─── */
+
+export const getMyCloserCallbacks = async () => {
+  const response = await api.get('/callbacks/closer/mine');
+  return response.data.data.callbacks;
+};
+
+export const createCloserCallback = async (payload) => {
+  const response = await api.post('/callbacks/closer', payload);
+  return response.data.data.callback;
+};
+
+export const updateCloserCallback = async (id, payload) => {
+  const response = await api.patch(`/callbacks/closer/${id}`, payload);
+  return response.data.data.callback;
+};
+
+export const markCloserCallbackAlert = async (id, flags) => {
+  const response = await api.patch(`/callbacks/closer/${id}/mark-alert`, flags);
+  return response.data.data.callback;
+};

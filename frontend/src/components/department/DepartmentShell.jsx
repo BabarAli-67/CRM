@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { Clock3 } from 'lucide-react';
@@ -37,8 +37,10 @@ const navLinkClass = ({ isActive }) =>
   ].join(' ');
 
 const currentMonthValue = () => {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  // Match backend shiftDate calendar (Asia/Karachi)
+  return new Date().toLocaleDateString('en-CA', {
+    timeZone: 'Asia/Karachi',
+  }).slice(0, 7);
 };
 
 const formatShiftClock = (hhmm) => {
@@ -54,9 +56,36 @@ const formatShiftClock = (hhmm) => {
 
 const formatWorkedDuration = (workedMinutes) => {
   if (workedMinutes == null || Number.isNaN(workedMinutes)) return '—';
-  const hours = Math.floor(workedMinutes / 60);
-  const minutes = workedMinutes % 60;
+  const total = Math.max(0, Math.floor(workedMinutes));
+  const hours = Math.floor(total / 60);
+  const minutes = total % 60;
   return `${hours}h ${minutes}m`;
+};
+
+const PRESENT_STATUSES = new Set(['present', 'late']);
+
+/** Minutes from a completed attendance row (Present/Late with checkout). */
+const completedRowMinutes = (row) => {
+  if (!row || !PRESENT_STATUSES.has(row.status)) return 0;
+  if (typeof row.workedMinutes === 'number' && !Number.isNaN(row.workedMinutes)) {
+    return Math.max(0, Math.floor(row.workedMinutes));
+  }
+  if (row.checkInTime && row.checkOutTime) {
+    const start = new Date(row.checkInTime).getTime();
+    const end = new Date(row.checkOutTime).getTime();
+    if (!Number.isNaN(start) && !Number.isNaN(end) && end > start) {
+      return Math.max(0, Math.floor((end - start) / 60_000));
+    }
+  }
+  return 0;
+};
+
+/** Elapsed minutes for an open check-in (no checkout yet). */
+const elapsedActiveMinutes = (attendance, nowMs) => {
+  if (!attendance?.checkInTime || attendance.checkOutTime) return 0;
+  const start = new Date(attendance.checkInTime).getTime();
+  if (Number.isNaN(start)) return 0;
+  return Math.max(0, Math.floor((nowMs - start) / 60_000));
 };
 
 /**
@@ -117,6 +146,7 @@ function derivePulse(attendance, nowMs = Date.now()) {
 function DepartmentKpiStrip({ role }) {
   const showClosedCount = role === 'sales_agent' || role === 'closer';
   const month = currentMonthValue();
+  const [tickNow, setTickNow] = useState(() => Date.now());
 
   const { data: todayData } = useQuery({
     queryKey: ['todayAttendance'],
@@ -140,25 +170,60 @@ function DepartmentKpiStrip({ role }) {
     queryKey: ['attendanceHistory', month],
     queryFn: () => getHistory(month),
     enabled: !showClosedCount && Boolean(month),
+    refetchInterval: 60_000,
   });
 
-  const nowMs = todayData?.serverTime
-    ? new Date(todayData.serverTime).getTime()
-    : Date.now();
-  const pulse = derivePulse(todayData?.attendance, nowMs);
+  const attendance = todayData?.attendance;
+  const isOnDuty = Boolean(
+    attendance?.checkInTime && !attendance?.checkOutTime
+  );
+
+  // Live ticker while on duty — refresh every minute so monthly hours climb
+  useEffect(() => {
+    if (showClosedCount || !isOnDuty) return undefined;
+    setTickNow(Date.now());
+    const id = setInterval(() => setTickNow(Date.now()), 60_000);
+    return () => clearInterval(id);
+  }, [showClosedCount, isOnDuty, attendance?.checkInTime]);
+
+  const nowMs = Math.max(
+    tickNow,
+    todayData?.serverTime
+      ? new Date(todayData.serverTime).getTime()
+      : 0
+  );
+  const pulse = derivePulse(attendance, nowMs);
   const pulseClasses = PULSE_BADGE[pulse.key] || PULSE_BADGE.unknown;
 
   const startLabel = formatShiftClock(shiftData?.settings?.startTime || '19:00');
   const endLabel = formatShiftClock(shiftData?.settings?.endTime || '04:00');
 
-  const monthlyMinutes = useMemo(
-    () =>
-      historyRecords.reduce(
-        (sum, row) => sum + (typeof row.workedMinutes === 'number' ? row.workedMinutes : 0),
-        0
-      ),
-    [historyRecords]
-  );
+  const monthlyMinutes = useMemo(() => {
+    if (showClosedCount) return 0;
+
+    const openId =
+      isOnDuty && attendance?._id ? String(attendance._id) : null;
+
+    const completed = historyRecords.reduce((sum, row) => {
+      // Open shift is counted via live elapsed — skip to avoid double-count
+      if (openId && String(row._id) === openId && !row.checkOutTime) {
+        return sum;
+      }
+      return sum + completedRowMinutes(row);
+    }, 0);
+
+    const active = isOnDuty
+      ? elapsedActiveMinutes(attendance, tickNow)
+      : 0;
+
+    return completed + active;
+  }, [
+    historyRecords,
+    attendance,
+    tickNow,
+    showClosedCount,
+    isOnDuty,
+  ]);
 
   const activityLabel = showClosedCount ? 'Closed sales' : 'Hours this month';
   const activityValue = showClosedCount

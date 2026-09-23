@@ -13,6 +13,7 @@ import MyLeadsPage from './pages/sales-agent/MyLeadsPage.jsx';
 import LeadCreatePage from './pages/sales-agent/LeadCreatePage.jsx';
 import LeadEditPage from './pages/sales-agent/LeadEditPage.jsx';
 import AssignedLeadsPage from './pages/closer/AssignedLeadsPage.jsx';
+import CloserMyCallbacksPage from './pages/closer/CloserMyCallbacksPage.jsx';
 import CloserDashboardPage from './pages/CloserDashboard.page.jsx';
 import CstManagerDashboardPage from './pages/CstManagerDashboard.page.jsx';
 import HandoverQueuePage from './pages/cst-manager/HandoverQueuePage.jsx';
@@ -121,6 +122,14 @@ function App() {
         element={
           <RoleRoute allowedRoles={['closer']}>
             <AssignedLeadsPage />
+          </RoleRoute>
+        }
+      />
+      <Route
+        path="/dashboard/closer/callbacks"
+        element={
+          <RoleRoute allowedRoles={['closer']}>
+            <CloserMyCallbacksPage />
           </RoleRoute>
         }
       />

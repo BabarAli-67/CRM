@@ -4,7 +4,9 @@ import useAuth from '../../hooks/useAuth.hook.js';
 import useReminderScheduler from '../../hooks/useReminderScheduler.js';
 import {
   getMyCallbacks,
+  getMyCloserCallbacks,
   markCallbackAlert,
+  markCloserCallbackAlert,
 } from '../../services/callback.service.js';
 import {
   getAssignedLeads,
@@ -49,6 +51,13 @@ export default function GlobalRemindersBridge() {
     refetchInterval: 30_000,
   });
 
+  const { data: closerCallbacks = [] } = useQuery({
+    queryKey: ['closerCallbacks'],
+    queryFn: getMyCloserCallbacks,
+    enabled: isCloser,
+    refetchInterval: 30_000,
+  });
+
   const { data: myLeads = [] } = useQuery({
     queryKey: ['myLeads'],
     queryFn: getMyLeads,
@@ -65,22 +74,24 @@ export default function GlobalRemindersBridge() {
 
   const reminderItems = useMemo(() => {
     if (isAgent) {
-      const callbackItems = (callbacks || []).map((cb) => {
-        const agentId = cb.agentId?._id || cb.agentId || userId;
-        return {
-          id: cb._id,
-          kind: 'callback',
-          triggerAt: cb.callbackAt,
-          notifyUserIds: agentId ? [String(agentId)] : [],
-          alerts: cb.alerts || {
-            fiveMinFired: false,
-            exactTimeFired: false,
-          },
-          businessName: cb.businessName,
-          phone: cb.phone,
-          item: cb,
-        };
-      });
+      const callbackItems = (callbacks || [])
+        .filter((cb) => cb.status === 'pending')
+        .map((cb) => {
+          const agentId = cb.agentId?._id || cb.agentId || userId;
+          return {
+            id: cb._id,
+            kind: 'callback',
+            triggerAt: cb.callbackAt,
+            notifyUserIds: agentId ? [String(agentId)] : [],
+            alerts: cb.alerts || {
+              fiveMinFired: false,
+              exactTimeFired: false,
+            },
+            businessName: cb.businessName,
+            phone: cb.phone,
+            item: cb,
+          };
+        });
       return [
         ...callbackItems,
         ...buildLeadFollowUpReminders(myLeads, userId, { role: 'sales_agent' }),
@@ -88,13 +99,42 @@ export default function GlobalRemindersBridge() {
     }
 
     if (isCloser) {
-      return buildLeadFollowUpReminders(assignedLeads, userId, {
-        role: 'closer',
-      });
+      const callbackItems = (closerCallbacks || [])
+        .filter((cb) => cb.status === 'pending')
+        .map((cb) => {
+          const closerId = cb.closerId?._id || cb.closerId || userId;
+          return {
+            id: cb._id,
+            kind: 'closer_callback',
+            triggerAt: cb.callbackAt,
+            notifyUserIds: closerId ? [String(closerId)] : [],
+            alerts: cb.alerts || {
+              fiveMinFired: false,
+              exactTimeFired: false,
+            },
+            businessName: cb.businessName,
+            phone: cb.phone,
+            item: cb,
+          };
+        });
+      return [
+        ...callbackItems,
+        ...buildLeadFollowUpReminders(assignedLeads, userId, {
+          role: 'closer',
+        }),
+      ];
     }
 
     return [];
-  }, [isAgent, isCloser, callbacks, myLeads, assignedLeads, userId]);
+  }, [
+    isAgent,
+    isCloser,
+    callbacks,
+    closerCallbacks,
+    myLeads,
+    assignedLeads,
+    userId,
+  ]);
 
   useReminderScheduler(reminderItems, {
     markAlert: async ({ id, kind, fiveMinFired, exactTimeFired }) => {
@@ -104,6 +144,15 @@ export default function GlobalRemindersBridge() {
           ...(typeof exactTimeFired === 'boolean' ? { exactTimeFired } : {}),
         });
         queryClient.invalidateQueries({ queryKey: ['myCallbacks'] });
+        return;
+      }
+
+      if (kind === 'closer_callback') {
+        await markCloserCallbackAlert(id, {
+          ...(typeof fiveMinFired === 'boolean' ? { fiveMinFired } : {}),
+          ...(typeof exactTimeFired === 'boolean' ? { exactTimeFired } : {}),
+        });
+        queryClient.invalidateQueries({ queryKey: ['closerCallbacks'] });
         return;
       }
 

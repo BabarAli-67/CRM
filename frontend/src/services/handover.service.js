@@ -5,13 +5,20 @@ export const getHandoverQueue = async () => {
   return response.data.data.leads;
 };
 
+export const getTechPipeline = async () => {
+  const response = await api.get('/handover/tech-pipeline');
+  return response.data.data.leads;
+};
+
 export const getTechList = async () => {
   const response = await api.get('/handover/tech-list');
   return response.data.data.techs;
 };
 
-export const assignHandover = async (leadId, techId) => {
-  const response = await api.patch(`/handover/${leadId}/assign`, { techId });
+export const assignHandover = async (leadId, payload) => {
+  const body =
+    typeof payload === 'string' ? { techId: payload } : { ...payload };
+  const response = await api.patch(`/handover/${leadId}/assign`, body);
   return response.data.data.lead;
 };
 

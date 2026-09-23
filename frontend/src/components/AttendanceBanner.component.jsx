@@ -36,8 +36,10 @@ export default function AttendanceBanner() {
     refetchInterval: 30000,
   });
 
-  const invalidateToday = () =>
+  const invalidateToday = () => {
     queryClient.invalidateQueries({ queryKey: ['todayAttendance'] });
+    queryClient.invalidateQueries({ queryKey: ['attendanceHistory'] });
+  };
 
   const checkInMutation = useMutation({
     mutationFn: checkIn,

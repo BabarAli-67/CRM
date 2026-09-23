@@ -9,15 +9,37 @@ import {
   deleteCallback,
   markAlert,
   promoteCallback,
+  createCloserCallback,
+  getMyCloserCallbacks,
+  updateCloserCallback,
+  markCloserAlert,
 } from '../controllers/callback.controller.js';
 
 const router = Router();
 
 router.use(protect);
 
+/* ─── Sales agent (unchanged) ─── */
 router.post('/', restrictTo('sales_agent'), createCallback);
 
 router.get('/mine', restrictTo('sales_agent'), getMyCallbacks);
+
+/* ─── Closer (isolated paths — must be before /:id) ─── */
+router.post('/closer', restrictTo('closer'), createCloserCallback);
+
+router.get('/closer/mine', restrictTo('closer'), getMyCloserCallbacks);
+
+router.patch(
+  '/closer/:id/mark-alert',
+  restrictTo('closer'),
+  markCloserAlert
+);
+
+router.patch(
+  '/closer/:id',
+  restrictTo('closer'),
+  updateCloserCallback
+);
 
 router.get(
   '/',

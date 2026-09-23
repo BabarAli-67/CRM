@@ -65,7 +65,7 @@ router.get(
 
 router.get(
   '/:id',
-  restrictTo('sales_agent', 'closer', 'super_admin', 'admin', 'cst_manager'),
+  restrictTo('sales_agent', 'closer', 'super_admin', 'admin', 'cst_manager', 'tech_team'),
   getLeadById
 );
 

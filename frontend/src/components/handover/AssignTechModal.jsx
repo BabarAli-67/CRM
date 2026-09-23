@@ -38,7 +38,7 @@ export default function AssignTechModal({ open, lead, onClose, onSuccess }) {
 
   const mutation = useMutation({
     mutationFn: ({ id, techId: selectedTechId }) =>
-      assignHandover(id, selectedTechId),
+      assignHandover(id, { techId: selectedTechId }),
     onSuccess: (updatedLead) => {
       setError('');
       onSuccess?.(updatedLead);

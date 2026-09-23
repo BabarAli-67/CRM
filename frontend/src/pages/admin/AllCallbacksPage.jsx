@@ -79,15 +79,17 @@ const formatPkt = (value) => {
   });
 };
 
-const assigneeLabel = (agent) => {
-  if (!agent) return '—';
-  const name = formatUserRef(agent) || agent.fullName || agent.username || '—';
-  const role = ROLE_LABEL[agent.role] || agent.role || '';
+const assigneeOf = (row) => row.closerId || row.agentId;
+
+const assigneeLabel = (person) => {
+  if (!person) return '—';
+  const name = formatUserRef(person) || person.fullName || person.username || '—';
+  const role = ROLE_LABEL[person.role] || person.role || '';
   return role ? `${name} (${role})` : name;
 };
 
-const agentIdOf = (row) => {
-  const a = row.agentId;
+const assigneeIdOf = (row) => {
+  const a = assigneeOf(row);
   if (!a) return '';
   return String(a._id || a);
 };
@@ -184,12 +186,13 @@ export default function AllCallbacksPage() {
   const userOptions = useMemo(() => {
     const map = new Map();
     for (const row of callbacks) {
-      const id = agentIdOf(row);
+      const person = assigneeOf(row);
+      const id = assigneeIdOf(row);
       if (!id || map.has(id)) continue;
       map.set(id, {
         id,
-        label: assigneeLabel(row.agentId),
-        role: row.agentId?.role || '',
+        label: assigneeLabel(person),
+        role: person?.role || '',
       });
     }
     return [...map.values()].sort((a, b) => a.label.localeCompare(b.label));
@@ -198,7 +201,8 @@ export default function AllCallbacksPage() {
   const roleOptions = useMemo(() => {
     const set = new Set();
     for (const row of callbacks) {
-      if (row.agentId?.role) set.add(row.agentId.role);
+      const role = assigneeOf(row)?.role;
+      if (role) set.add(role);
     }
     return [...set].sort();
   }, [callbacks]);
@@ -219,8 +223,8 @@ export default function AllCallbacksPage() {
             return false;
           }
         }
-        if (userFilter && agentIdOf(row) !== userFilter) return false;
-        if (roleFilter && row.agentId?.role !== roleFilter) return false;
+        if (userFilter && assigneeIdOf(row) !== userFilter) return false;
+        if (roleFilter && assigneeOf(row)?.role !== roleFilter) return false;
 
         const bucket = deriveCallbackBucket(row, now);
         if (statusFilter === 'missed') return bucket === 'missed';
@@ -454,7 +458,7 @@ export default function AllCallbacksPage() {
                         </div>
                       </td>
                       <td className="px-4 py-3 text-sm">
-                        {assigneeLabel(row.agentId)}
+                        {assigneeLabel(assigneeOf(row))}
                       </td>
                       <td className="px-4 py-3 whitespace-nowrap">
                         {formatPkt(row.callbackAt)}

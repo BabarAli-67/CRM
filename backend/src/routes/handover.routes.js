@@ -3,6 +3,7 @@ import { protect, restrictTo } from '../middlewares/auth.middleware.js';
 import { blockReadOnlyAdmin } from '../middlewares/permission.middleware.js';
 import {
   getHandoverQueue,
+  getTechPipeline,
   getTechList,
   assignHandover,
   getMyProjects,
@@ -19,6 +20,12 @@ router.get(
   restrictTo('cst_manager', 'super_admin', 'admin'),
   blockReadOnlyAdmin,
   getHandoverQueue
+);
+
+router.get(
+  '/tech-pipeline',
+  restrictTo('cst_manager', 'super_admin', 'admin'),
+  getTechPipeline
 );
 
 router.get('/tech-list', restrictTo('cst_manager'), getTechList);

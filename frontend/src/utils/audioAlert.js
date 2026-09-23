@@ -274,4 +274,41 @@ export async function playChime(_pattern = 'single') {
   return startAlarmLoop();
 }
 
+/**
+ * Short crisp message-notification ping (does not touch the reminder alarm loop).
+ */
+export async function playMessageChime() {
+  try {
+    await unlockAudioPlayback();
+    const ctx = ensureContext();
+    if (!ctx) return;
+    await resumeContext(ctx);
+
+    const now = ctx.currentTime;
+    const tones = [
+      { freq: 880, start: 0, dur: 0.09 },
+      { freq: 1320, start: 0.08, dur: 0.12 },
+    ];
+
+    for (const tone of tones) {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(tone.freq, now + tone.start);
+      gain.gain.setValueAtTime(0.0001, now + tone.start);
+      gain.gain.exponentialRampToValueAtTime(0.18, now + tone.start + 0.015);
+      gain.gain.exponentialRampToValueAtTime(
+        0.0001,
+        now + tone.start + tone.dur
+      );
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(now + tone.start);
+      osc.stop(now + tone.start + tone.dur + 0.02);
+    }
+  } catch {
+    // Ignore — toast still shows
+  }
+}
+
 export default playChime;

@@ -4,6 +4,8 @@ import { updateLead } from '../../services/lead.service.js';
 import { formatUserRef } from '../../utils/formatUserRef.util.js';
 import {
   formatCstStatus,
+  formatLeadPipeline,
+  formatLeadStage,
   formatPaymentSummary,
 } from '../../utils/formatPayment.util.js';
 
@@ -44,6 +46,7 @@ export default function LeadDetailModal({
   lead,
   onClose,
   footer = null,
+  headerActions = null,
   canEdit = false,
   onLeadUpdated = null,
 }) {
@@ -135,13 +138,16 @@ export default function LeadDetailModal({
               {display.phone || '—'}
             </p>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-lg px-2 py-1 text-sm text-zinc-400 hover:bg-zinc-800 hover:text-white"
-          >
-            ✕
-          </button>
+          <div className="flex shrink-0 items-center gap-2">
+            {headerActions}
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-lg px-2 py-1 text-sm text-zinc-400 hover:bg-zinc-800 hover:text-white"
+            >
+              ✕
+            </button>
+          </div>
         </div>
 
         <div className="overflow-y-auto px-5 py-3">
@@ -200,22 +206,17 @@ export default function LeadDetailModal({
             </form>
           ) : (
             <dl>
-              <Row label="Stage">{lead.stage || '—'}</Row>
-              <Row label="Pipeline">
-                {lead.status === 'pending_closer_claim'
-                  ? 'Pending Closer Claim'
-                  : lead.status === 'in_progress'
-                    ? 'In Progress'
-                    : lead.status === 'with_agent'
-                      ? 'With Agent'
-                      : lead.status || '—'}
-              </Row>
+              <Row label="Stage">{formatLeadStage(lead)}</Row>
+              <Row label="Pipeline">{formatLeadPipeline(lead)}</Row>
               <Row label="Created By">
                 {formatUserRef(lead.agentId) || '—'}
               </Row>
               <Row label="Closer">
                 {formatUserRef(lead.closerId) || '—'}
               </Row>
+              {lead.clientName ? (
+                <Row label="Client">{lead.clientName}</Row>
+              ) : null}
               <Row label="Website">
                 {lead.websiteLink ? (
                   <a
@@ -233,6 +234,13 @@ export default function LeadDetailModal({
               <Row label="Notes">
                 <span className="whitespace-pre-wrap">{lead.notes || '—'}</span>
               </Row>
+              {lead.handover?.onboardingNotes ? (
+                <Row label="Onboarding">
+                  <span className="whitespace-pre-wrap">
+                    {lead.handover.onboardingNotes}
+                  </span>
+                </Row>
+              ) : null}
               <Row label="Callback">{formatPkt(followAt)}</Row>
               {lead.followUp?.notes ? (
                 <Row label="Callback note">
@@ -276,6 +284,16 @@ export default function LeadDetailModal({
               <Row label="CST status">
                 {formatCstStatus(lead.handover?.cstStatus)}
               </Row>
+              {lead.handover?.techStatus ||
+              ['assigned', 'in_progress', 'completed'].includes(
+                lead.handover?.cstStatus
+              ) ? (
+                <Row label="Tech status">
+                  {formatCstStatus(
+                    lead.handover?.techStatus || lead.handover?.cstStatus
+                  )}
+                </Row>
+              ) : null}
               <Row label="Closed">{formatPkt(lead.closedAt)}</Row>
               <Row label="Closed by">
                 {formatUserRef(lead.closedBy) || '—'}

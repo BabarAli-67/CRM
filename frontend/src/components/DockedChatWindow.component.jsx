@@ -4,6 +4,7 @@ import useAuth from '../hooks/useAuth.hook.js';
 import useAuthenticatedFile from '../hooks/useAuthenticatedFile.hook.js';
 import useChatSocket from '../hooks/useChatSocket.hook.js';
 import { getMessages, markSeen, sendMessage, uploadFile } from '../services/chat.service.js';
+import { clearConversationUnread } from '../utils/chatUnread.util.js';
 import VoiceRecorder from './VoiceRecorder.component.jsx';
 
 const TYPING_SAFETY_MS = 5000;
@@ -287,7 +288,6 @@ export default function DockedChatWindow({
   const fileInputRef = useRef(null);
   const lastMarkSeenAtRef = useRef(0);
   const markSeenDebounceRef = useRef(null);
-  const prevMinimizedRef = useRef(minimized);
   const scheduleMarkSeenRef = useRef(() => {});
 
   const contactId = contact?._id ?? contact?.id;
@@ -315,7 +315,11 @@ export default function DockedChatWindow({
 
   const markSeenMutation = useMutation({
     mutationFn: () => markSeen(conversationId),
+    onMutate: () => {
+      clearConversationUnread(queryClient, conversationId);
+    },
     onSuccess: () => {
+      clearConversationUnread(queryClient, conversationId);
       queryClient.invalidateQueries({ queryKey: ['conversations'] });
     },
   });
@@ -369,6 +373,8 @@ export default function DockedChatWindow({
         });
       }
 
+      clearConversationUnread(queryClient, conversationId);
+      scheduleMarkSeenRef.current(true);
       queryClient.invalidateQueries({ queryKey: ['conversations'] });
     },
   });
@@ -381,6 +387,8 @@ export default function DockedChatWindow({
       if (list.some((m) => sameId(m._id, sent._id))) return list;
       return [...list, sent];
     });
+    clearConversationUnread(queryClient, conversationId);
+    scheduleMarkSeenRef.current(true);
     queryClient.invalidateQueries({ queryKey: ['conversations'] });
   };
 
@@ -485,14 +493,13 @@ export default function DockedChatWindow({
     return offPresence;
   }, [onPresenceUpdate, contactId]);
 
-  // Mark seen when the window is toggled from minimized → open
+  // Mark seen whenever the thread is open (first open + restore from minimize)
   useEffect(() => {
-    const wasMinimized = prevMinimizedRef.current;
-    prevMinimizedRef.current = minimized;
-    if (wasMinimized && !minimized) {
-      scheduleMarkSeenRef.current(true);
-    }
-  }, [minimized]);
+    if (minimized || !conversationId) return undefined;
+    clearConversationUnread(queryClient, conversationId);
+    scheduleMarkSeenRef.current(true);
+    return undefined;
+  }, [conversationId, minimized, queryClient]);
 
   useEffect(() => {
     if (minimized) return undefined;
@@ -510,14 +517,16 @@ export default function DockedChatWindow({
         if (list.some((m) => sameId(m._id, incoming._id))) return list;
         return [...list, incoming];
       });
-      queryClient.invalidateQueries({ queryKey: ['conversations'] });
 
-      // Contact message while this window is open → mark seen (debounced)
+      // Contact message while this window is open → clear badge + mark seen
       if (
         sameId(incoming.senderId, contactId) &&
         !sameId(incoming.senderId, user?._id)
       ) {
-        scheduleMarkSeenRef.current(false);
+        clearConversationUnread(queryClient, conversationId);
+        scheduleMarkSeenRef.current(true);
+      } else {
+        queryClient.invalidateQueries({ queryKey: ['conversations'] });
       }
     });
 

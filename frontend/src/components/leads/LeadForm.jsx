@@ -72,13 +72,17 @@ export default function LeadForm({
   const saveMutation = useMutation({
     mutationFn: async ({ payload, sendToCloserPool }) => {
       if (leadId) {
-        const lead = await updateLead(leadId, payload);
         if (sendToCloserPool) {
+          // Persist field edits, then move to pool (status → pending_closer_claim)
+          await updateLead(leadId, payload);
           return sendLeadToCloserPool(leadId);
         }
-        return lead;
+        return updateLead(leadId, payload);
       }
-      return createLead({ ...payload, sendToCloserPool: Boolean(sendToCloserPool) });
+      return createLead({
+        ...payload,
+        sendToCloserPool: Boolean(sendToCloserPool),
+      });
     },
     onSuccess: (lead, variables) => {
       setError('');

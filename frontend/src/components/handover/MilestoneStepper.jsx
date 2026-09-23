@@ -17,7 +17,7 @@ const NEXT_OF = {
  * Forward-only milestone stepper for tech-assigned projects.
  *
  * @param {string} leadId
- * @param {string} [status] Current handover.cstStatus
+ * @param {string} [status] Current handover.cstStatus / techStatus
  * @param {(lead: object) => void} [onUpdated]
  */
 export default function MilestoneStepper({
@@ -42,6 +42,9 @@ export default function MilestoneStepper({
     mutationFn: (milestone) => updateMilestone(leadId, milestone),
     onSuccess: (lead) => {
       queryClient.invalidateQueries({ queryKey: ['myProjects'] });
+      queryClient.invalidateQueries({ queryKey: ['handoverQueue'] });
+      queryClient.invalidateQueries({ queryKey: ['cstTechPipeline'] });
+      queryClient.invalidateQueries({ queryKey: ['pipeline', 'leads'] });
       onUpdated?.(lead);
     },
   });
@@ -60,7 +63,7 @@ export default function MilestoneStepper({
                 <span
                   className={[
                     'hidden h-px w-6 sm:block',
-                    reached ? 'bg-flash-secondary/70' : 'bg-white/15',
+                    reached ? 'bg-orange-500/70' : 'bg-zinc-700',
                   ].join(' ')}
                   aria-hidden
                 />
@@ -71,8 +74,8 @@ export default function MilestoneStepper({
                   done || (isComplete && index === currentIndex)
                     ? 'bg-emerald-500/15 text-emerald-300 ring-emerald-500/30'
                     : active
-                      ? 'bg-flash-primary/20 text-flash-secondary ring-flash-primary/40'
-                      : 'bg-white/5 text-ink/45 ring-white/10',
+                      ? 'bg-orange-600/20 text-orange-200 ring-orange-500/40'
+                      : 'bg-zinc-800/60 text-zinc-500 ring-zinc-700/60',
                 ].join(' ')}
               >
                 <span
@@ -81,8 +84,8 @@ export default function MilestoneStepper({
                     done || isComplete
                       ? 'bg-emerald-500/30 text-emerald-200'
                       : active
-                        ? 'bg-flash-primary text-white'
-                        : 'bg-white/10 text-ink/50',
+                        ? 'bg-orange-600 text-white'
+                        : 'bg-zinc-700 text-zinc-400',
                   ].join(' ')}
                 >
                   {done || isComplete ? '✓' : index + 1}
@@ -100,17 +103,17 @@ export default function MilestoneStepper({
             type="button"
             disabled={mutation.isPending || !nextMilestone}
             onClick={() => mutation.mutate(nextMilestone)}
-            className="rounded-md bg-flash-primary px-3 py-1.5 text-xs font-semibold text-white hover:bg-flash-secondary disabled:cursor-not-allowed disabled:opacity-60"
+            className="rounded-lg bg-orange-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-orange-500 disabled:cursor-not-allowed disabled:opacity-60"
           >
             {mutation.isPending
               ? 'Updating…'
               : nextMilestone === 'in_progress'
-                ? 'Next → In Progress'
-                : 'Next → Completed'}
+                ? 'Start → In Progress'
+                : 'Mark → Completed'}
           </button>
         ) : (
-          <span className="text-xs font-medium text-emerald-300/90">
-            Project completed
+          <span className="inline-flex items-center rounded-full bg-emerald-500/15 px-3 py-1 text-xs font-semibold text-emerald-300 ring-1 ring-emerald-500/35">
+            Completed
           </span>
         )}
 

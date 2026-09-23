@@ -1,7 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import LeadDetailModal from '../../components/leads/LeadDetailModal.jsx';
 import LeadTable from '../../components/leads/LeadTable.jsx';
+import CloserScheduleCallbackModal from '../../components/callbacks/CloserScheduleCallbackModal.jsx';
 import CloserShell from '../../components/closer/CloserShell.jsx';
 import {
   getAssignedLeads,
@@ -27,9 +28,23 @@ const formatPkt = (value) => {
   });
 };
 
+const TABS = [
+  { id: 'pool', label: 'Closer Pool' },
+  { id: 'claimed', label: 'Claimed Leads' },
+  { id: 'closed', label: 'Closed Sales Review' },
+];
+
+const thClass =
+  'px-4 py-3.5 text-left text-xs font-medium uppercase tracking-wide text-zinc-500';
+const tdClass = 'px-4 py-3.5 align-middle';
+const rowClass =
+  'border-b border-zinc-800/50 last:border-0 transition-colors hover:bg-zinc-800/25';
+
 export default function AssignedLeadsPage() {
   const queryClient = useQueryClient();
+  const [tab, setTab] = useState('pool');
   const [detailLead, setDetailLead] = useState(null);
+  const [scheduleLead, setScheduleLead] = useState(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [actionError, setActionError] = useState('');
   const [actionMessage, setActionMessage] = useState('');
@@ -42,7 +57,9 @@ export default function AssignedLeadsPage() {
   } = useQuery({
     queryKey: ['closerPool'],
     queryFn: getCloserPool,
-    refetchInterval: 15_000,
+    refetchInterval: 10_000,
+    refetchOnWindowFocus: true,
+    refetchOnMount: 'always',
   });
 
   const {
@@ -53,7 +70,9 @@ export default function AssignedLeadsPage() {
   } = useQuery({
     queryKey: ['assignedLeads'],
     queryFn: getAssignedLeads,
-    refetchInterval: 30_000,
+    refetchInterval: 20_000,
+    refetchOnWindowFocus: true,
+    refetchOnMount: 'always',
   });
 
   const {
@@ -65,6 +84,8 @@ export default function AssignedLeadsPage() {
     queryKey: ['closerClosedSales'],
     queryFn: getCloserClosedSales,
     refetchInterval: 20_000,
+    refetchOnWindowFocus: true,
+    refetchOnMount: 'always',
   });
 
   const openDetail = async (row) => {
@@ -100,16 +121,26 @@ export default function AssignedLeadsPage() {
     },
   });
 
-  const awaitingHandover = closedSales.filter(
-    (l) =>
-      !l.handover?.cstStatus ||
-      l.handover.cstStatus === 'awaiting_handover'
+  const awaitingHandover = useMemo(
+    () =>
+      closedSales.filter(
+        (l) =>
+          !l.handover?.cstStatus ||
+          l.handover.cstStatus === 'awaiting_handover'
+      ),
+    [closedSales]
   );
-  const handedOver = closedSales.filter((l) =>
-    ['pending_review', 'assigned', 'in_progress', 'completed'].includes(
-      l.handover?.cstStatus
-    )
+  const handedOver = useMemo(
+    () =>
+      closedSales.filter((l) =>
+        ['pending_review', 'assigned', 'in_progress', 'completed'].includes(
+          l.handover?.cstStatus
+        )
+      ),
+    [closedSales]
   );
+
+  const closedReadyCount = awaitingHandover.length;
 
   return (
     <CloserShell title="Assigned Leads">
@@ -125,204 +156,239 @@ export default function AssignedLeadsPage() {
         <p className="text-sm text-zinc-500">Loading lead details…</p>
       ) : null}
 
-      <section className="w-full bg-zinc-900/50 border border-zinc-800/80 rounded-2xl p-6 shadow-xl">
-        <div className="mb-4">
-          <h2 className="font-display text-xl font-semibold text-white">
-            Closer Pool
-          </h2>
-          <p className="mt-1 text-sm text-zinc-400">
-            Unclaimed leads from sales agents · claim one to work it exclusively
-          </p>
-        </div>
+      <section className="w-full rounded-2xl border border-zinc-800/80 bg-zinc-900/50 p-6 shadow-xl sm:p-8">
+        <nav
+          className="mb-8 flex flex-wrap gap-2 rounded-2xl border border-zinc-800/80 bg-zinc-950/50 p-1.5"
+          aria-label="Closer lead sections"
+        >
+          {TABS.map((item) => {
+            const active = tab === item.id;
+            const count =
+              item.id === 'pool'
+                ? pool.length
+                : item.id === 'claimed'
+                  ? leads.length
+                  : closedReadyCount;
+            return (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => {
+                  setActionError('');
+                  setActionMessage('');
+                  setTab(item.id);
+                }}
+                className={`relative flex-1 rounded-full px-4 py-2.5 font-display text-sm font-semibold transition sm:flex-none ${
+                  active
+                    ? 'bg-orange-600 text-white shadow-lg shadow-orange-600/25'
+                    : 'text-zinc-400 hover:bg-zinc-800/60 hover:text-white'
+                }`}
+              >
+                <span className="inline-flex items-center justify-center gap-2">
+                  {item.label}
+                  <span
+                    className={`inline-flex min-w-[1.25rem] items-center justify-center rounded-full px-1.5 py-0.5 text-[11px] font-bold tabular-nums ${
+                      active
+                        ? 'bg-white/20 text-white'
+                        : count > 0
+                          ? 'bg-orange-600/20 text-orange-300'
+                          : 'bg-zinc-800 text-zinc-500'
+                    }`}
+                  >
+                    {count}
+                  </span>
+                </span>
+              </button>
+            );
+          })}
+        </nav>
 
-        {poolLoading ? (
-          <p className="py-8 text-center text-sm text-zinc-500">Loading…</p>
-        ) : poolError ? (
-          <p className="py-8 text-center text-sm text-red-400">
-            {poolErr?.response?.data?.message || 'Failed to load closer pool.'}
-          </p>
-        ) : (
-          <LeadTable
-            leads={pool}
-            listQueryKey={['closerPool']}
-            mode="pool"
-            showCreatedBy
-            onViewDetails={openDetail}
-            emptyMessage="No leads waiting in the closer pool."
-          />
-        )}
-      </section>
+        {tab === 'closed' ? (
+          <div className="mb-6">
+            <h2 className="font-display text-lg font-semibold tracking-tight text-white">
+              Closed Sales Review
+            </h2>
+            <p className="mt-1 text-sm text-zinc-500">
+              Review sales and hand over to CST
+            </p>
+          </div>
+        ) : null}
 
-      <section className="w-full bg-zinc-900/50 border border-zinc-800/80 rounded-2xl p-6 shadow-xl">
-        <div className="mb-4">
-          <h2 className="font-display text-xl font-semibold text-white">
-            My claimed leads
-          </h2>
-          <p className="mt-1 text-sm text-zinc-400">
-            In Progress · close with payment · then Move to CST for fulfillment
-          </p>
-        </div>
+        {tab === 'pool' ? (
+          poolLoading ? (
+            <p className="py-12 text-center text-sm text-zinc-500">Loading…</p>
+          ) : poolError ? (
+            <p className="py-12 text-center text-sm text-red-400">
+              {poolErr?.response?.data?.message ||
+                'Failed to load closer pool.'}
+            </p>
+          ) : (
+            <LeadTable
+              leads={pool}
+              listQueryKey={['closerPool']}
+              mode="pool"
+              showCreatedBy
+              onViewDetails={openDetail}
+              onClaimed={() => {
+                setActionMessage('Lead claimed.');
+                setTab('claimed');
+              }}
+              emptyMessage="No leads in the pool."
+            />
+          )
+        ) : null}
 
-        {isLoading ? (
-          <p className="py-8 text-center text-sm text-zinc-500">Loading…</p>
-        ) : isError ? (
-          <p className="py-8 text-center text-sm text-red-400">
-            {error?.response?.data?.message || 'Failed to load assigned leads.'}
-          </p>
-        ) : (
-          <LeadTable
-            leads={leads}
-            listQueryKey={['assignedLeads']}
-            showCreatedBy
-            onViewDetails={openDetail}
-            emptyMessage="No claimed leads yet. Claim one from the pool above."
-          />
-        )}
-      </section>
+        {tab === 'claimed' ? (
+          isLoading ? (
+            <p className="py-12 text-center text-sm text-zinc-500">Loading…</p>
+          ) : isError ? (
+            <p className="py-12 text-center text-sm text-red-400">
+              {error?.response?.data?.message ||
+                'Failed to load assigned leads.'}
+            </p>
+          ) : (
+            <LeadTable
+              leads={leads}
+              listQueryKey={['assignedLeads']}
+              showCreatedBy
+              showCloserSchedule
+              onViewDetails={openDetail}
+              emptyMessage="No claimed leads."
+            />
+          )
+        ) : null}
 
-      <section className="w-full bg-zinc-900/50 border border-zinc-800/80 rounded-2xl p-6 shadow-xl">
-        <div className="mb-4">
-          <h2 className="font-display text-xl font-semibold text-white">
-            Closed sales · Move to CST
-          </h2>
-          <p className="mt-1 text-sm text-zinc-400">
-            Review agent notes &amp; payment, then hand over to CST for order
-            processing
-          </p>
-        </div>
+        {tab === 'closed' ? (
+          closedLoading ? (
+            <p className="py-12 text-center text-sm text-zinc-500">Loading…</p>
+          ) : closedError ? (
+            <p className="py-12 text-center text-sm text-red-400">
+              {closedErr?.response?.data?.message ||
+                'Failed to load closed sales.'}
+            </p>
+          ) : awaitingHandover.length === 0 && handedOver.length === 0 ? (
+            <p className="py-12 text-center text-sm text-zinc-500">
+              No closed sales yet.
+            </p>
+          ) : (
+            <div className="space-y-10">
+              {awaitingHandover.length > 0 ? (
+                <div className="overflow-x-auto rounded-xl border border-zinc-800/60">
+                  <table className="min-w-full text-sm text-zinc-200">
+                    <thead className="border-b border-zinc-800 bg-zinc-950/40">
+                      <tr>
+                        <th className={thClass}>Business</th>
+                        <th className={thClass}>Created By</th>
+                        <th className={thClass}>Payment</th>
+                        <th className={thClass}>Closed</th>
+                        <th className={thClass}>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {awaitingHandover.map((row) => (
+                        <tr key={row._id} className={rowClass}>
+                          <td className={`${tdClass} font-medium text-white`}>
+                            <span className="inline-flex flex-wrap items-center gap-2">
+                              {row.businessName}
+                              {!row.closerId ? (
+                                <span className="rounded-md bg-zinc-800 px-1.5 py-0.5 text-[10px] font-medium text-zinc-400">
+                                  Agent
+                                </span>
+                              ) : null}
+                            </span>
+                          </td>
+                          <td className={`${tdClass} text-zinc-400`}>
+                            {formatUserRef(row.agentId) || '—'}
+                          </td>
+                          <td className={tdClass}>
+                            {formatPaymentSummary(row.payment)}
+                          </td>
+                          <td
+                            className={`${tdClass} whitespace-nowrap text-zinc-400`}
+                          >
+                            {formatPkt(row.closedAt)}
+                          </td>
+                          <td className={tdClass}>
+                            <div className="flex flex-wrap gap-2">
+                              <button
+                                type="button"
+                                onClick={() => openDetail(row)}
+                                className="rounded-lg border border-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-300 hover:bg-zinc-800/60"
+                              >
+                                Details
+                              </button>
+                              <button
+                                type="button"
+                                disabled={
+                                  moveMutation.isPending &&
+                                  moveMutation.variables === row._id
+                                }
+                                onClick={() => {
+                                  setActionError('');
+                                  setActionMessage('');
+                                  moveMutation.mutate(row._id);
+                                }}
+                                className="rounded-lg bg-orange-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-orange-500 disabled:opacity-60"
+                              >
+                                {moveMutation.isPending &&
+                                moveMutation.variables === row._id
+                                  ? 'Moving…'
+                                  : 'Move to CST'}
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : null}
 
-        {closedLoading ? (
-          <p className="py-8 text-center text-sm text-zinc-500">Loading…</p>
-        ) : closedError ? (
-          <p className="py-8 text-center text-sm text-red-400">
-            {closedErr?.response?.data?.message ||
-              'Failed to load closed sales.'}
-          </p>
-        ) : awaitingHandover.length === 0 && handedOver.length === 0 ? (
-          <p className="py-10 text-center text-sm text-zinc-500">
-            No closed sales yet.
-          </p>
-        ) : (
-          <div className="space-y-6">
-            {awaitingHandover.length > 0 ? (
-              <div className="overflow-x-auto">
-                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-amber-400/90">
-                  Awaiting CST handover ({awaitingHandover.length})
-                </p>
-                <table className="min-w-full text-left text-sm text-zinc-200">
-                  <thead className="border-b border-zinc-800 text-xs uppercase tracking-wide text-zinc-500">
-                    <tr>
-                      <th className="px-3 py-2.5 font-medium">Business</th>
-                      <th className="px-3 py-2.5 font-medium">Created By</th>
-                      <th className="px-3 py-2.5 font-medium">Payment</th>
-                      <th className="px-3 py-2.5 font-medium">Closed</th>
-                      <th className="px-3 py-2.5 font-medium">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {awaitingHandover.map((row) => (
-                      <tr
-                        key={row._id}
-                        className="border-b border-zinc-800/60 last:border-0 hover:bg-zinc-800/30"
-                      >
-                        <td className="px-3 py-2.5 font-medium">
-                          {row.businessName}
-                        </td>
-                        <td className="px-3 py-2.5 text-zinc-400">
-                          {formatUserRef(row.agentId) || '—'}
-                        </td>
-                        <td className="px-3 py-2.5">
-                          {formatPaymentSummary(row.payment)}
-                        </td>
-                        <td className="px-3 py-2.5 whitespace-nowrap text-zinc-400">
-                          {formatPkt(row.closedAt)}
-                        </td>
-                        <td className="px-3 py-2.5">
-                          <div className="flex flex-wrap gap-2">
+              {handedOver.length > 0 ? (
+                <div className="overflow-x-auto rounded-xl border border-zinc-800/60">
+                  <table className="min-w-full text-sm text-zinc-200">
+                    <thead className="border-b border-zinc-800 bg-zinc-950/40">
+                      <tr>
+                        <th className={thClass}>Business</th>
+                        <th className={thClass}>Created By</th>
+                        <th className={thClass}>Payment</th>
+                        <th className={thClass}>Status</th>
+                        <th className={thClass}>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {handedOver.map((row) => (
+                        <tr key={row._id} className={rowClass}>
+                          <td className={`${tdClass} font-medium text-white`}>
+                            {row.businessName}
+                          </td>
+                          <td className={`${tdClass} text-zinc-400`}>
+                            {formatUserRef(row.agentId) || '—'}
+                          </td>
+                          <td className={tdClass}>
+                            {formatPaymentSummary(row.payment)}
+                          </td>
+                          <td className={`${tdClass} text-zinc-400`}>
+                            {formatCstStatus(row.handover?.cstStatus)}
+                          </td>
+                          <td className={tdClass}>
                             <button
                               type="button"
                               onClick={() => openDetail(row)}
-                              className="rounded-full border border-zinc-700 px-2.5 py-1.5 text-xs font-semibold text-zinc-300 hover:bg-zinc-800/50"
+                              className="rounded-lg border border-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-300 hover:bg-zinc-800/60"
                             >
-                              View details
+                              Details
                             </button>
-                            <button
-                              type="button"
-                              disabled={
-                                moveMutation.isPending &&
-                                moveMutation.variables === row._id
-                              }
-                              onClick={() => {
-                                setActionError('');
-                                setActionMessage('');
-                                moveMutation.mutate(row._id);
-                              }}
-                              className="rounded-full bg-orange-600 px-2.5 py-1.5 text-xs font-semibold text-white hover:bg-orange-500 disabled:opacity-60"
-                            >
-                              {moveMutation.isPending &&
-                              moveMutation.variables === row._id
-                                ? 'Moving…'
-                                : 'Move to CST'}
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            ) : null}
-
-            {handedOver.length > 0 ? (
-              <div className="overflow-x-auto">
-                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-emerald-400/90">
-                  Handed over to CST ({handedOver.length})
-                </p>
-                <table className="min-w-full text-left text-sm text-zinc-200">
-                  <thead className="border-b border-zinc-800 text-xs uppercase tracking-wide text-zinc-500">
-                    <tr>
-                      <th className="px-3 py-2.5 font-medium">Business</th>
-                      <th className="px-3 py-2.5 font-medium">Created By</th>
-                      <th className="px-3 py-2.5 font-medium">Payment</th>
-                      <th className="px-3 py-2.5 font-medium">CST status</th>
-                      <th className="px-3 py-2.5 font-medium">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {handedOver.map((row) => (
-                      <tr
-                        key={row._id}
-                        className="border-b border-zinc-800/60 last:border-0 hover:bg-zinc-800/30"
-                      >
-                        <td className="px-3 py-2.5 font-medium">
-                          {row.businessName}
-                        </td>
-                        <td className="px-3 py-2.5 text-zinc-400">
-                          {formatUserRef(row.agentId) || '—'}
-                        </td>
-                        <td className="px-3 py-2.5">
-                          {formatPaymentSummary(row.payment)}
-                        </td>
-                        <td className="px-3 py-2.5">
-                          {formatCstStatus(row.handover?.cstStatus)}
-                        </td>
-                        <td className="px-3 py-2.5">
-                          <button
-                            type="button"
-                            onClick={() => openDetail(row)}
-                            className="rounded-full border border-zinc-700 px-2.5 py-1.5 text-xs font-semibold text-zinc-300 hover:bg-zinc-800/50"
-                          >
-                            View details
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            ) : null}
-          </div>
-        )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : null}
+            </div>
+          )
+        ) : null}
       </section>
 
       <LeadDetailModal
@@ -336,24 +402,59 @@ export default function AssignedLeadsPage() {
             detailLead.handover.cstStatus === 'awaiting_handover')
         }
         onLeadUpdated={(updated) => setDetailLead(updated)}
-        footer={
-          detailLead &&
-          detailLead.stage === 'closed_sale' &&
-          (!detailLead.handover?.cstStatus ||
-            detailLead.handover.cstStatus === 'awaiting_handover') ? (
+        headerActions={
+          detailLead?.stage === 'active' &&
+          detailLead?.status === 'in_progress' ? (
             <button
               type="button"
-              disabled={moveMutation.isPending}
-              onClick={() => {
-                setActionError('');
-                moveMutation.mutate(detailLead._id);
-              }}
-              className="rounded-xl bg-orange-600 px-4 py-2 text-sm font-semibold text-white hover:bg-orange-500 disabled:opacity-60"
+              onClick={() => setScheduleLead(detailLead)}
+              className="rounded-lg border border-sky-400/50 bg-sky-600/25 px-3 py-1.5 text-xs font-semibold text-sky-200 hover:bg-sky-600/40"
             >
-              {moveMutation.isPending ? 'Moving…' : 'Move to CST'}
+              Schedule Callback
             </button>
           ) : null
         }
+        footer={
+          detailLead ? (
+            <>
+              {detailLead.stage === 'active' &&
+              detailLead.status === 'in_progress' ? (
+                <button
+                  type="button"
+                  onClick={() => setScheduleLead(detailLead)}
+                  className="rounded-xl border border-sky-500/40 bg-sky-600/15 px-4 py-2 text-sm font-semibold text-sky-300 hover:bg-sky-600/25"
+                >
+                  Schedule Callback
+                </button>
+              ) : null}
+              {detailLead.stage === 'closed_sale' &&
+              (!detailLead.handover?.cstStatus ||
+                detailLead.handover.cstStatus === 'awaiting_handover') ? (
+                <button
+                  type="button"
+                  disabled={moveMutation.isPending}
+                  onClick={() => {
+                    setActionError('');
+                    moveMutation.mutate(detailLead._id);
+                  }}
+                  className="rounded-xl bg-orange-600 px-4 py-2 text-sm font-semibold text-white hover:bg-orange-500 disabled:opacity-60"
+                >
+                  {moveMutation.isPending ? 'Moving…' : 'Move to CST'}
+                </button>
+              ) : null}
+            </>
+          ) : null
+        }
+      />
+
+      <CloserScheduleCallbackModal
+        open={Boolean(scheduleLead)}
+        lead={scheduleLead}
+        onClose={() => setScheduleLead(null)}
+        onSuccess={() => {
+          setActionMessage('Callback scheduled.');
+          setScheduleLead(null);
+        }}
       />
     </CloserShell>
   );

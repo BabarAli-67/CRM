@@ -10,7 +10,7 @@ export const getHandoverQueue = asyncHandler(async (req, res) => {
     'handover.cstStatus': 'pending_review',
   })
     .select(
-      'clientName businessName phone workEmail personalEmail yelpLink websiteLink gmbLink servicesArea serviceOffered salesAmount payment handover closedAt closedBy agentId closerId notes createdAt updatedAt'
+      'stage status clientName businessName phone workEmail personalEmail yelpLink websiteLink gmbLink servicesArea serviceOffered salesAmount payment handover closedAt closedBy agentId closerId notes createdAt updatedAt'
     )
     .populate('agentId', 'fullName username role')
     .populate('closerId', 'fullName username role')
@@ -20,6 +20,30 @@ export const getHandoverQueue = asyncHandler(async (req, res) => {
   res
     .status(200)
     .json(new ApiResponse(200, { leads }, 'Handover queue retrieved'));
+});
+
+/**
+ * CST view of onboarded clients currently with Tech (or completed).
+ * Surfaces live techStatus for Assigned / In Progress / Completed.
+ */
+export const getTechPipeline = asyncHandler(async (req, res) => {
+  const leads = await Lead.find({
+    stage: 'closed_sale',
+    'handover.assignedTechId': { $ne: null },
+    'handover.cstStatus': { $in: ['assigned', 'in_progress', 'completed'] },
+  })
+    .select(
+      'stage status clientName businessName phone workEmail personalEmail yelpLink websiteLink gmbLink servicesArea serviceOffered salesAmount payment handover closedAt closedBy agentId closerId notes createdAt updatedAt'
+    )
+    .populate('agentId', 'fullName username role')
+    .populate('closerId', 'fullName username role')
+    .populate('closedBy', 'fullName username role')
+    .populate('handover.assignedTechId', 'fullName username role')
+    .sort({ 'handover.assignedAt': -1 });
+
+  res
+    .status(200)
+    .json(new ApiResponse(200, { leads }, 'Tech pipeline retrieved'));
 });
 
 export const getTechList = asyncHandler(async (req, res) => {
@@ -36,7 +60,18 @@ export const getTechList = asyncHandler(async (req, res) => {
 });
 
 export const assignHandover = asyncHandler(async (req, res) => {
-  const { techId } = req.body;
+  const {
+    techId,
+    clientName,
+    workEmail,
+    personalEmail,
+    salesAmount,
+    serviceOffered,
+    servicesArea,
+    gmbLink,
+    yelpLink,
+    onboardingNotes,
+  } = req.body;
 
   if (!techId) {
     throw new ApiError(400, 'techId is required');
@@ -48,21 +83,11 @@ export const assignHandover = asyncHandler(async (req, res) => {
     throw new ApiError(400, 'techId must be an approved tech_team user');
   }
 
-  const lead = await Lead.findOneAndUpdate(
-    {
-      _id: req.params.id,
-      stage: 'closed_sale',
-      'handover.cstStatus': 'pending_review',
-    },
-    {
-      $set: {
-        'handover.assignedTechId': tech._id,
-        'handover.cstStatus': 'assigned',
-        'handover.assignedAt': new Date(),
-      },
-    },
-    { returnDocument: 'after' }
-  );
+  const lead = await Lead.findOne({
+    _id: req.params.id,
+    stage: 'closed_sale',
+    'handover.cstStatus': 'pending_review',
+  });
 
   if (!lead) {
     throw new ApiError(
@@ -71,17 +96,72 @@ export const assignHandover = asyncHandler(async (req, res) => {
     );
   }
 
+  const setIfProvided = (field, value) => {
+    if (value === undefined) return;
+    lead[field] = value === '' || value === null ? null : value;
+  };
+
+  setIfProvided('clientName', clientName);
+  setIfProvided('workEmail', workEmail);
+  setIfProvided('personalEmail', personalEmail);
+  setIfProvided('serviceOffered', serviceOffered);
+  setIfProvided('servicesArea', servicesArea);
+  setIfProvided('gmbLink', gmbLink);
+  setIfProvided('yelpLink', yelpLink);
+
+  if (salesAmount !== undefined) {
+    if (salesAmount === '' || salesAmount === null) {
+      lead.salesAmount = null;
+    } else {
+      const n = Number(salesAmount);
+      if (Number.isNaN(n) || n < 0) {
+        throw new ApiError(400, 'salesAmount must be a non-negative number');
+      }
+      lead.salesAmount = n;
+    }
+  }
+
+  if (!lead.handover) {
+    lead.handover = {};
+  }
+
+  lead.handover.assignedTechId = tech._id;
+  lead.handover.cstStatus = 'assigned';
+  lead.handover.techStatus = 'assigned';
+  lead.handover.assignedAt = new Date();
+
+  if (onboardingNotes !== undefined) {
+    lead.handover.onboardingNotes =
+      onboardingNotes === '' || onboardingNotes === null
+        ? null
+        : String(onboardingNotes).trim();
+  }
+
+  await lead.save();
+
+  await lead.populate([
+    { path: 'agentId', select: 'fullName username role' },
+    { path: 'closerId', select: 'fullName username role' },
+    { path: 'closedBy', select: 'fullName username role' },
+    { path: 'handover.assignedTechId', select: 'fullName username role' },
+  ]);
+
   res
     .status(200)
-    .json(new ApiResponse(200, { lead }, 'Lead assigned to tech team'));
+    .json(
+      new ApiResponse(200, { lead }, 'Client onboarded and assigned to tech')
+    );
 });
 
 export const getMyProjects = asyncHandler(async (req, res) => {
+  // Strict: only projects assigned to this tech member
   const leads = await Lead.find({
+    stage: 'closed_sale',
     'handover.assignedTechId': req.user._id,
+    'handover.cstStatus': { $in: ['assigned', 'in_progress', 'completed'] },
   })
     .select(
-      'clientName businessName phone workEmail yelpLink websiteLink gmbLink servicesArea serviceOffered salesAmount payment handover closedAt notes createdAt updatedAt'
+      'stage status clientName businessName phone workEmail personalEmail yelpLink websiteLink gmbLink servicesArea serviceOffered salesAmount payment handover closedAt notes createdAt updatedAt'
     )
     .sort({ 'handover.assignedAt': 1 });
 
@@ -145,12 +225,17 @@ export const updateMilestone = asyncHandler(async (req, res) => {
   }
 
   lead.handover.cstStatus = milestone;
+  lead.handover.techStatus = milestone;
 
   if (milestone === 'completed') {
     lead.handover.completedAt = new Date();
   }
 
   await lead.save();
+
+  await lead.populate([
+    { path: 'handover.assignedTechId', select: 'fullName username role' },
+  ]);
 
   res
     .status(200)
@@ -229,6 +314,14 @@ export const reassignHandover = asyncHandler(async (req, res) => {
 
   if (nextStatus) {
     lead.handover.cstStatus = nextStatus;
+    if (['assigned', 'in_progress', 'completed'].includes(nextStatus)) {
+      lead.handover.techStatus = nextStatus;
+    } else if (
+      nextStatus === 'pending_review' ||
+      nextStatus === 'awaiting_handover'
+    ) {
+      lead.handover.techStatus = null;
+    }
 
     if (nextStatus === 'completed') {
       lead.handover.completedAt = new Date();

@@ -6,7 +6,9 @@ import {
   createOrGetConversation,
   getContacts,
   getConversations,
+  markSeen,
 } from '../services/chat.service.js';
+import { clearConversationUnread } from '../utils/chatUnread.util.js';
 
 const ROLE_LABEL = {
   sales_agent: 'Sales Agent',
@@ -85,6 +87,17 @@ export default function ConversationDropdown({ onClose }) {
     mutationFn: (contactId) => createOrGetConversation(contactId),
     onSuccess: (conversation, contactId) => {
       const contact = contacts.find((c) => String(c._id) === String(contactId));
+      if (conversation?._id) {
+        clearConversationUnread(queryClient, conversation._id);
+        markSeen(conversation._id)
+          .then(() => {
+            clearConversationUnread(queryClient, conversation._id);
+            queryClient.invalidateQueries({ queryKey: ['conversations'] });
+          })
+          .catch(() => {
+            queryClient.invalidateQueries({ queryKey: ['conversations'] });
+          });
+      }
       openChatWindow(conversation._id, contact || { _id: contactId });
       onClose?.();
     },
@@ -121,6 +134,15 @@ export default function ConversationDropdown({ onClose }) {
     const conversationId = row.conversation?._id || row._id;
     const contact = row.otherParticipant;
     if (!conversationId) return;
+    clearConversationUnread(queryClient, conversationId);
+    markSeen(conversationId)
+      .then(() => {
+        clearConversationUnread(queryClient, conversationId);
+        queryClient.invalidateQueries({ queryKey: ['conversations'] });
+      })
+      .catch(() => {
+        queryClient.invalidateQueries({ queryKey: ['conversations'] });
+      });
     openChatWindow(conversationId, contact);
     onClose?.();
   };
