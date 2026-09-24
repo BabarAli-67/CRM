@@ -7,6 +7,7 @@ import {
   getAssignedLeads,
   getCloserPool,
   getCloserClosedSales,
+  getMyClosedSales,
   sendLeadToCloserPool,
   claimLead,
   moveLeadToCst,
@@ -29,6 +30,8 @@ router.use(protect);
 router.post('/', restrictTo('sales_agent'), createLead);
 
 router.get('/mine', restrictTo('sales_agent'), getMyLeads);
+
+router.get('/mine/closed', restrictTo('sales_agent'), getMyClosedSales);
 
 router.get('/assigned-to-me', restrictTo('closer'), getAssignedLeads);
 

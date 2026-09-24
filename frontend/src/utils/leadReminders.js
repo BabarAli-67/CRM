@@ -10,6 +10,7 @@ export function buildLeadFollowUpReminders(leads, currentUserId, options = {}) {
   return (leads || [])
     .filter((lead) => {
       if (!lead?.followUp?.callbackAt) return false;
+      if (lead.followUp?.acknowledged) return false;
       if (lead.stage === 'closed_sale' || lead.stage === 'disqualified') {
         return false;
       }

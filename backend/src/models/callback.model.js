@@ -51,6 +51,7 @@ const callbackSchema = new mongoose.Schema(
       type: String,
       enum: [
         'pending',
+        'attended',
         'promoted',
         'completed',
         'transferred',

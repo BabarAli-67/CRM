@@ -3,7 +3,6 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import CloseSaleModal from './CloseSaleModal.jsx';
 import DisqualifyModal from './DisqualifyModal.jsx';
-import ScheduleCallbackModal from './ScheduleCallbackModal.jsx';
 import CloserScheduleCallbackModal from '../callbacks/CloserScheduleCallbackModal.jsx';
 import {
   claimLead,
@@ -12,7 +11,7 @@ import {
 import { formatUserRef } from '../../utils/formatUserRef.util.js';
 
 const STATUS_LABEL = {
-  with_agent: 'With Agent',
+  with_agent: 'In Progress',
   pending_closer_claim: 'Pending Closer Claim',
   in_progress: 'In Progress',
 };
@@ -58,7 +57,6 @@ export default function LeadTable({
   const [actionMessage, setActionMessage] = useState('');
   const [closeTarget, setCloseTarget] = useState(null);
   const [disqualifyTarget, setDisqualifyTarget] = useState(null);
-  const [callbackTarget, setCallbackTarget] = useState(null);
   const [closerCallbackTarget, setCloserCallbackTarget] = useState(null);
 
   const rows = useMemo(
@@ -82,6 +80,7 @@ export default function LeadTable({
     queryClient.invalidateQueries({ queryKey: ['myCallbacks'] });
     queryClient.invalidateQueries({ queryKey: ['closerCallbacks'] });
     queryClient.invalidateQueries({ queryKey: ['closerClosedSales'] });
+    queryClient.invalidateQueries({ queryKey: ['agentClosedSales'] });
   };
 
   const claimMutation = useMutation({
@@ -156,7 +155,9 @@ export default function LeadTable({
               {rows.map((row) => {
                 const followAt = row.followUp?.callbackAt;
                 const at = followAt ? new Date(followAt).getTime() : NaN;
-                const overdue = !Number.isNaN(at) && at < Date.now();
+                const acknowledged = Boolean(row.followUp?.acknowledged);
+                const overdue =
+                  !acknowledged && !Number.isNaN(at) && at < Date.now();
                 const statusKey = row.status || 'with_agent';
                 const statusClass =
                   STATUS_BADGE[statusKey] || STATUS_BADGE.with_agent;
@@ -268,17 +269,6 @@ export default function LeadTable({
                                 >
                                   Edit
                                 </Link>
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setActionError('');
-                                    setActionMessage('');
-                                    setCallbackTarget(row);
-                                  }}
-                                  className="cursor-pointer rounded-full border border-sky-500/40 bg-sky-600/15 px-2.5 py-1.5 text-xs font-semibold text-sky-300 hover:bg-sky-600/25"
-                                >
-                                  Schedule Callback
-                                </button>
                                 {statusKey === 'with_agent' ? (
                                   <button
                                     type="button"
@@ -339,17 +329,6 @@ export default function LeadTable({
           </table>
         </div>
       )}
-
-      <ScheduleCallbackModal
-        open={Boolean(callbackTarget)}
-        lead={callbackTarget}
-        onClose={() => setCallbackTarget(null)}
-        onSuccess={() => {
-          setActionError('');
-          setActionMessage('Callback scheduled — follow-up updated.');
-          invalidate();
-        }}
-      />
 
       <CloserScheduleCallbackModal
         open={Boolean(closerCallbackTarget)}

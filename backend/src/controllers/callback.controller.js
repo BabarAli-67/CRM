@@ -82,6 +82,7 @@ export const createCallback = asyncHandler(async (req, res) => {
     lead.followUp = {
       callbackAt: callbackAtDate,
       notes: notes || lead.followUp?.notes || null,
+      acknowledged: nextAt !== prevAt ? false : lead.followUp?.acknowledged || false,
       alerts: {
         fiveMinFired:
           nextAt !== prevAt
@@ -110,8 +111,8 @@ export const getMyCallbacks = asyncHandler(async (req, res) => {
   const filter = { agentId: req.user._id };
 
   if (!includeResolved) {
-    // Active agenda only — resolved / transferred / cancelled / promoted excluded
-    filter.status = 'pending';
+    // Active agenda: pending (due) + attended (viewed — no longer overdue / ringing)
+    filter.status = { $in: ['pending', 'attended'] };
   }
 
   const callbacks = await Callback.find(filter)
@@ -194,13 +195,61 @@ export const updateCallback = asyncHandler(async (req, res) => {
   if (callbackAt !== undefined) {
     callback.callbackAt = new Date(callbackAt);
     // Reschedule clears prior alert firings so reminders can fire for the new time
+    if (!callback.alerts) {
+      callback.alerts = { fiveMinFired: false, exactTimeFired: false };
+    }
     callback.alerts.fiveMinFired = false;
     callback.alerts.exactTimeFired = false;
+    if (callback.status === 'attended') {
+      callback.status = 'pending';
+    }
   }
   if (notes !== undefined) callback.notes = notes || null;
-  if (status !== undefined) callback.status = status;
+  if (status !== undefined) {
+    const allowed = [
+      'pending',
+      'attended',
+      'promoted',
+      'completed',
+      'transferred',
+      'cancelled',
+    ];
+    if (!allowed.includes(status)) {
+      throw new ApiError(400, 'Invalid status');
+    }
+    callback.status = status;
+    // Attended / resolved — silence so scheduler never re-rings
+    if (status === 'attended' || status === 'completed' || status === 'cancelled') {
+      if (!callback.alerts) {
+        callback.alerts = { fiveMinFired: false, exactTimeFired: false };
+      }
+      callback.alerts.fiveMinFired = true;
+      callback.alerts.exactTimeFired = true;
+    }
+  }
 
   await callback.save();
+
+  // Keep linked lead follow-up OVERDUE badge in sync
+  if (callback.leadId) {
+    const lead = await Lead.findById(callback.leadId);
+    if (lead?.followUp) {
+      if (status === 'attended' || status === 'completed') {
+        lead.followUp.acknowledged = true;
+        if (!lead.followUp.alerts) lead.followUp.alerts = {};
+        lead.followUp.alerts.fiveMinFired = true;
+        lead.followUp.alerts.exactTimeFired = true;
+        await lead.save();
+      } else if (callbackAt !== undefined) {
+        lead.followUp.callbackAt = callback.callbackAt;
+        lead.followUp.acknowledged = false;
+        if (!lead.followUp.alerts) lead.followUp.alerts = {};
+        lead.followUp.alerts.fiveMinFired = false;
+        lead.followUp.alerts.exactTimeFired = false;
+        await lead.save();
+      }
+    }
+  }
 
   res
     .status(200)
@@ -370,6 +419,7 @@ export const createCloserCallback = asyncHandler(async (req, res) => {
     lead.followUp = {
       callbackAt: callbackAtDate,
       notes: notes || lead.followUp?.notes || null,
+      acknowledged: nextAt !== prevAt ? false : lead.followUp?.acknowledged || false,
       alerts: {
         fiveMinFired:
           nextAt !== prevAt
@@ -399,8 +449,8 @@ export const getMyCloserCallbacks = asyncHandler(async (req, res) => {
   const filter = {
     closerId: req.user._id,
     status: includeCompleted
-      ? { $in: ['pending', 'completed'] }
-      : { $in: ['pending', 'completed'] },
+      ? { $in: ['pending', 'attended', 'completed'] }
+      : { $in: ['pending', 'attended', 'completed'] },
   };
 
   const callbacks = await Callback.find(filter)
@@ -451,11 +501,15 @@ export const updateCloserCallback = asyncHandler(async (req, res) => {
   }
 
   if (status !== undefined) {
-    if (!['pending', 'completed', 'cancelled'].includes(status)) {
+    if (!['pending', 'attended', 'completed', 'cancelled'].includes(status)) {
       throw new ApiError(400, 'Invalid status');
     }
     callback.status = status;
-    if (status === 'completed' || status === 'cancelled') {
+    if (
+      status === 'attended' ||
+      status === 'completed' ||
+      status === 'cancelled'
+    ) {
       if (!callback.alerts) {
         callback.alerts = { fiveMinFired: false, exactTimeFired: false };
       }
@@ -477,11 +531,31 @@ export const updateCloserCallback = asyncHandler(async (req, res) => {
       lead.followUp = {
         callbackAt: callback.callbackAt,
         notes: callback.notes || lead.followUp?.notes || null,
+        acknowledged: false,
         alerts: {
           fiveMinFired: false,
           exactTimeFired: false,
         },
       };
+      await lead.save();
+    }
+  }
+
+  // Attended from View — clear OVERDUE on linked lead
+  if (
+    (status === 'attended' || status === 'completed') &&
+    callback.leadId
+  ) {
+    const lead = await Lead.findOne({
+      _id: callback.leadId,
+      closerId: req.user._id,
+      stage: 'active',
+    });
+    if (lead?.followUp) {
+      lead.followUp.acknowledged = true;
+      if (!lead.followUp.alerts) lead.followUp.alerts = {};
+      lead.followUp.alerts.fiveMinFired = true;
+      lead.followUp.alerts.exactTimeFired = true;
       await lead.save();
     }
   }

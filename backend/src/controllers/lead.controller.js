@@ -2,6 +2,7 @@ import asyncHandler from '../utils/asyncHandler.util.js';
 import { ApiError } from '../utils/apiError.util.js';
 import { ApiResponse } from '../utils/apiResponse.util.js';
 import Lead from '../models/lead.model.js';
+import User from '../models/user.model.js';
 import { resolveCallbacksForLead } from '../utils/callbackResolve.util.js';
 
 const refId = (ref) => {
@@ -114,7 +115,7 @@ export const createLead = asyncHandler(async (req, res) => {
     payload.notes = req.body.notes === '' ? null : req.body.notes;
   }
 
-  // Allow optional legacy fields if still posted (edit paths / promote)
+  // Allow optional intake fields if posted (edit paths / promote / full form)
   for (const field of UPDATABLE_FIELDS) {
     if (
       field === 'businessName' ||
@@ -125,7 +126,19 @@ export const createLead = asyncHandler(async (req, res) => {
       continue;
     }
     if (req.body[field] !== undefined) {
-      payload[field] = req.body[field] === '' ? null : req.body[field];
+      if (field === 'salesAmount') {
+        if (req.body[field] === '' || req.body[field] === null) {
+          payload[field] = null;
+        } else {
+          const n = Number(req.body[field]);
+          if (Number.isNaN(n) || n < 0) {
+            throw new ApiError(400, 'salesAmount must be a non-negative number');
+          }
+          payload[field] = n;
+        }
+      } else {
+        payload[field] = req.body[field] === '' ? null : req.body[field];
+      }
     }
   }
 
@@ -161,6 +174,7 @@ export const getMyLeads = asyncHandler(async (req, res) => {
     stage: 'active',
     status: 'with_agent',
   })
+    .populate('agentId', 'fullName username role')
     .populate('closerId', 'fullName username role')
     .sort({ updatedAt: -1 });
 
@@ -210,6 +224,21 @@ export const getCloserClosedSales = asyncHandler(async (req, res) => {
   res
     .status(200)
     .json(new ApiResponse(200, { leads }, 'Closer closed sales retrieved'));
+});
+
+/** Sales agent — history of leads they closed (or that belong to them as agent). */
+export const getMyClosedSales = asyncHandler(async (req, res) => {
+  const leads = await Lead.find({
+    agentId: req.user._id,
+    stage: 'closed_sale',
+  })
+    .populate('closerId', 'fullName username role')
+    .populate('closedBy', 'fullName username role')
+    .sort({ closedAt: -1 });
+
+  res
+    .status(200)
+    .json(new ApiResponse(200, { leads }, 'My closed sales retrieved'));
 });
 
 /**
@@ -429,10 +458,22 @@ export const updateLead = asyncHandler(async (req, res) => {
 
   for (const field of UPDATABLE_FIELDS) {
     if (req.body[field] !== undefined) {
-      lead[field] =
-        req.body[field] === '' || req.body[field] === null
-          ? null
-          : req.body[field];
+      if (field === 'salesAmount') {
+        if (req.body[field] === '' || req.body[field] === null) {
+          lead[field] = null;
+        } else {
+          const n = Number(req.body[field]);
+          if (Number.isNaN(n) || n < 0) {
+            throw new ApiError(400, 'salesAmount must be a non-negative number');
+          }
+          lead[field] = n;
+        }
+      } else {
+        lead[field] =
+          req.body[field] === '' || req.body[field] === null
+            ? null
+            : req.body[field];
+      }
     }
   }
 
@@ -457,6 +498,12 @@ export const updateLead = asyncHandler(async (req, res) => {
           nextFollowUp.notes !== undefined
             ? nextFollowUp.notes || null
             : lead.followUp?.notes || null,
+        acknowledged:
+          nextAt !== null && nextAt !== prevAt
+            ? false
+            : nextFollowUp.acknowledged === true
+              ? true
+              : lead.followUp?.acknowledged || false,
         alerts: {
           fiveMinFired: lead.followUp?.alerts?.fiveMinFired || false,
           exactTimeFired: lead.followUp?.alerts?.exactTimeFired || false,
@@ -467,6 +514,7 @@ export const updateLead = asyncHandler(async (req, res) => {
       if (nextAt !== null && nextAt !== prevAt) {
         lead.followUp.alerts.fiveMinFired = false;
         lead.followUp.alerts.exactTimeFired = false;
+        lead.followUp.acknowledged = false;
       }
     }
   }
@@ -558,7 +606,24 @@ export const setFollowUp = asyncHandler(async (req, res) => {
       .json(new ApiResponse(200, { lead }, 'Follow-up cleared'));
   }
 
-  const { callbackAt, notes } = payload;
+  // Acknowledge only (View / Close on ringing alert) — no reschedule
+  if (payload.acknowledged === true && payload.callbackAt === undefined) {
+    if (!lead.followUp?.callbackAt) {
+      throw new ApiError(400, 'No follow-up to acknowledge');
+    }
+    lead.followUp.acknowledged = true;
+    if (!lead.followUp.alerts) {
+      lead.followUp.alerts = {};
+    }
+    lead.followUp.alerts.fiveMinFired = true;
+    lead.followUp.alerts.exactTimeFired = true;
+    await lead.save();
+    return res
+      .status(200)
+      .json(new ApiResponse(200, { lead }, 'Follow-up acknowledged'));
+  }
+
+  const { callbackAt, notes, acknowledged } = payload;
 
   if (!callbackAt) {
     throw new ApiError(400, 'callbackAt is required to set a follow-up');
@@ -568,6 +633,7 @@ export const setFollowUp = asyncHandler(async (req, res) => {
     ? new Date(lead.followUp.callbackAt).getTime()
     : null;
   const nextAt = new Date(callbackAt).getTime();
+  const timeChanged = nextAt !== prevAt;
 
   lead.followUp = {
     callbackAt: new Date(callbackAt),
@@ -575,13 +641,18 @@ export const setFollowUp = asyncHandler(async (req, res) => {
       notes !== undefined
         ? notes || null
         : lead.followUp?.notes || null,
+    acknowledged: timeChanged
+      ? false
+      : acknowledged === true
+        ? true
+        : lead.followUp?.acknowledged || false,
     alerts: {
       fiveMinFired:
-        nextAt !== prevAt
+        timeChanged
           ? false
           : lead.followUp?.alerts?.fiveMinFired || false,
       exactTimeFired:
-        nextAt !== prevAt
+        timeChanged
           ? false
           : lead.followUp?.alerts?.exactTimeFired || false,
     },
@@ -642,7 +713,7 @@ export const markFollowUpAlert = asyncHandler(async (req, res) => {
 });
 
 export const closeLead = asyncHandler(async (req, res) => {
-  const { payment } = req.body;
+  const { payment, closerId: bodyCloserId } = req.body;
 
   if (!payment?.method) {
     throw new ApiError(400, 'payment is required');
@@ -658,7 +729,11 @@ export const closeLead = asyncHandler(async (req, res) => {
   };
 
   if (payment.method === 'via_link') {
-    paymentDoc.linkUrl = payment.linkUrl || null;
+    const link = String(payment.linkUrl || '').trim();
+    if (!link) {
+      throw new ApiError(400, 'payment.linkUrl is required for Payment Link');
+    }
+    paymentDoc.linkUrl = link;
   } else if (payment.method === 'via_card') {
     paymentDoc.cardLast4 = payment.cardLast4;
     paymentDoc.cardBrand = payment.cardBrand || null;
@@ -668,27 +743,34 @@ export const closeLead = asyncHandler(async (req, res) => {
   }
 
   const userId = req.user._id;
+  const isAgent = req.user.role === 'sales_agent';
+  const isCloser = req.user.role === 'closer';
 
-  const lead = await Lead.findOneAndUpdate(
-    {
-      _id: req.params.id,
-      stage: 'active',
-      $or: [{ agentId: userId }, { closerId: userId }],
-    },
-    {
-      $set: {
-        stage: 'closed_sale',
-        closedAt: new Date(),
-        closedBy: userId,
-        payment: paymentDoc,
-        // Stays with Closers for review — CST only after explicit Move to CST
-        'handover.cstStatus': 'awaiting_handover',
-        'followUp.alerts.fiveMinFired': true,
-        'followUp.alerts.exactTimeFired': true,
-      },
-    },
-    { new: true, runValidators: true }
-  );
+  // Resolve assigned closer for handover
+  let assignedCloserId = bodyCloserId || null;
+  if (isAgent) {
+    if (!assignedCloserId) {
+      throw new ApiError(400, 'closerId is required to close a sale');
+    }
+    const closer = await User.findOne({
+      _id: assignedCloserId,
+      role: 'closer',
+      status: 'approved',
+    }).select('_id fullName username role');
+    if (!closer) {
+      throw new ApiError(400, 'Selected closer is invalid or inactive');
+    }
+    assignedCloserId = closer._id;
+  } else if (isCloser) {
+    // Closer closing their own desk lead — stay assigned to them
+    assignedCloserId = assignedCloserId || userId;
+  }
+
+  const lead = await Lead.findOne({
+    _id: req.params.id,
+    stage: 'active',
+    $or: [{ agentId: userId }, { closerId: userId }],
+  });
 
   if (!lead) {
     throw new ApiError(
@@ -697,8 +779,64 @@ export const closeLead = asyncHandler(async (req, res) => {
     );
   }
 
+  // Optional last-pass intake corrections before lock
+  for (const field of UPDATABLE_FIELDS) {
+    if (req.body[field] !== undefined) {
+      if (field === 'salesAmount') {
+        if (req.body[field] === '' || req.body[field] === null) {
+          lead[field] = null;
+        } else {
+          const n = Number(req.body[field]);
+          if (Number.isNaN(n) || n < 0) {
+            throw new ApiError(400, 'salesAmount must be a non-negative number');
+          }
+          lead[field] = n;
+        }
+      } else {
+        lead[field] =
+          req.body[field] === '' || req.body[field] === null
+            ? null
+            : req.body[field];
+      }
+    }
+  }
+
+  lead.stage = 'closed_sale';
+  lead.closedAt = new Date();
+  lead.closedBy = userId;
+  lead.payment = paymentDoc;
+  if (assignedCloserId) {
+    lead.closerId = assignedCloserId;
+  }
+  if (!lead.handover) {
+    lead.handover = {};
+  }
+  lead.handover.cstStatus = 'awaiting_handover';
+
+  // Silence follow-up chimes on the lead itself
+  if (lead.followUp) {
+    lead.followUp.alerts = {
+      fiveMinFired: true,
+      exactTimeFired: true,
+    };
+  }
+
+  await lead.save();
+
+  // Mark linked agent callbacks completed so they leave My Callbacks / stop ringing
   await resolveCallbacksForLead(lead._id, 'completed');
 
-  // Vanishing Rule: do not return the lead document — only a minimal ack
-  res.status(200).json(new ApiResponse(200, { closedCount: 1 }, 'Lead closed'));
+  await lead.populate([
+    { path: 'agentId', select: 'fullName username role' },
+    { path: 'closerId', select: 'fullName username role' },
+    { path: 'closedBy', select: 'fullName username role' },
+  ]);
+
+  res.status(200).json(
+    new ApiResponse(
+      200,
+      { closedCount: 1, lead },
+      'Lead closed'
+    )
+  );
 });

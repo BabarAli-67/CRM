@@ -19,7 +19,7 @@ const formatPkt = (value) => {
 export const leadEditPath = (leadId) =>
   `/dashboard/sales-agent/leads/${leadId}/edit`;
 
-export default function CallbackTable({ callbacks = [] }) {
+export default function CallbackTable({ callbacks = [], onEdit = null }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [promoteError, setPromoteError] = useState('');
@@ -31,7 +31,6 @@ export default function CallbackTable({ callbacks = [] }) {
       queryClient.invalidateQueries({ queryKey: ['myCallbacks'] });
       queryClient.invalidateQueries({ queryKey: ['myLeads'] });
       if (lead?._id) {
-        // Hand off to Phase 4.3 LeadForm in edit mode (pre-filled from promote)
         navigate(leadEditPath(lead._id));
       }
     },
@@ -58,7 +57,7 @@ export default function CallbackTable({ callbacks = [] }) {
   if (rows.length === 0) {
     return (
       <p className="py-10 text-center text-sm text-zinc-500">
-        No upcoming callbacks. Schedule one from My Leads.
+        No upcoming callbacks. Use + Add Callback or schedule from My Leads.
       </p>
     );
   }
@@ -86,12 +85,44 @@ export default function CallbackTable({ callbacks = [] }) {
           <tbody>
             {rows.map((row) => {
               const at = new Date(row.callbackAt).getTime();
+              const isPending = row.status === 'pending';
+              const isAttended =
+                row.status === 'attended' || row.status === 'completed';
               const overdue =
-                !Number.isNaN(at) &&
-                at < now &&
-                row.status === 'pending';
+                isPending && !Number.isNaN(at) && at < now;
               const isPromoting = promotingId === row._id;
               const linkedLeadId = row.leadId?._id || row.leadId || null;
+              const canEdit =
+                isPending && typeof onEdit === 'function';
+
+              const statusBadge = (() => {
+                if (row.status === 'promoted') {
+                  return {
+                    label: 'Promoted',
+                    className:
+                      'bg-emerald-500/10 text-emerald-400 border-emerald-500/20',
+                  };
+                }
+                if (isAttended) {
+                  return {
+                    label: 'Attended',
+                    className:
+                      'bg-emerald-500/10 text-emerald-400 border-emerald-500/20',
+                  };
+                }
+                if (overdue) {
+                  return {
+                    label: 'Overdue',
+                    className:
+                      'bg-orange-500/10 text-orange-400 border-orange-500/20',
+                  };
+                }
+                return {
+                  label: 'Pending',
+                  className:
+                    'bg-amber-500/10 text-amber-400 border-amber-500/20',
+                };
+              })();
 
               return (
                 <tr
@@ -121,38 +152,45 @@ export default function CallbackTable({ callbacks = [] }) {
                     <span
                       className={[
                         'inline-flex rounded-full border px-2.5 py-0.5 text-xs font-semibold',
-                        row.status === 'promoted'
-                          ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
-                          : 'bg-amber-500/10 text-amber-400 border-amber-500/20',
+                        statusBadge.className,
                       ].join(' ')}
                     >
-                      {row.status === 'promoted' ? 'Promoted' : 'Pending'}
+                      {statusBadge.label}
                     </span>
                   </td>
                   <td className="px-3 py-2.5">
-                    {linkedLeadId ? (
-                      <button
-                        type="button"
-                        onClick={() => navigate(leadEditPath(linkedLeadId))}
-                        className="cursor-pointer rounded-full border border-zinc-700 px-2.5 py-1.5 text-xs font-semibold text-zinc-300 hover:bg-zinc-800/50"
-                      >
-                        Open Lead
-                      </button>
-                    ) : row.status === 'promoted' ? (
-                      <span className="text-xs text-zinc-600">—</span>
-                    ) : (
-                      <button
-                        type="button"
-                        disabled={isPromoting}
-                        onClick={() => {
-                          setPromoteError('');
-                          promoteMutation.mutate(row._id);
-                        }}
-                        className="cursor-pointer rounded-full bg-orange-600 px-2.5 py-1.5 text-xs font-semibold text-white shadow-lg shadow-orange-600/20 hover:bg-orange-500 disabled:opacity-60"
-                      >
-                        {isPromoting ? 'Promoting…' : 'Promote to Lead'}
-                      </button>
-                    )}
+                    <div className="flex flex-wrap gap-2">
+                      {canEdit ? (
+                        <button
+                          type="button"
+                          onClick={() => onEdit(row)}
+                          className="cursor-pointer rounded-full border border-zinc-700 px-2.5 py-1.5 text-xs font-semibold text-zinc-300 hover:bg-zinc-800/50"
+                        >
+                          Edit
+                        </button>
+                      ) : null}
+                      {linkedLeadId ? (
+                        <button
+                          type="button"
+                          onClick={() => navigate(leadEditPath(linkedLeadId))}
+                          className="cursor-pointer rounded-full border border-zinc-700 px-2.5 py-1.5 text-xs font-semibold text-zinc-300 hover:bg-zinc-800/50"
+                        >
+                          Open Lead
+                        </button>
+                      ) : row.status === 'promoted' ? null : (
+                        <button
+                          type="button"
+                          disabled={isPromoting}
+                          onClick={() => {
+                            setPromoteError('');
+                            promoteMutation.mutate(row._id);
+                          }}
+                          className="cursor-pointer rounded-full bg-orange-600 px-2.5 py-1.5 text-xs font-semibold text-white shadow-lg shadow-orange-600/20 hover:bg-orange-500 disabled:opacity-60"
+                        >
+                          {isPromoting ? 'Promoting…' : 'Promote to Lead'}
+                        </button>
+                      )}
+                    </div>
                   </td>
                 </tr>
               );

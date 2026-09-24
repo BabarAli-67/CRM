@@ -125,12 +125,20 @@ export const forceAbsentValidator = [
 ];
 
 export const closeLeadValidator = [
+  body('closerId')
+    .optional({ nullable: true })
+    .isMongoId()
+    .withMessage('closerId must be a valid Mongo id'),
   body('payment.method')
     .isIn(['via_link', 'via_card', 'other'])
     .withMessage("payment.method must be 'via_link', 'via_card', or 'other'"),
   body('payment.linkUrl')
-    .optional({ nullable: true })
-    .trim(),
+    .if(body('payment.method').equals('via_link'))
+    .notEmpty()
+    .withMessage('payment.linkUrl is required when method is via_link')
+    .trim()
+    .isLength({ min: 2, max: 500 })
+    .withMessage('payment.linkUrl must be 2–500 characters'),
   body('payment.cardLast4')
     .if(body('payment.method').equals('via_card'))
     .notEmpty()

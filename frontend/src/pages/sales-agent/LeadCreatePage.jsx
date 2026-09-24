@@ -7,18 +7,21 @@ export default function LeadCreatePage() {
 
   return (
     <SalesAgentShell title="New Lead">
-      <div className="bg-zinc-900/50 border border-zinc-800/80 rounded-2xl p-6 shadow-xl">
+      <div className="w-full rounded-2xl border border-zinc-800/80 bg-zinc-900/50 p-6 shadow-xl">
         <LeadForm
           title="Create Lead"
           onCancel={() => navigate('/dashboard/sales-agent/leads')}
-          onSaved={(lead, meta) => {
-            if (meta?.sentToPool) {
-              navigate('/dashboard/sales-agent/leads', { replace: true });
-              return;
-            }
-            if (lead?._id) {
-              navigate('/dashboard/sales-agent/leads', { replace: true });
-            }
+          onSaved={(_lead, meta) => {
+            navigate('/dashboard/sales-agent/leads', {
+              replace: true,
+              state: {
+                toast:
+                  meta?.toastMessage ||
+                  (meta?.sentToPool
+                    ? 'Lead sent to closer pool.'
+                    : 'Lead created.'),
+              },
+            });
           }}
         />
       </div>

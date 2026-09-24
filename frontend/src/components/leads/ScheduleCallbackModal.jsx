@@ -2,16 +2,24 @@ import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { createCallback } from '../../services/callback.service.js';
 
-const HOURS = Array.from({ length: 12 }, (_, i) =>
-  String(i + 1).padStart(2, '0')
-);
-const MINUTES = Array.from({ length: 60 }, (_, i) => String(i).padStart(2, '0'));
-
 const pad = (n) => String(n).padStart(2, '0');
 
 const todayDateValue = () => {
   const d = new Date();
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+};
+
+const digitsOnly = (raw, maxLen) => {
+  const d = String(raw || '').replace(/\D/g, '');
+  return maxLen ? d.slice(0, maxLen) : d;
+};
+
+const clampOnBlur = (raw, min, max, { padTo = 0 } = {}) => {
+  if (raw === '' || raw == null) return '';
+  const n = Number(raw);
+  if (Number.isNaN(n)) return '';
+  const clamped = Math.min(max, Math.max(min, Math.trunc(n)));
+  return padTo > 0 ? String(clamped).padStart(padTo, '0') : String(clamped);
 };
 
 const splitDateTime = (value) => {
@@ -40,9 +48,30 @@ const splitDateTime = (value) => {
 
 /** Combine local date + 12h clock into an ISO timestamp. */
 const toIsoTimestamp = ({ date, hour, minute, period }) => {
-  if (!date || !hour || !minute || !period) return null;
+  if (
+    !date ||
+    hour === '' ||
+    minute === '' ||
+    hour == null ||
+    minute == null ||
+    !period
+  ) {
+    return null;
+  }
 
   let h = Number(hour);
+  const mi = Number(minute);
+  if (
+    Number.isNaN(h) ||
+    Number.isNaN(mi) ||
+    h < 1 ||
+    h > 12 ||
+    mi < 0 ||
+    mi > 59
+  ) {
+    return null;
+  }
+
   if (period === 'AM') {
     if (h === 12) h = 0;
   } else if (h !== 12) {
@@ -50,7 +79,7 @@ const toIsoTimestamp = ({ date, hour, minute, period }) => {
   }
 
   const [y, m, day] = date.split('-').map(Number);
-  const local = new Date(y, m - 1, day, h, Number(minute), 0, 0);
+  const local = new Date(y, m - 1, day, h, mi, 0, 0);
   if (Number.isNaN(local.getTime())) return null;
   return local.toISOString();
 };
@@ -58,7 +87,8 @@ const toIsoTimestamp = ({ date, hour, minute, period }) => {
 const fieldClass =
   'w-full rounded-lg border border-zinc-700/80 bg-zinc-950 px-3 py-2.5 text-sm text-zinc-100 outline-none transition focus:border-orange-500/50 focus:ring-2 focus:ring-orange-500/20';
 
-const selectClass = `${fieldClass} appearance-none cursor-pointer`;
+const numInputClass =
+  'w-full rounded-lg border border-zinc-700 bg-zinc-900 py-2 text-center text-sm text-white outline-none transition focus:border-orange-500/50 focus:ring-2 focus:ring-orange-500/20 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none';
 
 /**
  * Schedule a callback against an existing lead.
@@ -135,7 +165,17 @@ export default function ScheduleCallbackModal({
       return;
     }
 
-    const iso = toIsoTimestamp({ date, hour, minute, period });
+    const normalizedHour = clampOnBlur(hour, 1, 12, { padTo: 2 });
+    const normalizedMinute = clampOnBlur(minute, 0, 59, { padTo: 2 });
+    setHour(normalizedHour);
+    setMinute(normalizedMinute);
+
+    const iso = toIsoTimestamp({
+      date,
+      hour: normalizedHour,
+      minute: normalizedMinute,
+      period,
+    });
     if (!iso) {
       setError('Please provide a valid date and time.');
       return;
@@ -205,33 +245,37 @@ export default function ScheduleCallbackModal({
                 <span className="text-[11px] uppercase tracking-wide text-zinc-500">
                   Hour
                 </span>
-                <select
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  min={1}
+                  max={12}
+                  placeholder="HH"
                   value={hour}
-                  onChange={(e) => setHour(e.target.value)}
-                  className={selectClass}
-                >
-                  {HOURS.map((h) => (
-                    <option key={h} value={h}>
-                      {h}
-                    </option>
-                  ))}
-                </select>
+                  onChange={(e) => setHour(digitsOnly(e.target.value, 2))}
+                  onBlur={() =>
+                    setHour(clampOnBlur(hour, 1, 12, { padTo: 2 }))
+                  }
+                  className={numInputClass}
+                />
               </label>
               <label className="block space-y-1">
                 <span className="text-[11px] uppercase tracking-wide text-zinc-500">
                   Minute
                 </span>
-                <select
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  min={0}
+                  max={59}
+                  placeholder="MM"
                   value={minute}
-                  onChange={(e) => setMinute(e.target.value)}
-                  className={selectClass}
-                >
-                  {MINUTES.map((m) => (
-                    <option key={m} value={m}>
-                      {m}
-                    </option>
-                  ))}
-                </select>
+                  onChange={(e) => setMinute(digitsOnly(e.target.value, 2))}
+                  onBlur={() =>
+                    setMinute(clampOnBlur(minute, 0, 59, { padTo: 2 }))
+                  }
+                  className={numInputClass}
+                />
               </label>
               <div className="space-y-1">
                 <span className="text-[11px] uppercase tracking-wide text-zinc-500">

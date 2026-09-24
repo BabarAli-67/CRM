@@ -102,6 +102,11 @@ const leadSchema = new mongoose.Schema(
           default: null,
           trim: true,
         },
+        /** Agent/closer viewed the ring — clears OVERDUE on My Leads. */
+        acknowledged: {
+          type: Boolean,
+          default: false,
+        },
         alerts: {
           fiveMinFired: {
             type: Boolean,

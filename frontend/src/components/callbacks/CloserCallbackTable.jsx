@@ -18,6 +18,7 @@ const formatPkt = (value) => {
 };
 
 function statusBucket(row, now = Date.now()) {
+  if (row.status === 'attended') return 'attended';
   if (row.status === 'completed') return 'completed';
   if (row.status === 'cancelled') return 'cancelled';
   const at = new Date(row.callbackAt).getTime();
@@ -40,6 +41,10 @@ const BADGE = {
     label: 'Overdue',
     className:
       'animate-pulse bg-red-500/20 text-red-300 ring-1 ring-red-500/50',
+  },
+  attended: {
+    label: 'Attended',
+    className: 'bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-500/35',
   },
   completed: {
     label: 'Completed',
@@ -231,7 +236,13 @@ export function summarizeCloserCallbacks(callbacks = [], now = Date.now()) {
   let upcoming = 0;
 
   for (const row of callbacks) {
-    if (row.status === 'completed' || row.status === 'cancelled') continue;
+    if (
+      row.status === 'completed' ||
+      row.status === 'attended' ||
+      row.status === 'cancelled'
+    ) {
+      continue;
+    }
     const at = new Date(row.callbackAt).getTime();
     if (Number.isNaN(at)) continue;
     if (at < now) {

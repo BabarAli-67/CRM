@@ -54,7 +54,7 @@ export default function useReminderScheduler(items = [], options = {}) {
     }
 
     const fire = async (item, alertType) => {
-      const key = `${item.kind}:${item.id}:${alertType}`;
+      const key = `${item.kind}:${item.id}:${alertType}:${item.triggerAt}`;
       if (firedRef.current.has(key)) return;
       firedRef.current.add(key);
 
@@ -85,11 +85,13 @@ export default function useReminderScheduler(items = [], options = {}) {
 
     const maybeFire = (item, alertType, targetMs, alreadyFired) => {
       if (alreadyFired) {
-        firedRef.current.add(`${item.kind}:${item.id}:${alertType}`);
+        firedRef.current.add(
+          `${item.kind}:${item.id}:${alertType}:${item.triggerAt}`
+        );
         return;
       }
 
-      const key = `${item.kind}:${item.id}:${alertType}`;
+      const key = `${item.kind}:${item.id}:${alertType}:${item.triggerAt}`;
       if (firedRef.current.has(key)) return;
 
       const now = Date.now();
@@ -105,7 +107,9 @@ export default function useReminderScheduler(items = [], options = {}) {
 
     const schedule = (item, alertType, targetMs, alreadyFired) => {
       if (alreadyFired) {
-        firedRef.current.add(`${item.kind}:${item.id}:${alertType}`);
+        firedRef.current.add(
+          `${item.kind}:${item.id}:${alertType}:${item.triggerAt}`
+        );
         return;
       }
 
@@ -164,8 +168,8 @@ export default function useReminderScheduler(items = [], options = {}) {
 
     const liveKeys = new Set();
     for (const item of list) {
-      liveKeys.add(`${item.kind}:${item.id}:fiveMin`);
-      liveKeys.add(`${item.kind}:${item.id}:exact`);
+      liveKeys.add(`${item.kind}:${item.id}:fiveMin:${item.triggerAt}`);
+      liveKeys.add(`${item.kind}:${item.id}:exact:${item.triggerAt}`);
     }
     for (const key of [...firedRef.current]) {
       if (!liveKeys.has(key)) firedRef.current.delete(key);

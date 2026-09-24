@@ -35,6 +35,12 @@ export const getCloserClosedSales = async () => {
   return response.data.data.leads;
 };
 
+/** Sales agent — own closed sales history. */
+export const getMyClosedSales = async () => {
+  const response = await api.get('/leads/mine/closed');
+  return response.data.data.leads;
+};
+
 export const moveLeadToCst = async (id) => {
   const response = await api.patch(`/leads/${id}/move-to-cst`);
   return response.data.data.lead;
@@ -78,7 +84,7 @@ export const disqualifyLead = async (id, disqualifiedReason) => {
   return response.data.data.lead;
 };
 
-export const closeLead = async (id, payment) => {
-  const response = await api.patch(`/leads/${id}/close`, { payment });
+export const closeLead = async (id, payload) => {
+  const response = await api.patch(`/leads/${id}/close`, payload);
   return response.data.data;
 };

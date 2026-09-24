@@ -28,16 +28,25 @@ export default function LeadEditPage() {
           {error?.response?.data?.message || 'Failed to load lead.'}
         </p>
       ) : (
-        <div className="bg-zinc-900/50 border border-zinc-800/80 rounded-2xl p-6 shadow-xl">
+        <div className="w-full rounded-2xl border border-zinc-800/80 bg-zinc-900/50 p-6 shadow-xl">
           <LeadForm
             leadId={id}
             initialValues={lead}
-            title={lead?.businessName ? `Lead — ${lead.businessName}` : 'Edit Lead'}
+            title={
+              lead?.businessName ? `Lead — ${lead.businessName}` : 'Edit Lead'
+            }
             onCancel={() => navigate('/dashboard/sales-agent/leads')}
             onSaved={(_lead, meta) => {
-              if (meta?.sentToPool) {
-                navigate('/dashboard/sales-agent/leads', { replace: true });
-              }
+              navigate('/dashboard/sales-agent/leads', {
+                replace: true,
+                state: {
+                  toast:
+                    meta?.toastMessage ||
+                    (meta?.sentToPool
+                      ? 'Lead sent to closer pool.'
+                      : 'Lead saved.'),
+                },
+              });
             }}
           />
         </div>
