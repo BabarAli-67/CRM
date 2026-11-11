@@ -1,9 +1,12 @@
 import asyncHandler from '../utils/asyncHandler.util.js';
 import { ApiError } from '../utils/apiError.util.js';
 import { ApiResponse } from '../utils/apiResponse.util.js';
+import path from 'path';
 import Lead from '../models/lead.model.js';
 import User from '../models/user.model.js';
+import Callback from '../models/callback.model.js';
 import { resolveCallbacksForLead } from '../utils/callbackResolve.util.js';
+import { escalateStaleAgentLeads, AGENT_HOLD_MS } from '../utils/leadEscalation.util.js';
 
 const refId = (ref) => {
   if (!ref) return null;
@@ -23,19 +26,21 @@ const canAccessLead = (lead, user) => {
   const userId = String(user._id);
   const isOwningAgent = refId(lead.agentId) === userId;
   const isAssignedCloser = refId(lead.closerId) === userId;
-  const isPoolLead =
-    user.role === 'closer' &&
-    lead.stage === 'active' &&
-    lead.status === 'pending_closer_claim' &&
-    !lead.closerId;
 
-  // Agent-closed sales awaiting CST review are visible to any closer
   const cst = lead.handover?.cstStatus;
-  const isUnassignedClosedForCloser =
+  const awaitingCst =
+    !cst || cst === 'awaiting_handover';
+
+  // Match Closed Sales list: own closed sales OR unassigned agent-closed awaiting CST
+  const isCloserClosedSaleVisible =
     user.role === 'closer' &&
     lead.stage === 'closed_sale' &&
-    !lead.closerId &&
-    (!cst || cst === 'awaiting_handover');
+    awaitingCst &&
+    (isAssignedCloser || !refId(lead.closerId));
+
+  // Assigned closer may always view their closed/disqualified/active leads
+  const isCloserOnRecord =
+    user.role === 'closer' && isAssignedCloser;
 
   // Tech may only see leads assigned specifically to them
   const isAssignedTech =
@@ -44,9 +49,8 @@ const canAccessLead = (lead, user) => {
 
   return (
     isOwningAgent ||
-    isAssignedCloser ||
-    isPoolLead ||
-    isUnassignedClosedForCloser ||
+    isCloserOnRecord ||
+    isCloserClosedSaleVisible ||
     isAssignedTech
   );
 };
@@ -86,26 +90,39 @@ const UPDATABLE_FIELDS = [
   'notes',
 ];
 
+/** Validate closerId is an approved closer user. */
+const resolveApprovedCloser = async (closerId) => {
+  if (!closerId) {
+    throw new ApiError(400, 'Assign Closer is required');
+  }
+  const closer = await User.findOne({
+    _id: closerId,
+    role: 'closer',
+    status: 'approved',
+  }).select('_id fullName username role');
+  if (!closer) {
+    throw new ApiError(400, 'Selected closer is invalid or inactive');
+  }
+  return closer;
+};
+
 export const createLead = asyncHandler(async (req, res) => {
-  const { businessName, phone } = req.body;
+  const { businessName, phone, closerId } = req.body;
 
   if (!businessName || !phone) {
     throw new ApiError(400, 'businessName and phone are required');
   }
 
-  const sendToCloserPool = Boolean(req.body.sendToCloserPool);
+  const closer = await resolveApprovedCloser(closerId);
 
   const payload = {
     businessName: String(businessName).trim(),
     phone: String(phone).trim(),
     agentId: req.user._id,
-    status: sendToCloserPool ? 'pending_closer_claim' : 'with_agent',
+    closerId: closer._id,
+    status: 'with_agent',
     stage: 'active',
   };
-
-  if (!sendToCloserPool) {
-    payload.closerId = null;
-  }
 
   if (req.body.websiteLink !== undefined) {
     payload.websiteLink =
@@ -148,35 +165,33 @@ export const createLead = asyncHandler(async (req, res) => {
 
   const lead = await Lead.create(payload);
 
-  // Ensure pool leads have no closer assignment (null or omitted both OK for query)
-  if (sendToCloserPool && lead.closerId) {
-    lead.closerId = undefined;
-    await lead.save();
-  }
+  await lead.populate([
+    { path: 'agentId', select: 'fullName username role' },
+    { path: 'closerId', select: 'fullName username role' },
+  ]);
 
-  await lead.populate('agentId', 'fullName username role');
-
-  res.status(201).json(
-    new ApiResponse(
-      201,
-      { lead },
-      sendToCloserPool
-        ? 'Lead created and sent to closer pool'
-        : 'Lead created successfully'
-    )
-  );
+  res
+    .status(201)
+    .json(new ApiResponse(201, { lead }, 'Lead created successfully'));
 });
 
 export const getMyLeads = asyncHandler(async (req, res) => {
-  // Agent desk: only leads still with the agent (pool / claimed vanish from this list)
+  // Auto-escalate expired leads only (status write) — never mutates timestamps on active rows
+  await escalateStaleAgentLeads(req.user._id);
+
+  const holdCutoff = new Date(Date.now() - AGENT_HOLD_MS);
+
+  // Pure read — still with_agent AND within the 24h hold window
   const leads = await Lead.find({
     agentId: req.user._id,
     stage: 'active',
     status: 'with_agent',
+    createdAt: { $gt: holdCutoff },
   })
     .populate('agentId', 'fullName username role')
     .populate('closerId', 'fullName username role')
-    .sort({ updatedAt: -1 });
+    .sort({ createdAt: -1 })
+    .lean();
 
   res
     .status(200)
@@ -184,38 +199,47 @@ export const getMyLeads = asyncHandler(async (req, res) => {
 });
 
 export const getAssignedLeads = asyncHandler(async (req, res) => {
+  await escalateStaleAgentLeads();
+
+  // Only this closer's pre-assigned / handed leads (no shared pool)
   const leads = await Lead.find({
     closerId: req.user._id,
     stage: 'active',
-    status: 'in_progress',
+    status: { $in: ['with_closer', 'in_progress'] },
   })
     .populate('agentId', 'fullName username role')
-    .sort({ updatedAt: -1 });
+    .populate('closerId', 'fullName username role')
+    .sort({ updatedAt: -1 })
+    .lean();
 
   res
     .status(200)
     .json(new ApiResponse(200, { leads }, 'Assigned active leads retrieved'));
 });
 
-export const getCloserPool = asyncHandler(async (req, res) => {
-  // Unclaimed pool: any closer may fetch. Match null OR missing closerId
-  // (Mongoose / legacy docs can omit the field after $unset).
-  const leads = await Lead.find({
-    stage: 'active',
-    status: 'pending_closer_claim',
-    $or: [{ closerId: null }, { closerId: { $exists: false } }],
-  })
-    .populate('agentId', 'fullName username role')
-    .sort({ updatedAt: -1 });
-
-  res
-    .status(200)
-    .json(new ApiResponse(200, { leads }, 'Closer pool retrieved'));
-});
-
-/** Closed sales for closer review — own closed sales + agent-closed (no closer yet). */
+/** Closed sales awaiting CST handoff for this closer (+ unassigned agent-closed). */
 export const getCloserClosedSales = asyncHandler(async (req, res) => {
-  const leads = await Lead.find(closerClosedSalesFilter(req.user._id))
+  const closerId = req.user._id;
+  const leads = await Lead.find({
+    stage: 'closed_sale',
+    $and: [
+      {
+        $or: [
+          { closerId },
+          {
+            $or: [{ closerId: null }, { closerId: { $exists: false } }],
+          },
+        ],
+      },
+      {
+        $or: [
+          { 'handover.cstStatus': 'awaiting_handover' },
+          { 'handover.cstStatus': { $exists: false } },
+          { handover: { $exists: false } },
+        ],
+      },
+    ],
+  })
     .populate('agentId', 'fullName username role')
     .populate('closerId', 'fullName username role')
     .populate('closedBy', 'fullName username role')
@@ -224,6 +248,95 @@ export const getCloserClosedSales = asyncHandler(async (req, res) => {
   res
     .status(200)
     .json(new ApiResponse(200, { leads }, 'Closer closed sales retrieved'));
+});
+
+/** Disqualified leads assigned to this closer. */
+export const getCloserDisqualifiedLeads = asyncHandler(async (req, res) => {
+  const leads = await Lead.find({
+    closerId: req.user._id,
+    stage: 'disqualified',
+  })
+    .populate('agentId', 'fullName username role')
+    .populate('closerId', 'fullName username role')
+    .sort({ updatedAt: -1 });
+
+  res
+    .status(200)
+    .json(
+      new ApiResponse(200, { leads }, 'Closer disqualified leads retrieved')
+    );
+});
+
+/**
+ * Permanently delete a disqualified lead.
+ * Closers may only delete their own disqualified leads; super_admin may delete any.
+ */
+export const deleteLeadPermanently = asyncHandler(async (req, res) => {
+  const lead = await Lead.findById(req.params.id);
+
+  if (!lead) {
+    throw new ApiError(404, 'Lead not found');
+  }
+
+  if (lead.stage !== 'disqualified') {
+    throw new ApiError(
+      400,
+      'Only disqualified leads can be permanently deleted'
+    );
+  }
+
+  const isSuperAdmin = req.user.role === 'super_admin';
+  const isCloserOwner =
+    req.user.role === 'closer' &&
+    lead.closerId &&
+    String(lead.closerId) === String(req.user._id);
+
+  if (!isSuperAdmin && !isCloserOwner) {
+    throw new ApiError(403, 'You can only delete your own disqualified leads');
+  }
+
+  const leadId = lead._id;
+  await Lead.deleteOne({ _id: leadId });
+  await Callback.deleteMany({
+    $or: [{ leadId }, { promotedLeadId: leadId }],
+  });
+
+  res
+    .status(200)
+    .json(new ApiResponse(200, { id: String(leadId) }, 'Lead permanently deleted'));
+});
+
+/**
+ * Sales agents who have assigned leads or tagged callbacks to this closer.
+ */
+export const getCloserTeamAgents = asyncHandler(async (req, res) => {
+  const closerId = req.user._id;
+
+  const fromLeads = await Lead.distinct('agentId', {
+    closerId,
+    agentId: { $ne: null },
+  });
+  const fromCallbacks = await Callback.distinct('agentId', {
+    assignedCloserId: closerId,
+    agentId: { $ne: null },
+  });
+
+  const idSet = new Set(
+    [...fromLeads, ...fromCallbacks]
+      .filter(Boolean)
+      .map((id) => String(id))
+  );
+
+  const agents = await User.find({
+    _id: { $in: [...idSet] },
+    role: 'sales_agent',
+  })
+    .select('fullName username role status')
+    .sort({ fullName: 1 });
+
+  res
+    .status(200)
+    .json(new ApiResponse(200, { agents }, 'Closer team agents retrieved'));
 });
 
 /** Sales agent — history of leads they closed (or that belong to them as agent). */
@@ -243,6 +356,7 @@ export const getMyClosedSales = asyncHandler(async (req, res) => {
 
 /**
  * Closer hands a closed sale to CST (pending_review → CST handover queue).
+ * Accepts multipart: documentSigned, signedDocument file, upscale fields, notes.
  * Also covers agent-closed sales with no closerId yet — closer claims on handover.
  */
 export const moveLeadToCst = asyncHandler(async (req, res) => {
@@ -271,6 +385,47 @@ export const moveLeadToCst = asyncHandler(async (req, res) => {
     throw new ApiError(409, 'This lead has already been handed over to CST.');
   }
 
+  const body = req.body || {};
+  const parseBool = (v) => {
+    if (v === true || v === 'true' || v === '1' || v === 'yes') return true;
+    if (v === false || v === 'false' || v === '0' || v === 'no') return false;
+    return null;
+  };
+
+  const documentSigned = parseBool(body.documentSigned);
+  if (documentSigned === null) {
+    throw new ApiError(400, 'Document Sign selection (Yes/No) is required');
+  }
+
+  const upscaleEnabled = parseBool(body.upscale);
+  if (upscaleEnabled === null) {
+    throw new ApiError(400, 'Upscale selection (Yes/No) is required');
+  }
+
+  if (documentSigned && !req.file) {
+    throw new ApiError(
+      400,
+      'Upload Signed Document is required when Document Sign is Yes'
+    );
+  }
+
+  let upscaleItemName = null;
+  let upscalePrice = null;
+  if (upscaleEnabled) {
+    upscaleItemName = String(body.upscaleItemName || '').trim();
+    if (!upscaleItemName) {
+      throw new ApiError(400, 'Upscale Item Name is required when Upscale is Yes');
+    }
+    const priceRaw = body.upscalePrice;
+    const price = Number(priceRaw);
+    if (priceRaw === '' || priceRaw == null || Number.isNaN(price) || price < 0) {
+      throw new ApiError(400, 'Upscale Price must be a valid non-negative number');
+    }
+    upscalePrice = price;
+  }
+
+  const upscaleNotes = String(body.upscaleNotes || '').trim() || null;
+
   if (!lead.handover) {
     lead.handover = {};
   }
@@ -279,6 +434,34 @@ export const moveLeadToCst = asyncHandler(async (req, res) => {
   if (!lead.closerId && req.user.role === 'closer') {
     lead.closerId = req.user._id;
   }
+
+  lead.handover.documentSigned = documentSigned;
+  if (documentSigned && req.file) {
+    lead.handover.signedDocument = {
+      originalName: req.file.originalname,
+      storedFilename: req.file.filename,
+      mimeType: req.file.mimetype,
+      sizeBytes: req.file.size,
+      relativePath: path
+        .join('uploads', 'cst-handover', String(lead._id), req.file.filename)
+        .replace(/\\/g, '/'),
+    };
+  } else {
+    lead.handover.signedDocument = undefined;
+  }
+
+  lead.handover.upscale = upscaleEnabled
+    ? {
+        enabled: true,
+        itemName: upscaleItemName,
+        price: upscalePrice,
+      }
+    : {
+        enabled: false,
+        itemName: null,
+        price: null,
+      };
+  lead.handover.upscaleNotes = upscaleNotes;
 
   lead.handover.cstStatus = 'pending_review';
   lead.handover.handedOverAt = new Date();
@@ -297,67 +480,46 @@ export const moveLeadToCst = asyncHandler(async (req, res) => {
     );
 });
 
-export const sendLeadToCloserPool = asyncHandler(async (req, res) => {
-  const lead = await Lead.findOneAndUpdate(
-    {
-      _id: req.params.id,
-      agentId: req.user._id,
-      stage: 'active',
-      status: { $in: ['with_agent', 'pending_closer_claim'] },
-    },
-    {
-      $set: {
-        status: 'pending_closer_claim',
-        stage: 'active',
-        // Silence agent follow-up chimes — lead left the agent's desk
-        'followUp.alerts.fiveMinFired': true,
-        'followUp.alerts.exactTimeFired': true,
-      },
-      // Prefer $unset so pool query matches both null and missing closerId
-      $unset: { closerId: 1 },
-    },
-    { new: true, runValidators: true }
-  );
+/**
+ * Agent forced handoff — move lead to pre-assigned closer immediately.
+ */
+export const handLeadToCloser = asyncHandler(async (req, res) => {
+  const lead = await Lead.findOne({
+    _id: req.params.id,
+    agentId: req.user._id,
+    stage: 'active',
+    status: 'with_agent',
+  });
 
   if (!lead) {
     throw new ApiError(
       404,
-      'Lead not found, already claimed, or no longer active.'
+      'Lead not found, already with closer, or no longer active.'
     );
   }
+
+  if (!lead.closerId) {
+    throw new ApiError(
+      400,
+      'Assign a closer on this lead before handing it over.'
+    );
+  }
+
+  const now = new Date();
+  lead.status = 'with_closer';
+  lead.escalatedAt = now;
+  lead.handedOverAt = now;
+  lead.escalationType = 'forced';
+  lead.escalatedReason = 'Forced Moved';
+  if (!lead.followUp) lead.followUp = {};
+  if (!lead.followUp.alerts) {
+    lead.followUp.alerts = { fiveMinFired: false, exactTimeFired: false };
+  }
+  lead.followUp.alerts.fiveMinFired = true;
+  lead.followUp.alerts.exactTimeFired = true;
+  await lead.save();
 
   await resolveCallbacksForLead(lead._id, 'transferred');
-  await lead.populate('agentId', 'fullName username role');
-
-  res
-    .status(200)
-    .json(new ApiResponse(200, { lead }, 'Lead sent to closer pool'));
-});
-
-export const claimLead = asyncHandler(async (req, res) => {
-  const lead = await Lead.findOneAndUpdate(
-    {
-      _id: req.params.id,
-      stage: 'active',
-      status: 'pending_closer_claim',
-      $or: [{ closerId: null }, { closerId: { $exists: false } }],
-    },
-    {
-      $set: {
-        closerId: req.user._id,
-        status: 'in_progress',
-      },
-    },
-    { new: true, runValidators: true }
-  );
-
-  if (!lead) {
-    throw new ApiError(
-      409,
-      'This lead is no longer available — another closer may have claimed it.'
-    );
-  }
-
   await lead.populate([
     { path: 'agentId', select: 'fullName username role' },
     { path: 'closerId', select: 'fullName username role' },
@@ -365,7 +527,7 @@ export const claimLead = asyncHandler(async (req, res) => {
 
   res
     .status(200)
-    .json(new ApiResponse(200, { lead }, 'Lead claimed successfully'));
+    .json(new ApiResponse(200, { lead }, 'Lead handed to assigned closer'));
 });
 
 export const getAllLeads = asyncHandler(async (req, res) => {
@@ -386,14 +548,20 @@ export const getLeadById = asyncHandler(async (req, res) => {
     .populate('agentId', 'fullName username role')
     .populate('closerId', 'fullName username role')
     .populate('closedBy', 'fullName username role')
-    .populate('handover.assignedTechId', 'fullName username role');
+    .populate({
+      path: 'handover.assignedTechId',
+      select: 'fullName username role',
+    });
 
   if (!lead) {
     throw new ApiError(404, 'Lead not found');
   }
 
   if (!canAccessLead(lead, req.user)) {
-    throw new ApiError(403, 'You can only view leads you own or are assigned to');
+    throw new ApiError(
+      403,
+      'You can only view leads you own or are assigned to'
+    );
   }
 
   // Full document including payment + creator fields (authorized roles only)
@@ -408,24 +576,28 @@ export const updateLead = asyncHandler(async (req, res) => {
   let lead;
 
   if (req.user.role === 'closer') {
-    // Own active/closed OR unassigned agent-closed awaiting CST handover
+    // Own active/closed/disqualified OR unassigned agent-closed awaiting CST
     lead = await Lead.findOne({
       _id: req.params.id,
       $or: [
-        {
-          closerId: userId,
-          $or: [
-            { stage: 'active' },
-            {
-              stage: 'closed_sale',
-              'handover.cstStatus': 'awaiting_handover',
-            },
-          ],
-        },
+        { closerId: userId },
         {
           stage: 'closed_sale',
-          'handover.cstStatus': 'awaiting_handover',
-          $or: [{ closerId: null }, { closerId: { $exists: false } }],
+          $and: [
+            {
+              $or: [
+                { closerId: null },
+                { closerId: { $exists: false } },
+              ],
+            },
+            {
+              $or: [
+                { 'handover.cstStatus': 'awaiting_handover' },
+                { 'handover.cstStatus': { $exists: false } },
+                { handover: { $exists: false } },
+              ],
+            },
+          ],
         },
       ],
     });
@@ -477,11 +649,31 @@ export const updateLead = asyncHandler(async (req, res) => {
     }
   }
 
+  // Agents may reassign closer while the lead is still on their desk
+  if (
+    req.body.closerId !== undefined &&
+    req.user.role === 'sales_agent' &&
+    lead.status === 'with_agent' &&
+    lead.stage === 'active'
+  ) {
+    const closer = await resolveApprovedCloser(req.body.closerId);
+    lead.closerId = closer._id;
+  } else if (
+    req.user.role === 'sales_agent' &&
+    lead.status === 'with_agent' &&
+    lead.stage === 'active' &&
+    !lead.closerId
+  ) {
+    throw new ApiError(400, 'Assign Closer is required');
+  }
+
+  let clearedFollowUp = false;
+
   if (req.body.followUp !== undefined) {
     const nextFollowUp = req.body.followUp;
 
     if (nextFollowUp === null) {
-      lead.followUp = undefined;
+      clearedFollowUp = true;
     } else {
       const prevAt = lead.followUp?.callbackAt
         ? new Date(lead.followUp.callbackAt).getTime()
@@ -519,7 +711,73 @@ export const updateLead = asyncHandler(async (req, res) => {
     }
   }
 
+  // Agent edits must NOT reset the 24h clock — clock is immutable createdAt
+
+  // Closers may correct payment on closed sales still awaiting CST handoff
+  if (
+    req.body.payment !== undefined &&
+    req.user.role === 'closer' &&
+    lead.stage === 'closed_sale'
+  ) {
+    const cst = lead.handover?.cstStatus;
+    if (cst && cst !== 'awaiting_handover') {
+      throw new ApiError(
+        400,
+        'Payment can only be edited before handing over to CST'
+      );
+    }
+    const payment = req.body.payment;
+    if (!payment?.method) {
+      throw new ApiError(400, 'payment.method is required');
+    }
+    const paymentDoc = {
+      method: payment.method,
+      linkUrl: null,
+      cardLast4: null,
+      cardBrand: null,
+      cardReferenceToken: null,
+      otherDetails: null,
+    };
+    if (payment.method === 'via_link') {
+      paymentDoc.linkUrl = null;
+    } else if (payment.method === 'via_card') {
+      if (!payment.cardLast4 || !payment.cardReferenceToken || !payment.cardBrand) {
+        throw new ApiError(
+          400,
+          'cardLast4, cardBrand, and cardReferenceToken are required for Card'
+        );
+      }
+      paymentDoc.cardLast4 = payment.cardLast4;
+      paymentDoc.cardBrand = payment.cardBrand;
+      paymentDoc.cardReferenceToken = payment.cardReferenceToken;
+    } else if (payment.method === 'other') {
+      const details = String(payment.otherDetails || '').trim();
+      if (!details) {
+        throw new ApiError(400, 'otherDetails is required for Others');
+      }
+      paymentDoc.otherDetails = details;
+    } else {
+      throw new ApiError(400, 'Invalid payment.method');
+    }
+    lead.payment = paymentDoc;
+  }
+
+  // Claim unassigned agent-closed sales when a closer edits them
+  if (
+    req.user.role === 'closer' &&
+    lead.stage === 'closed_sale' &&
+    !lead.closerId
+  ) {
+    lead.closerId = userId;
+  }
+
   await lead.save();
+
+  if (clearedFollowUp) {
+    await Lead.updateOne({ _id: lead._id }, { $unset: { followUp: 1 } });
+    lead.followUp = undefined;
+    await resolveCallbacksForLead(lead._id, 'cancelled');
+  }
 
   await lead.populate([
     { path: 'agentId', select: 'fullName username role' },
@@ -599,8 +857,9 @@ export const setFollowUp = asyncHandler(async (req, res) => {
     payload === undefined ||
     payload.callbackAt === null
   ) {
+    await Lead.updateOne({ _id: lead._id }, { $unset: { followUp: 1 } });
     lead.followUp = undefined;
-    await lead.save();
+    await resolveCallbacksForLead(lead._id, 'cancelled');
     return res
       .status(200)
       .json(new ApiResponse(200, { lead }, 'Follow-up cleared'));
@@ -729,11 +988,8 @@ export const closeLead = asyncHandler(async (req, res) => {
   };
 
   if (payment.method === 'via_link') {
-    const link = String(payment.linkUrl || '').trim();
-    if (!link) {
-      throw new ApiError(400, 'payment.linkUrl is required for Payment Link');
-    }
-    paymentDoc.linkUrl = link;
+    // Selection alone records the method — no URL / reference required
+    paymentDoc.linkUrl = null;
   } else if (payment.method === 'via_card') {
     paymentDoc.cardLast4 = payment.cardLast4;
     paymentDoc.cardBrand = payment.cardBrand || null;
@@ -749,18 +1005,13 @@ export const closeLead = asyncHandler(async (req, res) => {
   // Resolve assigned closer for handover
   let assignedCloserId = bodyCloserId || null;
   if (isAgent) {
+    // Fall back to pre-assigned closer on the lead when body omits it
     if (!assignedCloserId) {
-      throw new ApiError(400, 'closerId is required to close a sale');
+      // lead not loaded yet — validated after fetch below
+    } else {
+      const closer = await resolveApprovedCloser(assignedCloserId);
+      assignedCloserId = closer._id;
     }
-    const closer = await User.findOne({
-      _id: assignedCloserId,
-      role: 'closer',
-      status: 'approved',
-    }).select('_id fullName username role');
-    if (!closer) {
-      throw new ApiError(400, 'Selected closer is invalid or inactive');
-    }
-    assignedCloserId = closer._id;
   } else if (isCloser) {
     // Closer closing their own desk lead — stay assigned to them
     assignedCloserId = assignedCloserId || userId;
@@ -777,6 +1028,28 @@ export const closeLead = asyncHandler(async (req, res) => {
       409,
       'This lead is no longer active — it may have just been closed or disqualified.'
     );
+  }
+
+  if (isAgent) {
+    if (!assignedCloserId) {
+      assignedCloserId = lead.closerId || null;
+    }
+    if (!assignedCloserId) {
+      throw new ApiError(400, 'closerId is required to close a sale');
+    }
+    const closer = await resolveApprovedCloser(assignedCloserId);
+    assignedCloserId = closer._id;
+  }
+
+  // Sales amount is required when closing
+  if (req.body.salesAmount === undefined || req.body.salesAmount === '' || req.body.salesAmount === null) {
+    throw new ApiError(400, 'Sales Amount is required');
+  }
+  {
+    const n = Number(req.body.salesAmount);
+    if (Number.isNaN(n) || n < 0) {
+      throw new ApiError(400, 'salesAmount must be a non-negative number');
+    }
   }
 
   // Optional last-pass intake corrections before lock

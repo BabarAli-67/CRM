@@ -1,19 +1,20 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { useNavigate } from 'react-router-dom';
-import useAuth from '../../hooks/useAuth.hook.js';
 import {
+  markCallbackAlert,
+  markCloserCallbackAlert,
   updateCallback,
   updateCloserCallback,
 } from '../../services/callback.service.js';
-import { setLeadFollowUp } from '../../services/lead.service.js';
+import {
+  markLeadFollowUpAlert,
+  setLeadFollowUp,
+} from '../../services/lead.service.js';
 import { startAlarmLoop, stopChime } from '../../utils/audioAlert.js';
 import { showBrowserNotification } from '../../utils/browserNotification.util.js';
 
 /** Auto-stop alarm + dismiss if the agent never interacts */
 const AUTO_STOP_MS = 60_000;
-/** Snooze pushes the next ring this far ahead */
-const SNOOZE_MS = 3 * 60 * 1000;
 
 /** @type {Array<object>} */
 const queue = [];
@@ -78,115 +79,25 @@ const formatPkt = (value) => {
 const kindLabel = (kind) =>
   kind === 'followup' ? 'Lead Follow-up' : 'Callback';
 
-const viewPathFor = (kind, id, role) => {
-  const hash = `reminder-${kind}-${id}`;
-  if (kind === 'callback') {
-    return `/dashboard/sales-agent/callbacks#${hash}`;
-  }
-  if (kind === 'closer_callback') {
-    return `/dashboard/closer/callbacks#${hash}`;
-  }
-  if (kind === 'followup') {
-    if (role === 'closer') {
-      return `/dashboard/closer/leads#${hash}`;
-    }
-    return `/dashboard/sales-agent/leads#${hash}`;
-  }
-  if (role === 'closer') {
-    return `/dashboard/closer#${hash}`;
-  }
-  return `/dashboard/sales-agent#${hash}`;
-};
-
-function scrollToReminderRow(kind, id) {
-  const el = document.querySelector(`[data-reminder-row="${kind}-${id}"]`);
-  if (!el) return;
-  el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  el.classList.add('ring-2', 'ring-amber-500', 'ring-offset-2');
-  window.setTimeout(() => {
-    el.classList.remove('ring-2', 'ring-amber-500', 'ring-offset-2');
-  }, 2500);
-}
-
-async function persistSnooze(reminder) {
-  const nextAt = new Date(Date.now() + SNOOZE_MS).toISOString();
-  const kind = reminder.kind;
-
-  if (kind === 'callback') {
-    await updateCallback(reminder.id, { callbackAt: nextAt });
-    return nextAt;
-  }
-  if (kind === 'closer_callback') {
-    await updateCloserCallback(reminder.id, {
-      callbackAt: nextAt,
-      status: 'pending',
-    });
-    return nextAt;
-  }
-  if (kind === 'followup') {
-    await setLeadFollowUp(reminder.id, {
-      callbackAt: nextAt,
-      notes: reminder.item?.followUp?.notes || reminder.item?.notes || null,
-    });
-    return nextAt;
-  }
-  return nextAt;
-}
-
-/** Mark callback as attended so OVERDUE clears and chimes stop. */
-async function persistAttended(reminder) {
-  if (!reminder?.id) return null;
-
-  if (reminder.kind === 'callback') {
-    const updated = await updateCallback(reminder.id, { status: 'attended' });
-    const leadId =
-      reminder.item?.leadId?._id ||
-      reminder.item?.leadId ||
-      updated?.leadId?._id ||
-      updated?.leadId;
-    if (leadId) {
-      try {
-        await setLeadFollowUp(leadId, { acknowledged: true });
-      } catch {
-        // Backend updateCallback already syncs when possible
-      }
-    }
-    return updated;
-  }
-  if (reminder.kind === 'closer_callback') {
-    const updated = await updateCloserCallback(reminder.id, {
-      status: 'attended',
-    });
-    const leadId =
-      reminder.item?.leadId?._id ||
-      reminder.item?.leadId ||
-      updated?.leadId?._id ||
-      updated?.leadId;
-    if (leadId) {
-      try {
-        await setLeadFollowUp(leadId, { acknowledged: true });
-      } catch {
-        // ignore — closer path may sync via updateCloserCallback
-      }
-    }
-    return updated;
-  }
-  if (reminder.kind === 'followup') {
-    return setLeadFollowUp(reminder.id, { acknowledged: true });
-  }
-  return null;
-}
-
-function patchCallbackCache(queryClient, queryKey, id, patch) {
+function patchCallbackAlerts(queryClient, queryKey, id, alertPatch) {
   queryClient.setQueryData(queryKey, (old) => {
     if (!Array.isArray(old)) return old;
-    return old.map((cb) =>
-      String(cb._id) === String(id) ? { ...cb, ...patch } : cb
-    );
+    return old.map((cb) => {
+      if (String(cb._id) !== String(id)) return cb;
+      return {
+        ...cb,
+        alerts: {
+          fiveMinFired: false,
+          exactTimeFired: false,
+          ...(cb.alerts || {}),
+          ...alertPatch,
+        },
+      };
+    });
   });
 }
 
-function patchLeadFollowUpAcknowledged(queryClient, leadId) {
+function patchLeadFollowUpAlerts(queryClient, leadId, alertPatch, extra = {}) {
   if (!leadId) return;
   const patchList = (old) => {
     if (!Array.isArray(old)) return old;
@@ -196,11 +107,12 @@ function patchLeadFollowUpAcknowledged(queryClient, leadId) {
         ...lead,
         followUp: {
           ...(lead.followUp || {}),
-          acknowledged: true,
+          ...extra,
           alerts: {
-            fiveMinFired: true,
-            exactTimeFired: true,
+            fiveMinFired: false,
+            exactTimeFired: false,
             ...(lead.followUp?.alerts || {}),
+            ...alertPatch,
           },
         },
       };
@@ -211,27 +123,90 @@ function patchLeadFollowUpAcknowledged(queryClient, leadId) {
 }
 
 /**
- * Single toast card — prominent callback / follow-up alert with Close + Snooze.
+ * Persist only the phase that was dismissed — never both flags together.
+ * Warning OK → fiveMinFired only (due alert must still fire).
+ * Due OK → exactTimeFired only (+ attend so OVERDUE clears after due).
  */
-function ReminderPopup({
-  reminder,
-  onClose,
-  onView,
-  onSnooze,
-  snoozing = false,
-}) {
+async function persistPhaseAck(reminder, queryClient) {
+  if (!reminder?.id) return;
+
+  const isWarning = reminder.alertType === 'fiveMin';
+  const alertPatch = isWarning
+    ? { fiveMinFired: true }
+    : { exactTimeFired: true };
+
+  // Optimistic local flags (phase-scoped)
+  if (reminder.kind === 'callback') {
+    patchCallbackAlerts(queryClient, ['myCallbacks'], reminder.id, alertPatch);
+  } else if (reminder.kind === 'closer_callback') {
+    patchCallbackAlerts(
+      queryClient,
+      ['closerCallbacks'],
+      reminder.id,
+      alertPatch
+    );
+  } else if (reminder.kind === 'followup') {
+    patchLeadFollowUpAlerts(
+      queryClient,
+      reminder.id,
+      alertPatch,
+      isWarning ? {} : { acknowledged: true }
+    );
+  }
+
+  // Persist phase flag
+  if (reminder.kind === 'callback') {
+    await markCallbackAlert(reminder.id, alertPatch);
+  } else if (reminder.kind === 'closer_callback') {
+    await markCloserCallbackAlert(reminder.id, alertPatch);
+  } else if (reminder.kind === 'followup') {
+    await markLeadFollowUpAlert(reminder.id, alertPatch);
+  }
+
+  // Due phase only: clear overdue / stop future rings for this schedule
+  if (!isWarning) {
+    if (reminder.kind === 'callback') {
+      await updateCallback(reminder.id, { status: 'attended' });
+      const leadId = reminder.item?.leadId?._id || reminder.item?.leadId;
+      if (leadId) {
+        try {
+          await setLeadFollowUp(leadId, { acknowledged: true });
+        } catch {
+          // optional sync
+        }
+      }
+    } else if (reminder.kind === 'closer_callback') {
+      await updateCloserCallback(reminder.id, { status: 'attended' });
+    } else if (reminder.kind === 'followup') {
+      await setLeadFollowUp(reminder.id, { acknowledged: true });
+    }
+  }
+
+  queryClient.invalidateQueries({ queryKey: ['myCallbacks'] });
+  queryClient.invalidateQueries({ queryKey: ['closerCallbacks'] });
+  queryClient.invalidateQueries({ queryKey: ['myLeads'] });
+  queryClient.invalidateQueries({ queryKey: ['assignedLeads'] });
+}
+
+/**
+ * Single toast card — phase-specific alert with OK only.
+ */
+function ReminderPopup({ reminder, onOk, acknowledging = false }) {
   if (!reminder) return null;
 
   const isExact = reminder.alertType === 'exact';
   const headline = isExact
-    ? `Callback DUE NOW: ${reminder.businessName} - ${reminder.phone}`
-    : `Upcoming Callback in 5 mins: ${reminder.businessName} - ${reminder.phone}`;
+    ? `Callback Due Now: ${reminder.businessName}`
+    : `Upcoming Callback in 5 mins: ${reminder.businessName}`;
 
   const followupHeadline = isExact
-    ? `Follow-up DUE NOW: ${reminder.businessName} - ${reminder.phone}`
-    : `Upcoming Follow-up in 5 mins: ${reminder.businessName} - ${reminder.phone}`;
+    ? `Follow-up Due Now: ${reminder.businessName}`
+    : `Upcoming Follow-up in 5 mins: ${reminder.businessName}`;
 
   const title = reminder.kind === 'followup' ? followupHeadline : headline;
+  const message = isExact
+    ? 'It is now scheduled time for this callback.'
+    : `Scheduled for ${formatPkt(reminder.triggerAt)}`;
 
   return (
     <div
@@ -241,28 +216,17 @@ function ReminderPopup({
       className="pointer-events-auto w-full max-w-md overflow-hidden rounded-xl border border-amber-400/40 bg-amber-50 shadow-2xl shadow-slate-900/30"
     >
       <div className="border-b border-amber-200/80 bg-amber-100/80 px-4 py-3">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-wide text-amber-800/80">
-              {kindLabel(reminder.kind)}
-              {isExact ? ' · Due now' : ' · In 5 minutes'}
-            </p>
-            <p className="mt-1 text-sm font-semibold leading-snug text-amber-950">
-              {title}
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close"
-            className="rounded-md px-2 py-1 text-sm font-medium text-amber-900/70 hover:bg-amber-200/60 hover:text-amber-950"
-          >
-            ✕
-          </button>
-        </div>
+        <p className="text-xs font-semibold uppercase tracking-wide text-amber-800/80">
+          {kindLabel(reminder.kind)}
+          {isExact ? ' · Due now' : ' · In 5 minutes'}
+        </p>
+        <p className="mt-1 text-sm font-semibold leading-snug text-amber-950">
+          {title}
+        </p>
       </div>
 
       <div className="space-y-2 px-4 py-3 text-amber-950">
+        <p className="text-sm text-amber-900/90">{message}</p>
         <p className="text-sm">
           <span className="font-medium">Business:</span> {reminder.businessName}
         </p>
@@ -277,25 +241,11 @@ function ReminderPopup({
         <div className="flex flex-wrap items-center gap-2 pt-2">
           <button
             type="button"
-            onClick={onClose}
-            className="rounded-md border border-amber-300 bg-white px-3 py-1.5 text-sm font-semibold text-amber-950 hover:bg-amber-100"
+            disabled={acknowledging}
+            onClick={onOk}
+            className="rounded-md bg-amber-700 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-800 disabled:opacity-60"
           >
-            Close
-          </button>
-          <button
-            type="button"
-            disabled={snoozing}
-            onClick={onSnooze}
-            className="rounded-md bg-amber-700 px-3 py-1.5 text-sm font-semibold text-white hover:bg-amber-800 disabled:opacity-60"
-          >
-            {snoozing ? 'Snoozing…' : 'Snooze (+3 min)'}
-          </button>
-          <button
-            type="button"
-            onClick={onView}
-            className="rounded-md border border-amber-400/50 bg-amber-100/60 px-3 py-1.5 text-sm font-medium text-amber-950 hover:bg-amber-200/70"
-          >
-            View
+            {acknowledging ? 'OK…' : 'OK'}
           </button>
           {queue.length > 1 ? (
             <span className="ml-auto text-xs text-amber-800/70">
@@ -310,149 +260,34 @@ function ReminderPopup({
 
 /**
  * Mount once in the authenticated shell. Shows one reminder at a time from the queue.
- * Starts a looping alarm while a popup is visible; silences on Close / Snooze / View / 60s.
+ * Alarm loops while visible; OK (or 60s auto) acknowledges only the current phase.
  */
 export function ReminderPopupHost() {
-  const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { user } = useAuth();
   const [snapshot, setSnapshot] = useState(() => [...queue]);
-  const [snoozing, setSnoozing] = useState(false);
+  const [acknowledging, setAcknowledging] = useState(false);
 
   useEffect(() => subscribe(setSnapshot), []);
 
   const active = snapshot[0] || null;
 
-  const silenceAndDismiss = useCallback(() => {
+  const handleOk = useCallback(async () => {
+    if (!active || acknowledging) return;
+    setAcknowledging(true);
     stopChime();
+    const current = active;
     dismissFront();
-  }, []);
-
-  const markAttendedOptimistic = useCallback(
-    (reminder) => {
-      if (!reminder) return;
-      const patch = {
-        status: 'attended',
-        alerts: { fiveMinFired: true, exactTimeFired: true },
-      };
-      if (reminder.kind === 'callback') {
-        patchCallbackCache(queryClient, ['myCallbacks'], reminder.id, patch);
-        const leadId = reminder.item?.leadId?._id || reminder.item?.leadId;
-        patchLeadFollowUpAcknowledged(queryClient, leadId);
-      } else if (reminder.kind === 'closer_callback') {
-        patchCallbackCache(
-          queryClient,
-          ['closerCallbacks'],
-          reminder.id,
-          patch
-        );
-        const leadId = reminder.item?.leadId?._id || reminder.item?.leadId;
-        patchLeadFollowUpAcknowledged(queryClient, leadId);
-      } else if (reminder.kind === 'followup') {
-        patchLeadFollowUpAcknowledged(queryClient, reminder.id);
-      }
-    },
-    [queryClient]
-  );
-
-  const handleClose = useCallback(async () => {
-    if (!active) {
-      silenceAndDismiss();
-      return;
-    }
-    // Close = acknowledge: stop ringing + clear overdue
-    markAttendedOptimistic(active);
-    silenceAndDismiss();
     try {
-      await persistAttended(active);
-      queryClient.invalidateQueries({ queryKey: ['myCallbacks'] });
-      queryClient.invalidateQueries({ queryKey: ['closerCallbacks'] });
-      queryClient.invalidateQueries({ queryKey: ['myLeads'] });
-      queryClient.invalidateQueries({ queryKey: ['assignedLeads'] });
+      await persistPhaseAck(current, queryClient);
     } catch {
       queryClient.invalidateQueries({ queryKey: ['myCallbacks'] });
       queryClient.invalidateQueries({ queryKey: ['closerCallbacks'] });
       queryClient.invalidateQueries({ queryKey: ['myLeads'] });
       queryClient.invalidateQueries({ queryKey: ['assignedLeads'] });
-    }
-  }, [active, silenceAndDismiss, markAttendedOptimistic, queryClient]);
-
-  const handleView = useCallback(async () => {
-    if (!active) return;
-    const path = viewPathFor(active.kind, active.id, user?.role);
-    const kind = active.kind;
-    const id = active.id;
-
-    markAttendedOptimistic(active);
-    stopChime();
-    dismissFront();
-    navigate(path);
-
-    window.setTimeout(() => {
-      scrollToReminderRow(kind, id);
-    }, 120);
-
-    try {
-      await persistAttended(active);
-      queryClient.invalidateQueries({ queryKey: ['myCallbacks'] });
-      queryClient.invalidateQueries({ queryKey: ['closerCallbacks'] });
-      queryClient.invalidateQueries({ queryKey: ['myLeads'] });
-      queryClient.invalidateQueries({ queryKey: ['assignedLeads'] });
-    } catch {
-      queryClient.invalidateQueries({ queryKey: ['myCallbacks'] });
-      queryClient.invalidateQueries({ queryKey: ['closerCallbacks'] });
-      queryClient.invalidateQueries({ queryKey: ['myLeads'] });
-      queryClient.invalidateQueries({ queryKey: ['assignedLeads'] });
-    }
-  }, [active, navigate, user?.role, markAttendedOptimistic, queryClient]);
-
-  const handleSnooze = useCallback(async () => {
-    if (!active || snoozing) return;
-    setSnoozing(true);
-    try {
-      stopChime();
-      const nextAt = await persistSnooze(active);
-
-      // Optimistic local update so the agenda reflects the snooze immediately
-      if (active.kind === 'callback') {
-        queryClient.setQueryData(['myCallbacks'], (old) => {
-          if (!Array.isArray(old)) return old;
-          return old.map((cb) =>
-            String(cb._id) === String(active.id)
-              ? {
-                  ...cb,
-                  callbackAt: nextAt,
-                  alerts: { fiveMinFired: false, exactTimeFired: false },
-                }
-              : cb
-          );
-        });
-      } else if (active.kind === 'closer_callback') {
-        queryClient.setQueryData(['closerCallbacks'], (old) => {
-          if (!Array.isArray(old)) return old;
-          return old.map((cb) =>
-            String(cb._id) === String(active.id)
-              ? {
-                  ...cb,
-                  callbackAt: nextAt,
-                  alerts: { fiveMinFired: false, exactTimeFired: false },
-                }
-              : cb
-          );
-        });
-      }
-
-      queryClient.invalidateQueries({ queryKey: ['myCallbacks'] });
-      queryClient.invalidateQueries({ queryKey: ['closerCallbacks'] });
-      queryClient.invalidateQueries({ queryKey: ['myLeads'] });
-      queryClient.invalidateQueries({ queryKey: ['assignedLeads'] });
-      dismissFront();
-    } catch {
-      // Keep popup visible if persist failed so the agent can Close
     } finally {
-      setSnoozing(false);
+      setAcknowledging(false);
     }
-  }, [active, snoozing, queryClient]);
+  }, [active, acknowledging, queryClient]);
 
   // Start / restart looping alarm + OS notification whenever the front reminder changes
   useEffect(() => {
@@ -465,11 +300,11 @@ export function ReminderPopupHost() {
     const label =
       active.kind === 'followup'
         ? isExact
-          ? `Follow-up DUE NOW: ${active.businessName} - ${active.phone}`
-          : `Upcoming Follow-up in 5 mins: ${active.businessName} - ${active.phone}`
+          ? `Follow-up Due Now: ${active.businessName}`
+          : `Upcoming Follow-up in 5 mins: ${active.businessName}`
         : isExact
-          ? `Callback DUE NOW: ${active.businessName} - ${active.phone}`
-          : `Upcoming Callback in 5 mins: ${active.businessName} - ${active.phone}`;
+          ? `Callback Due Now: ${active.businessName}`
+          : `Upcoming Callback in 5 mins: ${active.businessName}`;
 
     showBrowserNotification({
       title: isExact ? 'Flash CRM · Due Now' : 'Flash CRM · 5 min warning',
@@ -480,17 +315,26 @@ export function ReminderPopupHost() {
     startAlarmLoop();
 
     const safetyId = window.setTimeout(() => {
+      // Auto-ack current phase only (same as OK) so due can still fire later
       stopChime();
-      dismissFront();
+      const current = queue[0];
+      if (current && current.queueId === active.queueId) {
+        dismissFront();
+        persistPhaseAck(current, queryClient).catch(() => {
+          queryClient.invalidateQueries({ queryKey: ['myCallbacks'] });
+          queryClient.invalidateQueries({ queryKey: ['closerCallbacks'] });
+          queryClient.invalidateQueries({ queryKey: ['myLeads'] });
+          queryClient.invalidateQueries({ queryKey: ['assignedLeads'] });
+        });
+      }
     }, AUTO_STOP_MS);
 
     return () => {
       window.clearTimeout(safetyId);
       stopChime();
     };
-  }, [active?.queueId]);
+  }, [active?.queueId, queryClient]);
 
-  // Unmount / navigate away from shell
   useEffect(() => () => stopChime(), []);
 
   if (!active) return null;
@@ -499,10 +343,8 @@ export function ReminderPopupHost() {
     <div className="pointer-events-none fixed inset-x-0 bottom-0 z-[60] flex justify-center p-4 sm:inset-x-auto sm:bottom-6 sm:right-6 sm:justify-end">
       <ReminderPopup
         reminder={active}
-        onClose={handleClose}
-        onView={handleView}
-        onSnooze={handleSnooze}
-        snoozing={snoozing}
+        onOk={handleOk}
+        acknowledging={acknowledging}
       />
     </div>
   );

@@ -102,8 +102,7 @@ export default function CloserCallbackTable({
   if (rows.length === 0) {
     return (
       <p className="py-12 text-center text-sm text-zinc-500">
-        No callbacks scheduled. Use + Add Callback or schedule from Claimed
-        Leads.
+        No callbacks scheduled. Use + Add Callback or schedule from Leads.
       </p>
     );
   }

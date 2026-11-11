@@ -40,6 +40,16 @@ const callbackSchema = new mongoose.Schema(
       default: null,
       index: true,
     },
+    /**
+     * Pre-assigned closer for agent-owned callbacks (who receives the lead on promote).
+     * Distinct from closerId, which marks closer ownership of the callback row.
+     */
+    assignedCloserId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      default: null,
+      index: true,
+    },
     /** When set, callback is scheduled against an existing lead (no re-entry of lead fields). */
     leadId: {
       type: mongoose.Schema.Types.ObjectId,

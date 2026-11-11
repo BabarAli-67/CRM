@@ -325,8 +325,8 @@ function CallbacksPanel({ query }) {
 
 function ActiveLeadsPanel({ leads, isLoading, isError, error, onViewDetails }) {
   const statusLabel = (status) => {
-    if (status === 'pending_closer_claim') return 'Pending Closer Claim';
-    if (status === 'in_progress') return 'In Progress';
+    if (status === 'with_closer' || status === 'in_progress') return 'With Closer';
+    if (status === 'pending_closer_claim') return 'With Closer';
     if (status === 'with_agent') return 'With Agent';
     return status || 'With Agent';
   };

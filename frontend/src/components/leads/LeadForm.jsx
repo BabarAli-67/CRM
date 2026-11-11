@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import useAuth from '../../hooks/useAuth.hook.js';
 import { createCallback } from '../../services/callback.service.js';
 import {
   createLead,
-  sendLeadToCloserPool,
+  getUsers,
+  handLeadToCloser,
   updateLead,
 } from '../../services/lead.service.js';
 
@@ -110,10 +111,12 @@ const emptyForm = {
   serviceOffered: '',
   salesAmount: '',
   notes: '',
+  closerId: '',
 };
 
 const mapInitialToForm = (initialValues) => {
   if (!initialValues) return emptyForm;
+  const closerRef = initialValues.closerId;
   return {
     clientName: initialValues.clientName || '',
     businessName: initialValues.businessName || '',
@@ -129,13 +132,19 @@ const mapInitialToForm = (initialValues) => {
         ? String(initialValues.salesAmount)
         : '',
     notes: initialValues.notes || '',
+    closerId: closerRef?._id
+      ? String(closerRef._id)
+      : closerRef
+        ? String(closerRef)
+        : '',
   };
 };
 
 const STATUS_LABEL = {
-  with_agent: 'With Agent',
-  pending_closer_claim: 'Pending Closer Claim',
-  in_progress: 'In Progress',
+  with_agent: 'In Progress',
+  with_closer: 'With Closer',
+  pending_closer_claim: 'With Closer',
+  in_progress: 'With Closer',
 };
 
 const normalizeUrl = (raw) => {
@@ -227,27 +236,36 @@ export default function LeadForm({
     }
   }, [scheduleCallback, cbDate, cbHour, cbMinute, cbPeriod]);
 
-  const patchMyLeadsCache = (lead, { sentToPool }) => {
+  const { data: closers = [], isLoading: closersLoading } = useQuery({
+    queryKey: ['users', 'closer', 'approved'],
+    queryFn: () => getUsers({ role: 'closer', status: 'approved' }),
+  });
+
+  const patchMyLeadsCache = (lead, { handedOff }) => {
     queryClient.setQueryData(['myLeads'], (old) => {
       const list = Array.isArray(old) ? old : [];
       if (!lead?._id) return list;
-      if (sentToPool || lead.status !== 'with_agent') {
+      if (handedOff || lead.status !== 'with_agent') {
         return list.filter((l) => String(l._id) !== String(lead._id));
       }
       const idx = list.findIndex((l) => String(l._id) === String(lead._id));
+      const patched = {
+        ...lead,
+        // Explicitly clear nested follow-up when backend unsets it
+        followUp: lead.followUp ?? null,
+      };
       if (idx >= 0) {
         const next = [...list];
-        next[idx] = { ...list[idx], ...lead };
+        next[idx] = { ...list[idx], ...patched, followUp: patched.followUp };
         return next;
       }
-      return [lead, ...list];
+      return [patched, ...list];
     });
   };
 
   const invalidate = (lead) => {
     queryClient.invalidateQueries({ queryKey: ['myLeads'] });
     queryClient.invalidateQueries({ queryKey: ['assignedLeads'] });
-    queryClient.invalidateQueries({ queryKey: ['closerPool'] });
     queryClient.invalidateQueries({ queryKey: ['allLeads'] });
     queryClient.invalidateQueries({ queryKey: ['myCallbacks'] });
     if (lead?._id) {
@@ -256,23 +274,27 @@ export default function LeadForm({
   };
 
   const saveMutation = useMutation({
-    mutationFn: async ({ payload, sendToCloserPool, callback, priorFollowUpAt }) => {
+    mutationFn: async ({
+      payload,
+      handOff,
+      callback,
+      clearCallback,
+      priorFollowUpAt,
+    }) => {
       let lead;
       if (leadId) {
-        if (sendToCloserPool) {
-          await updateLead(leadId, payload);
-          lead = await sendLeadToCloserPool(leadId);
-        } else {
-          lead = await updateLead(leadId, payload);
+        lead = await updateLead(leadId, payload);
+        if (handOff) {
+          lead = await handLeadToCloser(leadId);
         }
       } else {
-        lead = await createLead({
-          ...payload,
-          sendToCloserPool: Boolean(sendToCloserPool),
-        });
+        lead = await createLead(payload);
+        if (handOff && lead?._id) {
+          lead = await handLeadToCloser(lead._id);
+        }
       }
 
-      if (callback?.callbackAt && lead?._id) {
+      if (callback?.callbackAt && lead?._id && !clearCallback) {
         const prevAt = priorFollowUpAt
           ? new Date(priorFollowUpAt).getTime()
           : null;
@@ -283,28 +305,44 @@ export default function LeadForm({
             leadId: lead._id,
             callbackAt: callback.callbackAt,
             notes: callback.notes || undefined,
+            assignedCloserId:
+              payload.closerId ||
+              lead.closerId?._id ||
+              lead.closerId ||
+              undefined,
           });
         }
+      }
+
+      // Normalize cleared follow-up on the returned lead for optimistic UI
+      if (clearCallback && lead) {
+        lead = { ...lead, followUp: undefined };
       }
 
       return lead;
     },
     onSuccess: (lead, variables) => {
       setError('');
-      const sentToPool = Boolean(variables.sendToCloserPool);
-      const scheduled = Boolean(variables.callback?.callbackAt);
-      const base = sentToPool
-        ? 'Lead sent to closer pool.'
+      const handedOff = Boolean(variables.handOff);
+      const cleared = Boolean(variables.clearCallback);
+      const scheduled = Boolean(variables.callback?.callbackAt) && !cleared;
+      const base = handedOff
+        ? 'Lead handed to assigned closer.'
         : leadId
           ? 'Lead saved.'
           : 'Lead created.';
-      const toastMessage = scheduled ? `${base} Callback scheduled.` : base;
+      const toastMessage = cleared
+        ? `${base} Callback cleared.`
+        : scheduled
+          ? `${base} Callback scheduled.`
+          : base;
       setToast(toastMessage);
-      patchMyLeadsCache(lead, { sentToPool });
+      patchMyLeadsCache(lead, { handedOff });
       invalidate(lead);
       onSaved?.(lead, {
-        sentToPool,
+        handedOff,
         scheduledCallback: scheduled,
+        clearedCallback: cleared,
         toastMessage,
       });
     },
@@ -328,6 +366,10 @@ export default function LeadForm({
       salesAmount = n;
     }
 
+    if (!form.closerId) {
+      throw new Error('Assign Closer is required.');
+    }
+
     return {
       clientName: form.clientName.trim() || null,
       businessName: form.businessName.trim(),
@@ -340,10 +382,11 @@ export default function LeadForm({
       serviceOffered: form.serviceOffered.trim() || null,
       salesAmount,
       notes: form.notes.trim() || null,
+      closerId: form.closerId,
     };
   };
 
-  const submit = (sendToCloserPool) => {
+  const submit = (handOff) => {
     setError('');
 
     if (!form.businessName.trim() || !form.phone.trim()) {
@@ -351,17 +394,13 @@ export default function LeadForm({
       return;
     }
 
-    if (
-      sendToCloserPool &&
-      leadId &&
-      (pipelineStatus === 'pending_closer_claim' ||
-        pipelineStatus === 'in_progress')
-    ) {
-      setError(
-        pipelineStatus === 'in_progress'
-          ? 'This lead is already claimed by a closer.'
-          : 'This lead is already in the closer pool.'
-      );
+    if (!form.closerId) {
+      setError('Assign Closer is required.');
+      return;
+    }
+
+    if (handOff && leadId && pipelineStatus !== 'with_agent') {
+      setError('This lead is already with the closer.');
       return;
     }
 
@@ -374,6 +413,8 @@ export default function LeadForm({
     }
 
     let callback = null;
+    let clearCallback = false;
+
     if (scheduleCallback) {
       if (!cbDate) {
         setError('Please pick a callback date.');
@@ -398,12 +439,17 @@ export default function LeadForm({
         callbackAt: iso,
         notes: cbNotes.trim() || form.notes.trim() || undefined,
       };
+    } else if (leadId) {
+      // Unchecked — clear lead follow-up + cancel linked pending/attended callbacks
+      clearCallback = true;
+      payload.followUp = null;
     }
 
     saveMutation.mutate({
       payload,
-      sendToCloserPool,
+      handOff,
       callback,
+      clearCallback,
       priorFollowUpAt: initialValues?.followUp?.callbackAt || null,
     });
   };
@@ -413,10 +459,7 @@ export default function LeadForm({
     submit(false);
   };
 
-  const canSendToPool =
-    !leadId ||
-    pipelineStatus === 'with_agent' ||
-    pipelineStatus === 'pending_closer_claim';
+  const canHandOff = !leadId || pipelineStatus === 'with_agent';
 
   const busy = saveMutation.isPending;
 
@@ -591,6 +634,29 @@ export default function LeadForm({
               />
             </label>
 
+            <label className={labelClass}>
+              <span>
+                Assign Closer <span className="text-red-400">*</span>
+              </span>
+              <select
+                required
+                value={form.closerId}
+                onChange={handleChange('closerId')}
+                disabled={busy || closersLoading || pipelineStatus !== 'with_agent'}
+                className="bg-zinc-900 border border-zinc-700 text-white rounded-lg p-2.5 w-full focus:ring-orange-500 focus:outline-none focus:ring-2 appearance-none cursor-pointer disabled:cursor-not-allowed disabled:opacity-70"
+              >
+                <option value="">
+                  {closersLoading ? 'Loading closers…' : 'Select a closer'}
+                </option>
+                {closers.map((c) => (
+                  <option key={c._id} value={c._id}>
+                    {c.fullName || c.username}
+                    {c.fullName && c.username ? ` (@${c.username})` : ''}
+                  </option>
+                ))}
+              </select>
+            </label>
+
             <label className={`${labelClass} sm:col-span-2`}>
               <span>Notes</span>
               <textarea
@@ -748,14 +814,14 @@ export default function LeadForm({
           ) : null}
 
           <div className="flex flex-wrap justify-end gap-2 border-t border-zinc-800 pt-4">
-            {canSendToPool && pipelineStatus !== 'pending_closer_claim' ? (
+            {canHandOff ? (
               <button
                 type="button"
                 disabled={busy}
                 onClick={() => submit(true)}
                 className="rounded-xl border border-orange-500/40 bg-orange-600/20 px-4 py-2 text-sm font-semibold text-orange-200 hover:bg-orange-600/35 disabled:opacity-60"
               >
-                {busy ? 'Sending…' : 'Send to Closer Pool'}
+                {busy ? 'Sending…' : 'Hand to Closer'}
               </button>
             ) : null}
             <button

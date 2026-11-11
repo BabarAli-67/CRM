@@ -4,22 +4,21 @@ import { Link } from 'react-router-dom';
 import CloseSaleModal from './CloseSaleModal.jsx';
 import DisqualifyModal from './DisqualifyModal.jsx';
 import CloserScheduleCallbackModal from '../callbacks/CloserScheduleCallbackModal.jsx';
-import {
-  claimLead,
-  sendLeadToCloserPool,
-} from '../../services/lead.service.js';
+import useAuth from '../../hooks/useAuth.hook.js';
+import { handLeadToCloser } from '../../services/lead.service.js';
 import { formatUserRef } from '../../utils/formatUserRef.util.js';
 
 const STATUS_LABEL = {
   with_agent: 'In Progress',
-  pending_closer_claim: 'Pending Closer Claim',
-  in_progress: 'In Progress',
+  with_closer: 'With Closer',
+  pending_closer_claim: 'With Closer',
+  in_progress: 'With Closer',
 };
 
 const STATUS_BADGE = {
   with_agent: 'bg-zinc-500/15 text-zinc-300 ring-1 ring-zinc-500/30',
-  pending_closer_claim:
-    'bg-amber-500/15 text-amber-300 ring-1 ring-amber-500/30',
+  with_closer: 'bg-sky-500/15 text-sky-300 ring-1 ring-sky-500/30',
+  pending_closer_claim: 'bg-sky-500/15 text-sky-300 ring-1 ring-sky-500/30',
   in_progress: 'bg-sky-500/15 text-sky-300 ring-1 ring-sky-500/30',
 };
 
@@ -36,10 +35,8 @@ const formatPkt = (value) => {
 };
 
 /**
- * Active-leads table with close / disqualify / claim actions.
+ * Active-leads table with close / disqualify / handoff actions.
  * Expects backend lists that already exclude closed_sale / disqualified.
- *
- * @param {'default'|'pool'} [mode]
  */
 export default function LeadTable({
   leads = [],
@@ -48,10 +45,10 @@ export default function LeadTable({
   showCreatedBy = false,
   showCloserSchedule = false,
   onViewDetails = null,
-  onClaimed = null,
-  mode = 'default',
   emptyMessage = 'No active leads.',
 }) {
+  const { user } = useAuth();
+  const isCloser = user?.role === 'closer';
   const queryClient = useQueryClient();
   const [actionError, setActionError] = useState('');
   const [actionMessage, setActionMessage] = useState('');
@@ -62,7 +59,7 @@ export default function LeadTable({
   const rows = useMemo(
     () =>
       [...leads]
-        .filter((l) => l.stage !== 'closed_sale')
+        .filter((l) => l.stage !== 'closed_sale' && l.stage !== 'disqualified')
         .sort(
           (a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0)
         ),
@@ -75,49 +72,38 @@ export default function LeadTable({
     }
     queryClient.invalidateQueries({ queryKey: ['myLeads'] });
     queryClient.invalidateQueries({ queryKey: ['assignedLeads'] });
-    queryClient.invalidateQueries({ queryKey: ['closerPool'] });
     queryClient.invalidateQueries({ queryKey: ['allLeads'] });
     queryClient.invalidateQueries({ queryKey: ['myCallbacks'] });
     queryClient.invalidateQueries({ queryKey: ['closerCallbacks'] });
     queryClient.invalidateQueries({ queryKey: ['closerClosedSales'] });
     queryClient.invalidateQueries({ queryKey: ['agentClosedSales'] });
+    queryClient.invalidateQueries({ queryKey: ['closerDisqualified'] });
+    queryClient.invalidateQueries({ queryKey: ['closerTeamAgents'] });
   };
 
-  const claimMutation = useMutation({
-    mutationFn: (id) => claimLead(id),
-    onSuccess: () => {
+  const handOffMutation = useMutation({
+    mutationFn: (id) => handLeadToCloser(id),
+    onSuccess: (_lead, id) => {
       setActionError('');
-      setActionMessage('Lead claimed — it is now In Progress on your list.');
-      invalidate();
-      onClaimed?.();
-    },
-    onError: (err) => {
-      setActionMessage('');
-      setActionError(
-        err?.response?.data?.message || 'Failed to claim lead.'
-      );
-    },
-  });
-
-  const sendToPoolMutation = useMutation({
-    mutationFn: (id) => sendLeadToCloserPool(id),
-    onSuccess: () => {
-      setActionError('');
-      setActionMessage('Lead sent to closer pool.');
+      setActionMessage('Lead handed to closer (Forced Moved).');
+      // Drop from agent list immediately
+      queryClient.setQueryData(['myLeads'], (old) => {
+        if (!Array.isArray(old)) return old;
+        return old.filter((l) => String(l._id) !== String(id));
+      });
       invalidate();
     },
     onError: (err) => {
       setActionMessage('');
       setActionError(
-        err?.response?.data?.message || 'Failed to send lead to closer pool.'
+        err?.response?.data?.message || 'Failed to hand lead to closer.'
       );
     },
   });
 
-  const isPool = mode === 'pool';
-  const showCreator = showCreatedBy || isPool;
-  const sendingId = sendToPoolMutation.isPending
-    ? sendToPoolMutation.variables
+  const showCreator = showCreatedBy;
+  const handingId = handOffMutation.isPending
+    ? handOffMutation.variables
     : null;
 
   return (
@@ -144,10 +130,7 @@ export default function LeadTable({
                 {showCreator ? (
                   <th className="px-4 py-3.5 font-medium">Created By</th>
                 ) : null}
-                {!isPool ? (
-                  <th className="px-4 py-3.5 font-medium">Follow-up (PKT)</th>
-                ) : null}
-                <th className="px-4 py-3.5 font-medium">Notes</th>
+                <th className="px-4 py-3.5 font-medium">Follow-up (PKT)</th>
                 <th className="px-4 py-3.5 font-medium">Actions</th>
               </tr>
             </thead>
@@ -161,9 +144,16 @@ export default function LeadTable({
                 const statusKey = row.status || 'with_agent';
                 const statusClass =
                   STATUS_BADGE[statusKey] || STATUS_BADGE.with_agent;
-                const claiming =
-                  claimMutation.isPending &&
-                  claimMutation.variables === row._id;
+                const autoMoved =
+                  row.escalationType === 'auto' ||
+                  row.escalatedReason === 'Auto Moved' ||
+                  row.escalatedReason === '48h_unclosed_timeout' ||
+                  row.escalatedReason === '24h_unclosed_timeout';
+                const forcedMoved =
+                  row.escalationType === 'forced' ||
+                  row.escalationType === 'manual' ||
+                  row.escalatedReason === 'Forced Moved' ||
+                  row.escalatedReason === 'agent_handoff';
 
                 return (
                   <tr
@@ -171,16 +161,38 @@ export default function LeadTable({
                     data-reminder-row={`followup-${row._id}`}
                     className={[
                       'border-b border-zinc-800/50 last:border-0 transition-colors hover:bg-zinc-800/25',
-                      overdue && !isPool ? 'bg-orange-600/10' : '',
+                      overdue ? 'bg-orange-600/10' : '',
                     ].join(' ')}
                   >
                     <td className="px-4 py-3.5 font-medium text-white">
-                      {row.businessName}
-                      {overdue && !isPool ? (
-                        <span className="ml-2 inline-flex rounded-md bg-orange-500/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-orange-400">
-                          Overdue
-                        </span>
-                      ) : null}
+                      <span className="inline-flex flex-wrap items-center gap-2">
+                        {onViewDetails ? (
+                          <button
+                            type="button"
+                            onClick={() => onViewDetails(row)}
+                            className="cursor-pointer text-left font-medium text-white transition-colors hover:text-orange-400 hover:underline"
+                          >
+                            {row.businessName}
+                          </button>
+                        ) : (
+                          row.businessName
+                        )}
+                        {overdue ? (
+                          <span className="inline-flex rounded-md bg-orange-500/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-orange-400">
+                            Overdue
+                          </span>
+                        ) : null}
+                        {autoMoved && !showEdit ? (
+                          <span className="inline-flex rounded border border-amber-500/20 bg-amber-500/10 px-2 py-0.5 text-xs font-medium text-amber-400">
+                            Auto Moved
+                          </span>
+                        ) : null}
+                        {forcedMoved && !autoMoved && !showEdit ? (
+                          <span className="inline-flex rounded border border-indigo-500/20 bg-indigo-500/10 px-2 py-0.5 text-xs font-medium text-indigo-400">
+                            Forced Moved
+                          </span>
+                        ) : null}
+                      </span>
                     </td>
                     <td className="px-4 py-3.5 whitespace-nowrap">
                       {row.phone}
@@ -212,112 +224,93 @@ export default function LeadTable({
                         )}
                       </td>
                     ) : null}
-                    {!isPool ? (
-                      <td className="px-4 py-3.5 whitespace-nowrap text-zinc-400">
-                        {formatPkt(followAt)}
-                      </td>
-                    ) : null}
-                    <td className="px-4 py-3.5 max-w-xs">
-                      <p className="line-clamp-2 text-zinc-400">
-                        {row.notes || '—'}
-                      </p>
+                    <td className="px-4 py-3.5 whitespace-nowrap text-zinc-400">
+                      {formatPkt(followAt)}
                     </td>
                     <td className="px-4 py-3.5">
-                      <div className="flex flex-wrap gap-2">
-                        {isPool ? (
-                          <button
-                            type="button"
-                            disabled={claiming}
-                            onClick={() => {
-                              setActionError('');
-                              setActionMessage('');
-                              claimMutation.mutate(row._id);
-                            }}
-                            className="cursor-pointer rounded-full bg-orange-600 px-2.5 py-1.5 text-xs font-semibold text-white hover:bg-orange-500 disabled:opacity-60"
-                          >
-                            {claiming ? 'Claiming…' : 'Claim Lead'}
-                          </button>
-                        ) : (
-                          <>
-                            {onViewDetails ? (
-                              <button
-                                type="button"
-                                onClick={() => onViewDetails(row)}
-                                className="cursor-pointer rounded-full border border-zinc-700 px-2.5 py-1.5 text-xs font-semibold text-zinc-300 hover:bg-zinc-800/50"
-                              >
-                                View details
-                              </button>
-                            ) : null}
-                            {showCloserSchedule ? (
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setActionError('');
-                                  setActionMessage('');
-                                  setCloserCallbackTarget(row);
-                                }}
-                                className="cursor-pointer rounded-full border border-sky-400/50 bg-sky-600/25 px-3 py-1.5 text-xs font-semibold text-sky-200 hover:bg-sky-600/40"
-                              >
-                                Add Callback for this Lead
-                              </button>
-                            ) : null}
-                            {showEdit ? (
-                              <>
-                                <Link
-                                  to={`/dashboard/sales-agent/leads/${row._id}/edit`}
-                                  className="cursor-pointer rounded-full border border-zinc-700 px-2.5 py-1.5 text-xs font-semibold text-zinc-300 hover:bg-zinc-800/50"
-                                >
-                                  Edit
-                                </Link>
-                                {statusKey === 'with_agent' ? (
-                                  <button
-                                    type="button"
-                                    disabled={sendingId === row._id}
-                                    onClick={() => {
-                                      setActionError('');
-                                      setActionMessage('');
-                                      sendToPoolMutation.mutate(row._id);
-                                    }}
-                                    className="cursor-pointer rounded-full border border-orange-500/40 bg-orange-600/20 px-2.5 py-1.5 text-xs font-semibold text-orange-200 hover:bg-orange-600/35 disabled:opacity-60"
-                                  >
-                                    {sendingId === row._id
-                                      ? 'Sending…'
-                                      : 'Send to Closer Pool'}
-                                  </button>
-                                ) : null}
-                              </>
-                            ) : null}
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setActionError('');
-                                setActionMessage('');
-                                setCloseTarget(row);
-                              }}
-                              className="cursor-pointer rounded-full bg-emerald-600/90 px-2.5 py-1.5 text-xs font-semibold text-white hover:bg-emerald-500"
-                            >
-                              Move to Closed Sale
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setActionError('');
-                                setActionMessage('');
-                                setDisqualifyTarget(row);
-                              }}
-                              className="cursor-pointer rounded-full border border-red-500/30 px-2.5 py-1.5 text-xs font-semibold text-red-400 hover:bg-red-500/10"
-                            >
-                              Mark Disqualified
-                            </button>
-                          </>
-                        )}
-                        {isPool && onViewDetails ? (
+                      <div className="flex flex-wrap items-center justify-end gap-1.5 sm:flex-nowrap">
+                        {onViewDetails && !showEdit ? (
                           <button
                             type="button"
                             onClick={() => onViewDetails(row)}
-                            className="cursor-pointer rounded-full border border-zinc-700 px-2.5 py-1.5 text-xs font-semibold text-zinc-300 hover:bg-zinc-800/50"
+                            className="cursor-pointer rounded-md border border-zinc-700 px-2.5 py-1 text-xs font-medium text-zinc-300 hover:bg-zinc-800"
                           >
-                            View details
+                            Details
+                          </button>
+                        ) : null}
+                        {showCloserSchedule ? (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setActionError('');
+                              setActionMessage('');
+                              setCloserCallbackTarget(row);
+                            }}
+                            className="cursor-pointer rounded-md border border-sky-500/30 bg-sky-500/10 px-2.5 py-1 text-xs font-medium text-sky-400 hover:bg-sky-500/20"
+                          >
+                            Schedule Callback
+                          </button>
+                        ) : null}
+                        {showEdit ? (
+                          <>
+                            <Link
+                              to={`/dashboard/sales-agent/leads/${row._id}/edit`}
+                              className="cursor-pointer rounded-md border border-zinc-700 px-2.5 py-1 text-xs font-medium text-zinc-300 hover:bg-zinc-800"
+                            >
+                              Edit
+                            </Link>
+                            {statusKey === 'with_agent' ? (
+                              <button
+                                type="button"
+                                disabled={handingId === row._id || !row.closerId}
+                                title={
+                                  !row.closerId
+                                    ? 'Assign a closer on Edit before handing off'
+                                    : 'Hand this lead to the assigned closer now'
+                                }
+                                onClick={() => {
+                                  if (
+                                    !window.confirm(
+                                      `Hand "${row.businessName}" to the assigned closer now?`
+                                    )
+                                  ) {
+                                    return;
+                                  }
+                                  setActionError('');
+                                  setActionMessage('');
+                                  handOffMutation.mutate(row._id);
+                                }}
+                                className="cursor-pointer rounded-md border border-orange-500/30 bg-orange-500/10 px-2.5 py-1 text-xs font-medium text-orange-300 hover:bg-orange-500/20 disabled:opacity-60"
+                              >
+                                {handingId === row._id
+                                  ? 'Sending…'
+                                  : 'Hand to Closer'}
+                              </button>
+                            ) : null}
+                          </>
+                        ) : null}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setActionError('');
+                            setActionMessage('');
+                            setCloseTarget(row);
+                          }}
+                          className="cursor-pointer rounded-md bg-emerald-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-emerald-500"
+                        >
+                          Close Sale
+                        </button>
+                        {isCloser ? (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setActionError('');
+                              setActionMessage('');
+                              setDisqualifyTarget(row);
+                            }}
+                            className="cursor-pointer rounded-md border border-red-500/20 px-2.5 py-1 text-xs font-medium text-red-400 hover:bg-red-500/10"
+                          >
+                            Disqualified
                           </button>
                         ) : null}
                       </div>

@@ -3,14 +3,49 @@ import { enqueueReminderPopup } from '../components/alerts/ReminderPopup.jsx';
 import useAuth from './useAuth.hook.js';
 
 const FIVE_MIN_MS = 5 * 60 * 1000;
-const CATCHUP_WINDOW_MS = 90 * 1000;
+/** Exact due catch-up: fire if overdue by at most 2 minutes. */
+const EXACT_CATCHUP_MS = 2 * 60 * 1000;
+/**
+ * Max setTimeout delay. Browsers store delay as a 32-bit signed int
+ * (~24.8 days); longer values overflow and fire immediately.
+ * Distant callbacks rely on the poll scanner instead.
+ */
+const MAX_TIMEOUT_MS = 12 * 60 * 60 * 1000;
 /** Backup poll — catches timers throttled while the tab was backgrounded. */
 const POLL_MS = 15_000;
+
+/**
+ * Parse trigger to epoch ms. Rejects invalid / NaN timestamps.
+ */
+function parseTriggerMs(triggerAt) {
+  if (triggerAt == null || triggerAt === '') return NaN;
+  const ms = new Date(triggerAt).getTime();
+  return Number.isFinite(ms) ? ms : NaN;
+}
+
+/**
+ * 5-min warning: callback is strictly in the future and within 5 minutes.
+ */
+function isWithinFiveMinuteWindow(triggerMs, now = Date.now()) {
+  const diffMs = triggerMs - now;
+  return diffMs > 0 && diffMs <= FIVE_MIN_MS;
+}
+
+/**
+ * Due-now: callback time has arrived (or just passed within 2 minutes).
+ */
+function isDueNowWindow(triggerMs, now = Date.now()) {
+  const diffMs = triggerMs - now;
+  return diffMs <= 0 && diffMs >= -EXACT_CATCHUP_MS;
+}
 
 /**
  * Schedule 5-minute and exact-time reminder chimes for callbacks / lead follow-ups.
  * Uses setTimeout plus a visibility/poll safety net so alerts still fire when
  * the agent is on another dashboard tab or the browser throttles timers.
+ *
+ * Distant future dates never use setTimeout (overflow would fire instantly);
+ * the poll scanner only fires when the full datetime is within the window.
  */
 export default function useReminderScheduler(items = [], options = {}) {
   const { user } = useAuth();
@@ -56,6 +91,19 @@ export default function useReminderScheduler(items = [], options = {}) {
     const fire = async (item, alertType) => {
       const key = `${item.kind}:${item.id}:${alertType}:${item.triggerAt}`;
       if (firedRef.current.has(key)) return;
+
+      const triggerMs = parseTriggerMs(item.triggerAt);
+      if (Number.isNaN(triggerMs)) return;
+
+      // Final guard — never fire for distant future / wrong calendar day
+      const now = Date.now();
+      if (alertType === 'fiveMin' && !isWithinFiveMinuteWindow(triggerMs, now)) {
+        return;
+      }
+      if (alertType === 'exact' && !isDueNowWindow(triggerMs, now)) {
+        return;
+      }
+
       firedRef.current.add(key);
 
       try {
@@ -83,7 +131,7 @@ export default function useReminderScheduler(items = [], options = {}) {
       }
     };
 
-    const maybeFire = (item, alertType, targetMs, alreadyFired) => {
+    const schedule = (item, alertType, targetMs, alreadyFired) => {
       if (alreadyFired) {
         firedRef.current.add(
           `${item.kind}:${item.id}:${alertType}:${item.triggerAt}`
@@ -97,26 +145,12 @@ export default function useReminderScheduler(items = [], options = {}) {
       const now = Date.now();
       const delta = targetMs - now;
 
-      if (delta > 0) return;
-
-      // Catch-up: fire if we are within the window after the target
-      if (delta >= -CATCHUP_WINDOW_MS) {
-        fire(item, alertType);
-      }
-    };
-
-    const schedule = (item, alertType, targetMs, alreadyFired) => {
-      if (alreadyFired) {
-        firedRef.current.add(
-          `${item.kind}:${item.id}:${alertType}:${item.triggerAt}`
-        );
-        return;
-      }
-
-      const now = Date.now();
-      const delta = targetMs - now;
-
+      // Still in the future: only arm setTimeout for near-term targets
       if (delta > 0) {
+        if (delta > MAX_TIMEOUT_MS) {
+          // Too far out — poll will pick it up when the window opens
+          return;
+        }
         const timerId = setTimeout(() => {
           fire(item, alertType);
         }, delta);
@@ -124,29 +158,33 @@ export default function useReminderScheduler(items = [], options = {}) {
         return;
       }
 
-      if (delta >= -CATCHUP_WINDOW_MS) {
-        fire(item, alertType);
-      }
+      // Target already passed — only fire if still inside the live window
+      fire(item, alertType);
     };
 
     const scanAll = () => {
       const live = itemsRef.current || [];
+      const now = Date.now();
+
       for (const item of live) {
         if (!item?.id || !item?.triggerAt) continue;
         const notifyIds = (item.notifyUserIds || []).map(String);
         if (!notifyIds.includes(currentUserId)) continue;
 
-        const triggerAt = new Date(item.triggerAt).getTime();
+        const triggerAt = parseTriggerMs(item.triggerAt);
         if (Number.isNaN(triggerAt)) continue;
 
         const alerts = item.alerts || {};
-        maybeFire(
-          item,
-          'fiveMin',
-          triggerAt - FIVE_MIN_MS,
-          Boolean(alerts.fiveMinFired)
-        );
-        maybeFire(item, 'exact', triggerAt, Boolean(alerts.exactTimeFired));
+
+        if (
+          !alerts.fiveMinFired &&
+          isWithinFiveMinuteWindow(triggerAt, now)
+        ) {
+          fire(item, 'fiveMin');
+        }
+        if (!alerts.exactTimeFired && isDueNowWindow(triggerAt, now)) {
+          fire(item, 'exact');
+        }
       }
     };
 
@@ -156,7 +194,7 @@ export default function useReminderScheduler(items = [], options = {}) {
       const notifyIds = (item.notifyUserIds || []).map(String);
       if (!notifyIds.includes(currentUserId)) continue;
 
-      const triggerAt = new Date(item.triggerAt).getTime();
+      const triggerAt = parseTriggerMs(item.triggerAt);
       if (Number.isNaN(triggerAt)) continue;
 
       const fiveMinBefore = triggerAt - FIVE_MIN_MS;
@@ -180,6 +218,9 @@ export default function useReminderScheduler(items = [], options = {}) {
       if (document.visibilityState === 'visible') scanAll();
     };
     document.addEventListener('visibilitychange', onVisible);
+
+    // Immediate scan for anything already in-window (without arming overflow timers)
+    scanAll();
 
     return () => {
       for (const timerId of timers) clearTimeout(timerId);

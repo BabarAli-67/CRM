@@ -1,8 +1,10 @@
 import asyncHandler from '../utils/asyncHandler.util.js';
 import { ApiError } from '../utils/apiError.util.js';
 import { ApiResponse } from '../utils/apiResponse.util.js';
+import mongoose from 'mongoose';
 import Callback from '../models/callback.model.js';
 import Lead from '../models/lead.model.js';
+import User from '../models/user.model.js';
 import { healStaleAgentCallbacks } from '../utils/callbackResolve.util.js';
 
 const isOwnerOrSuperAdmin = (callback, user) => {
@@ -10,9 +12,31 @@ const isOwnerOrSuperAdmin = (callback, user) => {
   return callback.agentId.toString() === user._id.toString();
 };
 
+const resolveApprovedCloser = async (closerId) => {
+  if (!closerId) {
+    throw new ApiError(400, 'Assign Closer is required');
+  }
+  const closer = await User.findOne({
+    _id: closerId,
+    role: 'closer',
+    status: 'approved',
+  }).select('_id fullName username role');
+  if (!closer) {
+    throw new ApiError(400, 'Selected closer is invalid or inactive');
+  }
+  return closer;
+};
+
 export const createCallback = asyncHandler(async (req, res) => {
-  const { businessName, phone, businessLink, callbackAt, notes, leadId } =
-    req.body;
+  const {
+    businessName,
+    phone,
+    businessLink,
+    callbackAt,
+    notes,
+    leadId,
+    assignedCloserId,
+  } = req.body;
 
   if (!callbackAt) {
     throw new ApiError(400, 'callbackAt is required');
@@ -62,6 +86,12 @@ export const createCallback = asyncHandler(async (req, res) => {
     );
   }
 
+  // Prefer explicit body; fall back to linked lead's pre-assigned closer
+  const closerSource =
+    assignedCloserId ||
+    (lead?.closerId ? String(lead.closerId) : null);
+  const closer = await resolveApprovedCloser(closerSource);
+
   const callback = await Callback.create({
     businessName: resolvedName,
     phone: resolvedPhone,
@@ -70,6 +100,7 @@ export const createCallback = asyncHandler(async (req, res) => {
     notes: notes || null,
     agentId: req.user._id,
     leadId: linkedLeadId,
+    assignedCloserId: closer._id,
   });
 
   // Keep lead Follow-up (PKT) column in sync when scheduling from a lead
@@ -118,8 +149,9 @@ export const getMyCallbacks = asyncHandler(async (req, res) => {
   const callbacks = await Callback.find(filter)
     .populate(
       'leadId',
-      'businessName phone websiteLink status stage agentId'
+      'businessName phone websiteLink status stage agentId closerId'
     )
+    .populate('assignedCloserId', 'fullName username role')
     .sort({ callbackAt: 1 });
 
   // Safety filter: only with_agent active leads (or standalone callbacks)
@@ -186,12 +218,23 @@ export const updateCallback = asyncHandler(async (req, res) => {
     throw new ApiError(403, 'You can only update your own callbacks');
   }
 
-  const { businessName, phone, businessLink, callbackAt, notes, status } =
-    req.body;
+  const {
+    businessName,
+    phone,
+    businessLink,
+    callbackAt,
+    notes,
+    status,
+    assignedCloserId,
+  } = req.body;
 
   if (businessName !== undefined) callback.businessName = businessName;
   if (phone !== undefined) callback.phone = phone;
   if (businessLink !== undefined) callback.businessLink = businessLink;
+  if (assignedCloserId !== undefined) {
+    const closer = await resolveApprovedCloser(assignedCloserId);
+    callback.assignedCloserId = closer._id;
+  }
   if (callbackAt !== undefined) {
     callback.callbackAt = new Date(callbackAt);
     // Reschedule clears prior alert firings so reminders can fire for the new time
@@ -322,12 +365,21 @@ export const promoteCallback = asyncHandler(async (req, res) => {
     throw new ApiError(400, 'Callback has already been promoted');
   }
 
+  // Allow last-minute reassignment from the Promote modal
+  const closerSource =
+    req.body?.assignedCloserId ||
+    req.body?.closerId ||
+    callback.assignedCloserId;
+  const closer = await resolveApprovedCloser(closerSource);
+  callback.assignedCloserId = closer._id;
+
   const lead = await Lead.create({
     businessName: callback.businessName,
     phone: callback.phone,
     websiteLink: callback.businessLink,
     notes: callback.notes,
     agentId: callback.agentId,
+    closerId: closer._id,
     sourceCallbackId: callback._id,
   });
 
@@ -343,7 +395,7 @@ export const promoteCallback = asyncHandler(async (req, res) => {
 /* ─── Closer callbacks (isolated from sales-agent flows) ─── */
 
 /**
- * Closers schedule against a claimed lead OR as a standalone direct callback.
+ * Closers schedule against an assigned lead OR as a standalone direct callback.
  * Standalone: businessName + phone + callbackAt (leadId null).
  */
 export const createCloserCallback = asyncHandler(async (req, res) => {
@@ -373,13 +425,13 @@ export const createCloserCallback = asyncHandler(async (req, res) => {
       _id: leadId,
       closerId: req.user._id,
       stage: 'active',
-      status: 'in_progress',
+      status: { $in: ['with_closer', 'in_progress'] },
     });
 
     if (!lead) {
       throw new ApiError(
         404,
-        'Lead not found, not claimed by you, or no longer active.'
+        'Lead not found, not assigned to you, or no longer active.'
       );
     }
 
@@ -408,6 +460,10 @@ export const createCloserCallback = asyncHandler(async (req, res) => {
     agentId: lead?.agentId || null,
     leadId: linkedLeadId,
     status: 'pending',
+    alerts: {
+      fiveMinFired: false,
+      exactTimeFired: false,
+    },
   });
 
   if (lead) {
@@ -593,7 +649,87 @@ export const markCloserAlert = asyncHandler(async (req, res) => {
     throw new ApiError(404, 'Callback not found for your account.');
   }
 
+  // Keep linked lead follow-up phase flags in sync (never flip both at once)
+  if (callback.leadId && Object.keys($set).length > 0) {
+    const leadSet = {};
+    if (typeof fiveMinFired === 'boolean') {
+      leadSet['followUp.alerts.fiveMinFired'] = fiveMinFired;
+    }
+    if (typeof exactTimeFired === 'boolean') {
+      leadSet['followUp.alerts.exactTimeFired'] = exactTimeFired;
+    }
+    if (Object.keys(leadSet).length > 0) {
+      await Lead.updateOne(
+        {
+          _id: callback.leadId,
+          closerId: req.user._id,
+          stage: 'active',
+          'followUp.callbackAt': { $exists: true },
+        },
+        { $set: leadSet }
+      );
+    }
+  }
+
   res
     .status(200)
     .json(new ApiResponse(200, { callback }, 'Closer callback alert flags updated'));
+});
+
+/**
+ * Read-only team agenda: an agent's scheduled callbacks tagged to this closer.
+ * Returns rows shaped for BUSINESS / WEBSITE / EMAIL / SCHEDULED TIME (PKT).
+ */
+export const getCloserTeamAgentCallbacks = asyncHandler(async (req, res) => {
+  const closerId = req.user._id;
+  const { agentId } = req.params;
+
+  if (!agentId || !mongoose.Types.ObjectId.isValid(agentId)) {
+    throw new ApiError(400, 'Valid agentId is required');
+  }
+
+  // Leads this closer owns that belong to the selected agent
+  const linkedLeadIds = await Lead.find({
+    closerId,
+    agentId,
+  }).distinct('_id');
+
+  const callbacks = await Callback.find({
+    agentId,
+    status: { $in: ['pending', 'attended'] },
+    $or: [
+      { assignedCloserId: closerId },
+      ...(linkedLeadIds.length ? [{ leadId: { $in: linkedLeadIds } }] : []),
+    ],
+  })
+    .populate('leadId', 'businessName websiteLink workEmail personalEmail')
+    .sort({ callbackAt: 1 })
+    .lean();
+
+  const rows = callbacks.map((cb) => {
+    const lead = cb.leadId && typeof cb.leadId === 'object' ? cb.leadId : null;
+    const email =
+      lead?.workEmail ||
+      lead?.personalEmail ||
+      null;
+    const website =
+      cb.businessLink ||
+      lead?.websiteLink ||
+      null;
+
+    return {
+      _id: cb._id,
+      businessName: cb.businessName || lead?.businessName || '—',
+      websiteLink: website,
+      email,
+      callbackAt: cb.callbackAt,
+      status: cb.status,
+    };
+  });
+
+  res
+    .status(200)
+    .json(
+      new ApiResponse(200, { callbacks: rows }, 'Team agent callbacks retrieved')
+    );
 });

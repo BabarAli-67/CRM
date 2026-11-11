@@ -5,22 +5,24 @@ import {
   createLead,
   getMyLeads,
   getAssignedLeads,
-  getCloserPool,
   getCloserClosedSales,
+  getCloserDisqualifiedLeads,
+  getCloserTeamAgents,
   getMyClosedSales,
-  sendLeadToCloserPool,
-  claimLead,
+  handLeadToCloser,
   moveLeadToCst,
   getAllLeads,
   getLeadById,
   updateLead,
   disqualifyLead,
+  deleteLeadPermanently,
   setFollowUp,
   markFollowUpAlert,
   closeLead,
 } from '../controllers/lead.controller.js';
 import { closeLeadValidator } from '../utils/validators.util.js';
 import { validate } from '../middlewares/validate.middleware.js';
+import cstHandoverUpload from '../middlewares/cstHandoverUpload.middleware.js';
 
 const router = Router();
 
@@ -35,28 +37,39 @@ router.get('/mine/closed', restrictTo('sales_agent'), getMyClosedSales);
 
 router.get('/assigned-to-me', restrictTo('closer'), getAssignedLeads);
 
-router.get('/closer-pool', restrictTo('closer'), getCloserPool);
-
 router.get('/closer-closed', restrictTo('closer'), getCloserClosedSales);
 
-router.patch(
-  '/:id/send-to-pool',
-  restrictTo('sales_agent'),
-  blockReadOnlyAdmin,
-  sendLeadToCloserPool
+router.get(
+  '/closer-disqualified',
+  restrictTo('closer'),
+  getCloserDisqualifiedLeads
 );
 
+router.get('/closer-team', restrictTo('closer'), getCloserTeamAgents);
+
 router.patch(
-  '/:id/claim',
-  restrictTo('closer'),
+  '/:id/hand-to-closer',
+  restrictTo('sales_agent'),
   blockReadOnlyAdmin,
-  claimLead
+  handLeadToCloser
 );
 
 router.patch(
   '/:id/move-to-cst',
   restrictTo('closer', 'super_admin'),
   blockReadOnlyAdmin,
+  (req, res, next) => {
+    cstHandoverUpload.single('signedDocument')(req, res, (err) => {
+      if (err) {
+        return next(
+          err.statusCode
+            ? err
+            : Object.assign(err, { statusCode: 400 })
+        );
+      }
+      return next();
+    });
+  },
   moveLeadToCst
 );
 
@@ -100,6 +113,13 @@ router.patch(
   restrictTo('sales_agent', 'closer', 'super_admin'),
   blockReadOnlyAdmin,
   disqualifyLead
+);
+
+router.delete(
+  '/:id',
+  restrictTo('closer', 'super_admin'),
+  blockReadOnlyAdmin,
+  deleteLeadPermanently
 );
 
 router.patch(

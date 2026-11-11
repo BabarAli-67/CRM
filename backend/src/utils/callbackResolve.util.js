@@ -1,7 +1,7 @@
 import Callback from '../models/callback.model.js';
 
 /** Statuses that still appear on an agent's active agenda / reminders. */
-export const ACTIVE_CALLBACK_STATUSES = ['pending'];
+export const ACTIVE_CALLBACK_STATUSES = ['pending', 'attended'];
 
 /**
  * Resolve all open callbacks for a lead so agents stop seeing reminders.

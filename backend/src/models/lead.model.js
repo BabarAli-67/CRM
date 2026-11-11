@@ -76,15 +76,49 @@ const leadSchema = new mongoose.Schema(
       trim: true,
     },
     /**
-     * Closer pool pipeline (stage stays `active` until closed/disqualified).
-     * with_agent → agent working; pending_closer_claim → unassigned pool;
-     * in_progress → claimed by a closer.
+     * Active pipeline (stage stays `active` until closed/disqualified).
+     * with_agent → agent working (closer pre-assigned via closerId);
+     * with_closer → handed/escalated to the assigned closer.
+     * Legacy: pending_closer_claim / in_progress kept for older documents.
      */
     status: {
       type: String,
-      enum: ['with_agent', 'pending_closer_claim', 'in_progress'],
+      enum: [
+        'with_agent',
+        'with_closer',
+        'pending_closer_claim',
+        'in_progress',
+      ],
       default: 'with_agent',
       index: true,
+    },
+    /**
+     * @deprecated 24h escalation uses immutable `createdAt` only.
+     * Kept nullable so Mongoose never injects Date.now on find/read.
+     */
+    lastAgentActivityAt: {
+      type: Date,
+      default: null,
+    },
+    escalatedAt: {
+      type: Date,
+      default: null,
+    },
+    /** When agent/closer handoff completed (manual force or auto escalate). */
+    handedOverAt: {
+      type: Date,
+      default: null,
+    },
+    /** 'auto' = 24h timeout; 'forced' = agent Hand to Closer */
+    escalationType: {
+      type: String,
+      enum: ['auto', 'forced', 'manual'],
+      default: null,
+    },
+    escalatedReason: {
+      type: String,
+      default: null,
+      trim: true,
     },
     sourceCallbackId: {
       type: mongoose.Schema.Types.ObjectId,
@@ -215,6 +249,37 @@ const leadSchema = new mongoose.Schema(
           default: null,
           trim: true,
         },
+        /** Closer confirmed signed document at CST handoff. */
+        documentSigned: {
+          type: Boolean,
+          default: null,
+        },
+        /** Uploaded signed document (when documentSigned is true). */
+        signedDocument: {
+          type: {
+            originalName: { type: String, default: null },
+            storedFilename: { type: String, default: null },
+            mimeType: { type: String, default: null },
+            sizeBytes: { type: Number, default: null },
+            relativePath: { type: String, default: null },
+          },
+          default: undefined,
+        },
+        /** Upsell / upscale captured at CST handoff. */
+        upscale: {
+          type: {
+            enabled: { type: Boolean, default: false },
+            itemName: { type: String, default: null, trim: true },
+            price: { type: Number, default: null },
+          },
+          default: undefined,
+        },
+        /** Free-text context for CST (visible for both upscale yes/no). */
+        upscaleNotes: {
+          type: String,
+          default: null,
+          trim: true,
+        },
         /** Tech execution progress (mirrors assigned → in_progress → completed). */
         techStatus: {
           type: String,
@@ -254,5 +319,6 @@ leadSchema.index({ closerId: 1, stage: 1 });
 leadSchema.index({ status: 1, stage: 1, closerId: 1 });
 leadSchema.index({ 'followUp.callbackAt': 1 });
 leadSchema.index({ 'handover.assignedTechId': 1, 'handover.cstStatus': 1 });
+leadSchema.index({ status: 1, createdAt: 1 });
 
 export default mongoose.model('Lead', leadSchema);

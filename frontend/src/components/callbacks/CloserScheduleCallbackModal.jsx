@@ -20,11 +20,16 @@ const todayDateValue = () => {
 const splitDateTime = (value) => {
   const d = value ? new Date(value) : new Date();
   if (Number.isNaN(d.getTime())) {
+    const now = new Date();
+    let h24 = now.getHours();
+    const period = h24 >= 12 ? 'PM' : 'AM';
+    let h12 = h24 % 12;
+    if (h12 === 0) h12 = 12;
     return {
       date: todayDateValue(),
-      hour: '09',
-      minute: '00',
-      period: 'AM',
+      hour: pad(h12),
+      minute: pad(now.getMinutes()),
+      period,
     };
   }
 
@@ -40,6 +45,9 @@ const splitDateTime = (value) => {
     period,
   };
 };
+
+/** Default date/time = now (local), used for clean Add Callback opens. */
+const nowDateTimeParts = () => splitDateTime(new Date());
 
 /** Combine local date + 12h clock into an ISO timestamp. */
 const toIsoTimestamp = ({ date, hour, minute, period }) => {
@@ -62,6 +70,13 @@ const fieldClass =
   'w-full rounded-lg border border-zinc-700/80 bg-zinc-950 px-3 py-2.5 text-sm text-zinc-100 outline-none transition focus:border-orange-500/50 focus:ring-2 focus:ring-orange-500/20';
 
 const selectClass = `${fieldClass} appearance-none cursor-pointer`;
+
+const blankContact = () => ({
+  businessName: '',
+  phone: '',
+  notes: '',
+  selectedLeadId: '',
+});
 
 /**
  * Closer-only schedule / reschedule modal.
@@ -92,35 +107,52 @@ export default function CloserScheduleCallbackModal({
   const [period, setPeriod] = useState('AM');
   const [notes, setNotes] = useState('');
   const [error, setError] = useState('');
+  /** Bumps on open / tab change so controlled inputs remount cleanly. */
+  const [formKey, setFormKey] = useState(0);
 
   const selectedLead = useMemo(() => {
     if (lockedLead) return lockedLead;
     if (isReschedule) return null;
     if (sourceMode !== 'claimed' || !selectedLeadId) return null;
-    return claimedLeads.find((l) => l._id === selectedLeadId) || null;
+    return claimedLeads.find((l) => String(l._id) === String(selectedLeadId)) || null;
   }, [lockedLead, isReschedule, sourceMode, selectedLeadId, claimedLeads]);
 
-  useEffect(() => {
-    if (!open) return;
-    setError('');
-
-    const sourceAt = callback?.callbackAt || lead?.followUp?.callbackAt;
-    const parts = splitDateTime(sourceAt);
+  const applyDateTime = (parts) => {
     setDate(parts.date);
     setHour(parts.hour);
     setMinute(parts.minute);
     setPeriod(parts.period);
-    setNotes(callback?.notes || '');
+  };
+
+  const clearContactFields = () => {
+    const blank = blankContact();
+    setBusinessName(blank.businessName);
+    setPhone(blank.phone);
+    setNotes(blank.notes);
+    setSelectedLeadId(blank.selectedLeadId);
+  };
+
+  // Reset every time the modal opens (or locked lead / reschedule target changes)
+  useEffect(() => {
+    if (!open) return;
+    setError('');
+    setFormKey((k) => k + 1);
 
     if (callback?._id) {
-      setBusinessName(callback?.businessName || '');
-      setPhone(callback?.phone || '');
+      const parts = splitDateTime(callback.callbackAt);
+      applyDateTime(parts);
+      setNotes(callback.notes || '');
+      setBusinessName(callback.businessName || '');
+      setPhone(callback.phone || '');
       setSourceMode('manual');
       setSelectedLeadId('');
       return;
     }
 
     if (lead && !allowStandalone) {
+      const parts = splitDateTime(lead.followUp?.callbackAt);
+      applyDateTime(parts);
+      setNotes('');
       setBusinessName(lead.businessName || '');
       setPhone(lead.phone || '');
       setSourceMode('claimed');
@@ -128,28 +160,37 @@ export default function CloserScheduleCallbackModal({
       return;
     }
 
-    // Standalone / flexible entry from My Callbacks
-    const hasClaimed = claimedLeads.length > 0;
-    setSourceMode(hasClaimed ? 'claimed' : 'manual');
-    setSelectedLeadId(hasClaimed ? claimedLeads[0]._id : '');
-    if (hasClaimed) {
-      setBusinessName(claimedLeads[0].businessName || '');
-      setPhone(claimedLeads[0].phone || '');
-    } else {
-      setBusinessName('');
-      setPhone('');
-    }
-    // Only re-init when the dialog opens (or the locked lead / callback target changes).
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- claimedLeads snapshot at open time
+    // Standalone Add Callback — always start clean (no auto-picked lead)
+    applyDateTime(nowDateTimeParts());
+    clearContactFields();
+    setSourceMode('manual');
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reset only on open / target change
   }, [open, lead?._id, callback?._id, allowStandalone]);
 
+  // When a claimed lead is explicitly selected, fill contact from that lead only
   useEffect(() => {
     if (!open || lockedLead || isReschedule) return;
-    if (sourceMode === 'claimed' && selectedLead) {
-      setBusinessName(selectedLead.businessName || '');
-      setPhone(selectedLead.phone || '');
+    if (sourceMode !== 'claimed') return;
+    if (!selectedLead) {
+      setBusinessName('');
+      setPhone('');
+      return;
     }
+    setBusinessName(selectedLead.businessName || '');
+    setPhone(selectedLead.phone || '');
   }, [open, lockedLead, isReschedule, sourceMode, selectedLead]);
+
+  const switchSourceMode = (mode) => {
+    if (mode === sourceMode) return;
+    setError('');
+    setSourceMode(mode);
+    setFormKey((k) => k + 1);
+    applyDateTime(nowDateTimeParts());
+    setNotes('');
+    setSelectedLeadId('');
+    setBusinessName('');
+    setPhone('');
+  };
 
   const previewLabel = useMemo(() => {
     if (!date) return '';
@@ -196,7 +237,9 @@ export default function CloserScheduleCallbackModal({
   if (!allowStandalone && !lockedLead && !isReschedule) return null;
 
   const contactReadOnly =
-    isReschedule || Boolean(lockedLead) || (sourceMode === 'claimed' && selectedLead);
+    isReschedule ||
+    Boolean(lockedLead) ||
+    (sourceMode === 'claimed' && Boolean(selectedLead));
 
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -222,9 +265,22 @@ export default function CloserScheduleCallbackModal({
       return;
     }
 
-    if (lockedLead?._id || (sourceMode === 'claimed' && selectedLead?._id)) {
+    if (lockedLead?._id) {
       mutation.mutate({
-        leadId: lockedLead?._id || selectedLead._id,
+        leadId: lockedLead._id,
+        callbackAt: iso,
+        notes: notes.trim() || null,
+      });
+      return;
+    }
+
+    if (sourceMode === 'claimed') {
+      if (!selectedLead?._id) {
+        setError('Select a claimed lead, or switch to Direct contact.');
+        return;
+      }
+      mutation.mutate({
+        leadId: selectedLead._id,
         callbackAt: iso,
         notes: notes.trim() || null,
       });
@@ -276,13 +332,17 @@ export default function CloserScheduleCallbackModal({
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-5 px-5 py-5">
+        <form
+          key={`${open}-${sourceMode}-${formKey}`}
+          onSubmit={handleSubmit}
+          className="space-y-5 px-5 py-5"
+        >
           {allowStandalone && !isReschedule && !lockedLead ? (
             <div className="space-y-3">
               <div className="flex overflow-hidden rounded-lg border border-zinc-700/80 bg-zinc-950 p-0.5">
                 <button
                   type="button"
-                  onClick={() => setSourceMode('claimed')}
+                  onClick={() => switchSourceMode('claimed')}
                   disabled={claimedLeads.length === 0}
                   className={`flex-1 rounded-md px-2 py-2 text-xs font-semibold transition disabled:cursor-not-allowed disabled:opacity-40 ${
                     sourceMode === 'claimed'
@@ -290,28 +350,25 @@ export default function CloserScheduleCallbackModal({
                       : 'text-zinc-400 hover:text-zinc-200'
                   }`}
                 >
-                  Claimed lead
+                  Claimed Leads
                 </button>
                 <button
                   type="button"
-                  onClick={() => {
-                    setSourceMode('manual');
-                    setSelectedLeadId('');
-                  }}
+                  onClick={() => switchSourceMode('manual')}
                   className={`flex-1 rounded-md px-2 py-2 text-xs font-semibold transition ${
                     sourceMode === 'manual'
                       ? 'bg-orange-600 text-white shadow-sm'
                       : 'text-zinc-400 hover:text-zinc-200'
                   }`}
                 >
-                  Direct contact
+                  Direct Contact
                 </button>
               </div>
 
               {sourceMode === 'claimed' ? (
                 claimedLeads.length === 0 ? (
                   <p className="rounded-xl border border-zinc-800 bg-zinc-950/60 px-3.5 py-3 text-sm text-zinc-500">
-                    No claimed leads — switch to Direct contact to schedule
+                    No claimed leads — switch to Direct Contact to schedule
                     anyway.
                   </p>
                 ) : (
@@ -322,6 +379,7 @@ export default function CloserScheduleCallbackModal({
                       onChange={(e) => setSelectedLeadId(e.target.value)}
                       className={selectClass}
                     >
+                      <option value="">Choose a lead…</option>
                       {claimedLeads.map((l) => (
                         <option key={l._id} value={l._id}>
                           {l.businessName} · {l.phone}
@@ -338,7 +396,7 @@ export default function CloserScheduleCallbackModal({
             <div className="rounded-xl border border-zinc-800 bg-zinc-950/60 px-3.5 py-3">
               <p className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500">
                 {callback && !callback.leadId && isReschedule
-                  ? 'Direct contact'
+                  ? 'Direct Contact'
                   : 'Lead / Business Name'}
               </p>
               <p className="mt-1 font-medium text-white">
@@ -348,6 +406,10 @@ export default function CloserScheduleCallbackModal({
                 {(selectedLead || lockedLead || callback)?.phone}
               </p>
             </div>
+          ) : sourceMode === 'claimed' && allowStandalone && !lockedLead && !isReschedule ? (
+            <p className="rounded-xl border border-dashed border-zinc-700 bg-zinc-950/40 px-3.5 py-3 text-sm text-zinc-500">
+              Select a claimed lead above to load business name and phone.
+            </p>
           ) : (
             <div className="space-y-4">
               <label className="block space-y-1.5 text-sm text-zinc-300">

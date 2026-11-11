@@ -42,8 +42,8 @@ export default function LeadEditPage() {
                 state: {
                   toast:
                     meta?.toastMessage ||
-                    (meta?.sentToPool
-                      ? 'Lead sent to closer pool.'
+                    (meta?.handedOff
+                      ? 'Lead handed to assigned closer.'
                       : 'Lead saved.'),
                 },
               });

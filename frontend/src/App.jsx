@@ -12,7 +12,6 @@ import MyCallbacksPage from './pages/sales-agent/MyCallbacksPage.jsx';
 import MyLeadsPage from './pages/sales-agent/MyLeadsPage.jsx';
 import LeadCreatePage from './pages/sales-agent/LeadCreatePage.jsx';
 import LeadEditPage from './pages/sales-agent/LeadEditPage.jsx';
-import ClosedSalesPage from './pages/sales-agent/ClosedSalesPage.jsx';
 import AssignedLeadsPage from './pages/closer/AssignedLeadsPage.jsx';
 import CloserMyCallbacksPage from './pages/closer/CloserMyCallbacksPage.jsx';
 import CloserDashboardPage from './pages/CloserDashboard.page.jsx';
@@ -107,14 +106,6 @@ function App() {
         element={
           <RoleRoute allowedRoles={['sales_agent']}>
             <LeadEditPage />
-          </RoleRoute>
-        }
-      />
-      <Route
-        path="/dashboard/sales-agent/closed-sales"
-        element={
-          <RoleRoute allowedRoles={['sales_agent']}>
-            <ClosedSalesPage />
           </RoleRoute>
         }
       />

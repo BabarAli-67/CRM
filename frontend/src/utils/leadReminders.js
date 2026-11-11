@@ -1,8 +1,8 @@
 /**
  * Map active leads with follow-ups into useReminderScheduler items.
  * Agents only get reminders for leads still with them (with_agent).
- * Closers get reminders for assigned in_progress leads.
- * Excludes closed_sale / disqualified / closer-pool leads.
+ * Closers get reminders for leads handed to them (with_closer).
+ * Excludes closed_sale / disqualified.
  */
 export function buildLeadFollowUpReminders(leads, currentUserId, options = {}) {
   const { role } = options;
@@ -22,14 +22,14 @@ export function buildLeadFollowUpReminders(leads, currentUserId, options = {}) {
 
       if (role === 'closer') {
         return (
-          lead.status === 'in_progress' &&
+          (lead.status === 'with_closer' || lead.status === 'in_progress') &&
           String(lead.closerId?._id || lead.closerId || '') ===
             String(currentUserId || '')
         );
       }
 
-      // Default: any active lead with a follow-up (legacy callers)
-      return lead.status !== 'pending_closer_claim';
+      // Default: any active lead still with agent or closer
+      return lead.status === 'with_agent' || lead.status === 'with_closer';
     })
     .map((lead) => {
       const agentId = lead.agentId?._id || lead.agentId;

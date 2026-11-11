@@ -1,14 +1,17 @@
 import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
+import AgentLeadProfileDrawer from '../../components/leads/AgentLeadProfileDrawer.jsx';
 import LeadTable from '../../components/leads/LeadTable.jsx';
 import SalesAgentShell from '../../components/sales-agent/SalesAgentShell.jsx';
-import { getMyLeads } from '../../services/lead.service.js';
+import { getLeadById, getMyLeads } from '../../services/lead.service.js';
 
 export default function MyLeadsPage() {
   const location = useLocation();
   const navigate = useNavigate();
   const [toast, setToast] = useState('');
+  const [profileLeadId, setProfileLeadId] = useState(null);
+  const [profileStub, setProfileStub] = useState(null);
 
   const {
     data: leads = [],
@@ -19,6 +22,17 @@ export default function MyLeadsPage() {
     queryKey: ['myLeads'],
     queryFn: getMyLeads,
     refetchInterval: 30_000,
+  });
+
+  const {
+    data: profileLead,
+    isLoading: profileLoading,
+    isFetching: profileFetching,
+  } = useQuery({
+    queryKey: ['lead', profileLeadId],
+    queryFn: () => getLeadById(profileLeadId),
+    enabled: Boolean(profileLeadId),
+    staleTime: 0,
   });
 
   useEffect(() => {
@@ -34,6 +48,16 @@ export default function MyLeadsPage() {
     const id = window.setTimeout(() => setToast(''), 3200);
     return () => window.clearTimeout(id);
   }, [toast]);
+
+  const openProfile = (row) => {
+    setProfileStub(row);
+    setProfileLeadId(row._id);
+  };
+
+  const closeProfile = () => {
+    setProfileLeadId(null);
+    setProfileStub(null);
+  };
 
   return (
     <SalesAgentShell title="My Leads">
@@ -54,8 +78,7 @@ export default function MyLeadsPage() {
               Active leads
             </h2>
             <p className="mt-1 text-sm text-zinc-400">
-              Full intake · optional callback · send ready leads to the closer
-              pool
+              Full intake · assign closer · auto-routes after 24 hours
             </p>
           </div>
           <Link
@@ -77,10 +100,18 @@ export default function MyLeadsPage() {
             leads={leads}
             listQueryKey={['myLeads']}
             showEdit
+            onViewDetails={openProfile}
             emptyMessage="No active leads. Promote a callback or create a lead."
           />
         )}
       </section>
+
+      <AgentLeadProfileDrawer
+        open={Boolean(profileLeadId)}
+        lead={profileLead || profileStub}
+        loading={profileLoading || profileFetching}
+        onClose={closeProfile}
+      />
     </SalesAgentShell>
   );
 }

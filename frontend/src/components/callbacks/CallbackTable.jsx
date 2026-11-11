@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { promoteCallback } from '../../services/callback.service.js';
+import PromoteToLeadModal from './PromoteToLeadModal.jsx';
 
 const formatPkt = (value) => {
   if (!value) return '—';
@@ -22,12 +23,15 @@ export const leadEditPath = (leadId) =>
 export default function CallbackTable({ callbacks = [], onEdit = null }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const [promoteTarget, setPromoteTarget] = useState(null);
   const [promoteError, setPromoteError] = useState('');
 
   const promoteMutation = useMutation({
-    mutationFn: (callbackId) => promoteCallback(callbackId),
+    mutationFn: ({ callbackId, assignedCloserId }) =>
+      promoteCallback(callbackId, { assignedCloserId }),
     onSuccess: (lead) => {
       setPromoteError('');
+      setPromoteTarget(null);
       queryClient.invalidateQueries({ queryKey: ['myCallbacks'] });
       queryClient.invalidateQueries({ queryKey: ['myLeads'] });
       if (lead?._id) {
@@ -50,9 +54,6 @@ export default function CallbackTable({ callbacks = [], onEdit = null }) {
   );
 
   const now = Date.now();
-  const promotingId = promoteMutation.isPending
-    ? promoteMutation.variables
-    : null;
 
   if (rows.length === 0) {
     return (
@@ -90,10 +91,12 @@ export default function CallbackTable({ callbacks = [], onEdit = null }) {
                 row.status === 'attended' || row.status === 'completed';
               const overdue =
                 isPending && !Number.isNaN(at) && at < now;
-              const isPromoting = promotingId === row._id;
               const linkedLeadId = row.leadId?._id || row.leadId || null;
+              // Allow edit/reschedule for pending + attended (not promoted)
               const canEdit =
-                isPending && typeof onEdit === 'function';
+                typeof onEdit === 'function' &&
+                (isPending || isAttended) &&
+                row.status !== 'promoted';
 
               const statusBadge = (() => {
                 if (row.status === 'promoted') {
@@ -180,14 +183,13 @@ export default function CallbackTable({ callbacks = [], onEdit = null }) {
                       ) : row.status === 'promoted' ? null : (
                         <button
                           type="button"
-                          disabled={isPromoting}
                           onClick={() => {
                             setPromoteError('');
-                            promoteMutation.mutate(row._id);
+                            setPromoteTarget(row);
                           }}
-                          className="cursor-pointer rounded-full bg-orange-600 px-2.5 py-1.5 text-xs font-semibold text-white shadow-lg shadow-orange-600/20 hover:bg-orange-500 disabled:opacity-60"
+                          className="cursor-pointer rounded-full bg-orange-600 px-2.5 py-1.5 text-xs font-semibold text-white shadow-lg shadow-orange-600/20 hover:bg-orange-500"
                         >
-                          {isPromoting ? 'Promoting…' : 'Promote to Lead'}
+                          Promote to Lead
                         </button>
                       )}
                     </div>
@@ -198,6 +200,21 @@ export default function CallbackTable({ callbacks = [], onEdit = null }) {
           </tbody>
         </table>
       </div>
+
+      <PromoteToLeadModal
+        open={Boolean(promoteTarget)}
+        callback={promoteTarget}
+        isSubmitting={promoteMutation.isPending}
+        onClose={() => {
+          if (!promoteMutation.isPending) setPromoteTarget(null);
+        }}
+        onConfirm={({ assignedCloserId }) =>
+          promoteMutation.mutateAsync({
+            callbackId: promoteTarget._id,
+            assignedCloserId,
+          })
+        }
+      />
     </div>
   );
 }

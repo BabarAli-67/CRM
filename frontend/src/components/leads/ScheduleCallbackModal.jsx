@@ -181,10 +181,19 @@ export default function ScheduleCallbackModal({
       return;
     }
 
+    const closerRef = lead.closerId;
+    const assignedCloserId =
+      typeof closerRef === 'object' && closerRef?._id
+        ? String(closerRef._id)
+        : closerRef
+          ? String(closerRef)
+          : undefined;
+
     mutation.mutate({
       leadId: lead._id,
       callbackAt: iso,
       notes: notes.trim() || undefined,
+      assignedCloserId,
     });
   };
 

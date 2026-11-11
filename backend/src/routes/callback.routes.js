@@ -13,6 +13,7 @@ import {
   getMyCloserCallbacks,
   updateCloserCallback,
   markCloserAlert,
+  getCloserTeamAgentCallbacks,
 } from '../controllers/callback.controller.js';
 
 const router = Router();
@@ -28,6 +29,12 @@ router.get('/mine', restrictTo('sales_agent'), getMyCallbacks);
 router.post('/closer', restrictTo('closer'), createCloserCallback);
 
 router.get('/closer/mine', restrictTo('closer'), getMyCloserCallbacks);
+
+router.get(
+  '/closer/team/:agentId',
+  restrictTo('closer'),
+  getCloserTeamAgentCallbacks
+);
 
 router.patch(
   '/closer/:id/mark-alert',

@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { getUsers } from '../../services/lead.service.js';
 
 const MONTHS = [
   { value: '01', label: 'Jan' },
@@ -117,8 +119,18 @@ const toIsoTimestamp = ({ day, month, year, hour, minute, period }) => {
   return local.toISOString();
 };
 
+const resolveCloserId = (ref) => {
+  if (!ref) return '';
+  if (typeof ref === 'string') return ref;
+  if (typeof ref === 'object' && ref._id) return String(ref._id);
+  return '';
+};
+
 const fieldClass =
   'w-full rounded-lg border border-zinc-700/80 bg-zinc-950 px-3 py-2.5 text-sm text-zinc-100 outline-none transition focus:border-orange-500/50 focus:ring-2 focus:ring-orange-500/20';
+
+const closerSelectClass =
+  'bg-zinc-900 border border-zinc-700 text-white rounded-lg p-2.5 w-full focus:ring-orange-500 focus:outline-none focus:ring-2 appearance-none cursor-pointer';
 
 const selectClass = `${fieldClass} appearance-none cursor-pointer`;
 
@@ -141,6 +153,7 @@ export default function CallbackForm({
   const [phone, setPhone] = useState('');
   const [businessLink, setBusinessLink] = useState('');
   const [notes, setNotes] = useState('');
+  const [assignedCloserId, setAssignedCloserId] = useState('');
   const [day, setDay] = useState(() => pad(new Date().getDate()));
   const [month, setMonth] = useState(() => pad(new Date().getMonth() + 1));
   const [year, setYear] = useState(() => String(new Date().getFullYear()));
@@ -148,6 +161,13 @@ export default function CallbackForm({
   const [minute, setMinute] = useState('00');
   const [period, setPeriod] = useState('AM');
   const [error, setError] = useState('');
+
+  const { data: closers = [], isLoading: closersLoading } = useQuery({
+    queryKey: ['users', 'closer'],
+    queryFn: () => getUsers({ role: 'closer', status: 'approved' }),
+    enabled: open,
+    staleTime: 60_000,
+  });
 
   useEffect(() => {
     if (!open) return;
@@ -159,6 +179,13 @@ export default function CallbackForm({
       initialValues?.businessLink || initialValues?.websiteLink || ''
     );
     setNotes(initialValues?.notes || '');
+    setAssignedCloserId(
+      resolveCloserId(
+        initialValues?.assignedCloserId ||
+          initialValues?.leadId?.closerId ||
+          null
+      )
+    );
     setDay(parts.day);
     setMonth(parts.month);
     setYear(parts.year);
@@ -206,6 +233,10 @@ export default function CallbackForm({
       setError('Please fill all required fields.');
       return;
     }
+    if (!assignedCloserId) {
+      setError('Please assign a closer.');
+      return;
+    }
     if (!/^https?:\/\//i.test(link)) {
       link = `https://${link}`;
     }
@@ -237,6 +268,7 @@ export default function CallbackForm({
         businessLink: link,
         callbackAt: iso,
         notes: notes.trim() || undefined,
+        assignedCloserId,
       });
       onClose?.();
     } catch (err) {
@@ -327,6 +359,30 @@ export default function CallbackForm({
                 className={fieldClass}
                 aria-required="true"
               />
+            </label>
+
+            <label className="block space-y-1.5 text-sm text-zinc-300">
+              <span className="font-medium">
+                Assign Closer <span className="text-red-400">*</span>
+              </span>
+              <select
+                required
+                value={assignedCloserId}
+                onChange={(e) => setAssignedCloserId(e.target.value)}
+                disabled={isSubmitting || closersLoading}
+                className={closerSelectClass}
+                aria-required="true"
+              >
+                <option value="">
+                  {closersLoading ? 'Loading closers…' : 'Select a closer'}
+                </option>
+                {closers.map((c) => (
+                  <option key={c._id} value={c._id}>
+                    {c.fullName || c.username}
+                    {c.fullName && c.username ? ` (@${c.username})` : ''}
+                  </option>
+                ))}
+              </select>
             </label>
 
             <div className="space-y-1.5">

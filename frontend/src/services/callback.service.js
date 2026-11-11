@@ -27,8 +27,8 @@ export const markCallbackAlert = async (id, flags) => {
   return response.data.data.callback;
 };
 
-export const promoteCallback = async (id) => {
-  const response = await api.post(`/callbacks/${id}/promote`);
+export const promoteCallback = async (id, payload = {}) => {
+  const response = await api.post(`/callbacks/${id}/promote`, payload);
   return response.data.data.lead;
 };
 
@@ -47,6 +47,12 @@ export const getAdminCallbacks = async () => {
 
 export const getMyCloserCallbacks = async () => {
   const response = await api.get('/callbacks/closer/mine');
+  return response.data.data.callbacks;
+};
+
+/** Read-only team agenda for a sales agent tagged to this closer. */
+export const getCloserTeamAgentCallbacks = async (agentId) => {
+  const response = await api.get(`/callbacks/closer/team/${agentId}`);
   return response.data.data.callbacks;
 };
 

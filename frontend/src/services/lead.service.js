@@ -15,18 +15,8 @@ export const getAssignedLeads = async () => {
   return response.data.data.leads;
 };
 
-export const getCloserPool = async () => {
-  const response = await api.get('/leads/closer-pool');
-  return response.data.data.leads;
-};
-
-export const sendLeadToCloserPool = async (id) => {
-  const response = await api.patch(`/leads/${id}/send-to-pool`);
-  return response.data.data.lead;
-};
-
-export const claimLead = async (id) => {
-  const response = await api.patch(`/leads/${id}/claim`);
+export const handLeadToCloser = async (id) => {
+  const response = await api.patch(`/leads/${id}/hand-to-closer`);
   return response.data.data.lead;
 };
 
@@ -35,14 +25,32 @@ export const getCloserClosedSales = async () => {
   return response.data.data.leads;
 };
 
+/** Closer — disqualified leads assigned to them. */
+export const getCloserDisqualifiedLeads = async () => {
+  const response = await api.get('/leads/closer-disqualified');
+  return response.data.data.leads;
+};
+
+/** Closer — agents who tagged leads/callbacks to this closer. */
+export const getCloserTeamAgents = async () => {
+  const response = await api.get('/leads/closer-team');
+  return response.data.data.agents;
+};
+
+/** Permanently delete a disqualified lead. */
+export const deleteLeadPermanently = async (id) => {
+  const response = await api.delete(`/leads/${id}`);
+  return response.data.data;
+};
+
 /** Sales agent — own closed sales history. */
 export const getMyClosedSales = async () => {
   const response = await api.get('/leads/mine/closed');
   return response.data.data.leads;
 };
 
-export const moveLeadToCst = async (id) => {
-  const response = await api.patch(`/leads/${id}/move-to-cst`);
+export const moveLeadToCst = async (id, formData) => {
+  const response = await api.patch(`/leads/${id}/move-to-cst`, formData);
   return response.data.data.lead;
 };
 

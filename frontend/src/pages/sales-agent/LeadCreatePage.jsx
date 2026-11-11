@@ -17,8 +17,8 @@ export default function LeadCreatePage() {
               state: {
                 toast:
                   meta?.toastMessage ||
-                  (meta?.sentToPool
-                    ? 'Lead sent to closer pool.'
+                  (meta?.handedOff
+                    ? 'Lead handed to assigned closer.'
                     : 'Lead created.'),
               },
             });

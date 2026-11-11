@@ -70,8 +70,10 @@ export function formatLeadPipeline(lead) {
     }
     return 'Closed sale';
   }
-  if (lead.status === 'pending_closer_claim') return 'Pending Closer Claim';
-  if (lead.status === 'in_progress') return 'In Progress';
+  if (lead.status === 'with_closer' || lead.status === 'in_progress') {
+    return 'With Closer';
+  }
+  if (lead.status === 'pending_closer_claim') return 'With Closer';
   if (lead.status === 'with_agent') return 'With Agent';
   return lead.status || '—';
 }

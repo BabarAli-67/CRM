@@ -18,9 +18,11 @@ import { requestNotificationPermission } from '../../utils/browserNotification.u
 import { buildLeadFollowUpReminders } from '../../utils/leadReminders.js';
 
 /**
- * Always-on reminder bridge for department dashboards.
- * Keeps 5-min + on-time timers alive on every tab (Attendance, Leads, etc.),
- * not only while My Callbacks / My Leads is mounted.
+ * Always-on reminder bridge for department dashboards (Agent + Closer).
+ * Keeps independent 5-min (warning) + on-time (due) timers alive on every tab.
+ * Dismissing warning must never mute the due chime — each phase has its own flag:
+ *   alerts.fiveMinFired  ≈ warningTriggered
+ *   alerts.exactTimeFired ≈ dueTriggered
  */
 export default function GlobalRemindersBridge() {
   const { user } = useAuth();
@@ -83,9 +85,10 @@ export default function GlobalRemindersBridge() {
             kind: 'callback',
             triggerAt: cb.callbackAt,
             notifyUserIds: agentId ? [String(agentId)] : [],
-            alerts: cb.alerts || {
-              fiveMinFired: false,
-              exactTimeFired: false,
+            // warningTriggered / dueTriggered (persisted as fiveMinFired / exactTimeFired)
+            alerts: {
+              fiveMinFired: Boolean(cb.alerts?.fiveMinFired),
+              exactTimeFired: Boolean(cb.alerts?.exactTimeFired),
             },
             businessName: cb.businessName,
             phone: cb.phone,
@@ -99,6 +102,7 @@ export default function GlobalRemindersBridge() {
     }
 
     if (isCloser) {
+      // Closer personal callbacks — same dual-phase alerts as agent
       const callbackItems = (closerCallbacks || [])
         .filter((cb) => cb.status === 'pending')
         .map((cb) => {
@@ -107,22 +111,33 @@ export default function GlobalRemindersBridge() {
             id: cb._id,
             kind: 'closer_callback',
             triggerAt: cb.callbackAt,
-            notifyUserIds: closerId ? [String(closerId)] : [],
-            alerts: cb.alerts || {
-              fiveMinFired: false,
-              exactTimeFired: false,
+            notifyUserIds: closerId ? [String(closerId)] : [String(userId)],
+            alerts: {
+              fiveMinFired: Boolean(cb.alerts?.fiveMinFired),
+              exactTimeFired: Boolean(cb.alerts?.exactTimeFired),
             },
             businessName: cb.businessName,
             phone: cb.phone,
             item: cb,
           };
         });
-      return [
-        ...callbackItems,
-        ...buildLeadFollowUpReminders(assignedLeads, userId, {
-          role: 'closer',
-        }),
-      ];
+
+      // Prefer closer_callback when a lead already has one — avoids double
+      // popups and flag races that can mute the due chime on the lead follow-up.
+      const leadIdsCoveredByCloserCb = new Set(
+        callbackItems
+          .map((item) => {
+            const leadRef = item.item?.leadId;
+            return String(leadRef?._id || leadRef || '');
+          })
+          .filter(Boolean)
+      );
+
+      const followups = buildLeadFollowUpReminders(assignedLeads, userId, {
+        role: 'closer',
+      }).filter((f) => !leadIdsCoveredByCloserCb.has(String(f.id)));
+
+      return [...callbackItems, ...followups];
     }
 
     return [];
@@ -138,28 +153,86 @@ export default function GlobalRemindersBridge() {
 
   useReminderScheduler(reminderItems, {
     markAlert: async ({ id, kind, fiveMinFired, exactTimeFired }) => {
+      // Phase-scoped only — never send both flags unless both were requested
+      const patch = {
+        ...(typeof fiveMinFired === 'boolean' ? { fiveMinFired } : {}),
+        ...(typeof exactTimeFired === 'boolean' ? { exactTimeFired } : {}),
+      };
+
+      const mergeAlerts = (oldAlerts = {}) => ({
+        fiveMinFired: Boolean(oldAlerts.fiveMinFired),
+        exactTimeFired: Boolean(oldAlerts.exactTimeFired),
+        ...patch,
+      });
+
       if (kind === 'callback') {
-        await markCallbackAlert(id, {
-          ...(typeof fiveMinFired === 'boolean' ? { fiveMinFired } : {}),
-          ...(typeof exactTimeFired === 'boolean' ? { exactTimeFired } : {}),
+        queryClient.setQueryData(['myCallbacks'], (old) => {
+          if (!Array.isArray(old)) return old;
+          return old.map((cb) =>
+            String(cb._id) === String(id)
+              ? { ...cb, alerts: mergeAlerts(cb.alerts) }
+              : cb
+          );
         });
+        await markCallbackAlert(id, patch);
         queryClient.invalidateQueries({ queryKey: ['myCallbacks'] });
         return;
       }
 
       if (kind === 'closer_callback') {
-        await markCloserCallbackAlert(id, {
-          ...(typeof fiveMinFired === 'boolean' ? { fiveMinFired } : {}),
-          ...(typeof exactTimeFired === 'boolean' ? { exactTimeFired } : {}),
+        queryClient.setQueryData(['closerCallbacks'], (old) => {
+          if (!Array.isArray(old)) return old;
+          return old.map((cb) =>
+            String(cb._id) === String(id)
+              ? { ...cb, alerts: mergeAlerts(cb.alerts) }
+              : cb
+          );
         });
+        // Keep assigned-leads follow-up flags in sync when this callback is lead-linked
+        const cachedCallbacks =
+          queryClient.getQueryData(['closerCallbacks']) || [];
+        const source = (Array.isArray(cachedCallbacks) ? cachedCallbacks : []).find(
+          (c) => String(c._id) === String(id)
+        );
+        const leadId = source?.leadId?._id || source?.leadId;
+        if (leadId) {
+          queryClient.setQueryData(['assignedLeads'], (old) => {
+            if (!Array.isArray(old)) return old;
+            return old.map((lead) => {
+              if (String(lead._id) !== String(leadId)) return lead;
+              if (!lead.followUp) return lead;
+              return {
+                ...lead,
+                followUp: {
+                  ...lead.followUp,
+                  alerts: mergeAlerts(lead.followUp.alerts),
+                },
+              };
+            });
+          });
+        }
+        await markCloserCallbackAlert(id, patch);
         queryClient.invalidateQueries({ queryKey: ['closerCallbacks'] });
+        queryClient.invalidateQueries({ queryKey: ['assignedLeads'] });
         return;
       }
 
-      await markLeadFollowUpAlert(id, {
-        ...(typeof fiveMinFired === 'boolean' ? { fiveMinFired } : {}),
-        ...(typeof exactTimeFired === 'boolean' ? { exactTimeFired } : {}),
-      });
+      const patchLeadList = (old) => {
+        if (!Array.isArray(old)) return old;
+        return old.map((lead) => {
+          if (String(lead._id) !== String(id)) return lead;
+          return {
+            ...lead,
+            followUp: {
+              ...(lead.followUp || {}),
+              alerts: mergeAlerts(lead.followUp?.alerts),
+            },
+          };
+        });
+      };
+      queryClient.setQueryData(['myLeads'], patchLeadList);
+      queryClient.setQueryData(['assignedLeads'], patchLeadList);
+      await markLeadFollowUpAlert(id, patch);
       queryClient.invalidateQueries({ queryKey: ['myLeads'] });
       queryClient.invalidateQueries({ queryKey: ['assignedLeads'] });
     },

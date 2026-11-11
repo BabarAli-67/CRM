@@ -130,7 +130,6 @@ function applyCloseCaches(queryClient, leadId, closedLead) {
 
   queryClient.setQueryData(['myLeads'], removeFromList);
   queryClient.setQueryData(['assignedLeads'], removeFromList);
-  queryClient.setQueryData(['closerPool'], removeFromList);
 
   // Strip linked callbacks from agent agenda so chimes stop immediately
   queryClient.setQueryData(['myCallbacks'], (old) => {
@@ -165,7 +164,6 @@ function applyCloseCaches(queryClient, leadId, closedLead) {
   queryClient.removeQueries({ queryKey: ['lead', leadId] });
   queryClient.invalidateQueries({ queryKey: ['myLeads'] });
   queryClient.invalidateQueries({ queryKey: ['assignedLeads'] });
-  queryClient.invalidateQueries({ queryKey: ['closerPool'] });
   queryClient.invalidateQueries({ queryKey: ['allLeads'] });
   queryClient.invalidateQueries({ queryKey: ['pipeline', 'leads'] });
   queryClient.invalidateQueries({ queryKey: ['myCallbacks'] });
@@ -192,7 +190,6 @@ export default function CloseSaleModal({ open, lead, onClose, onSuccess }) {
   const [cardNumber, setCardNumber] = useState('');
   const [cardExpiry, setCardExpiry] = useState('');
   const [cardCvv, setCardCvv] = useState('');
-  const [linkUrl, setLinkUrl] = useState('');
   const [otherDetails, setOtherDetails] = useState('');
   const [error, setError] = useState('');
   const [toast, setToast] = useState(false);
@@ -245,7 +242,6 @@ export default function CloseSaleModal({ open, lead, onClose, onSuccess }) {
     setCardNumber('');
     setCardExpiry('');
     setCardCvv('');
-    setLinkUrl('');
     setOtherDetails('');
     setError('');
   }, [open, leadId]);
@@ -284,15 +280,9 @@ export default function CloseSaleModal({ open, lead, onClose, onSuccess }) {
   };
 
   const buildPayment = () => {
+    // Payment Link: selection alone is enough — no URL / reference fields
     if (method === 'via_link') {
-      const url = linkUrl.trim();
-      if (url.length < 2) {
-        return {
-          error:
-            'Enter the payment transaction ID, confirmation link, or receipt reference.',
-        };
-      }
-      return { payment: { method: 'via_link', linkUrl: url } };
+      return { payment: { method: 'via_link' } };
     }
 
     if (method === 'other') {
@@ -360,21 +350,21 @@ export default function CloseSaleModal({ open, lead, onClose, onSuccess }) {
       return;
     }
 
+    const salesRaw = review.salesAmount.trim();
+    if (salesRaw === '') {
+      setError('Sales Amount is required.');
+      return;
+    }
+    const salesAmount = Number(salesRaw);
+    if (Number.isNaN(salesAmount) || salesAmount < 0) {
+      setError('Sales amount must be a valid non-negative number.');
+      return;
+    }
+
     const built = buildPayment();
     if (built.error) {
       setError(built.error);
       return;
-    }
-
-    let salesAmount = null;
-    const salesRaw = review.salesAmount.trim();
-    if (salesRaw !== '') {
-      const n = Number(salesRaw);
-      if (Number.isNaN(n) || n < 0) {
-        setError('Sales amount must be a valid non-negative number.');
-        return;
-      }
-      salesAmount = n;
     }
 
     const payload = {
@@ -533,12 +523,15 @@ export default function CloseSaleModal({ open, lead, onClose, onSuccess }) {
                     />
                   </label>
                   <label className="block space-y-1.5 text-sm text-zinc-300">
-                    <span>Sales Amount</span>
+                    <span>
+                      Sales Amount <span className="text-red-500">*</span>
+                    </span>
                     <div className="relative">
                       <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-zinc-500">
                         $
                       </span>
                       <input
+                        required
                         type="number"
                         min="0"
                         step="0.01"
@@ -546,6 +539,7 @@ export default function CloseSaleModal({ open, lead, onClose, onSuccess }) {
                         onChange={handleReviewChange('salesAmount')}
                         className={`${fieldClass} pl-7`}
                         placeholder="0.00"
+                        aria-required="true"
                       />
                     </div>
                   </label>
@@ -625,19 +619,6 @@ export default function CloseSaleModal({ open, lead, onClose, onSuccess }) {
                     );
                   })}
                 </div>
-
-                {method === 'via_link' ? (
-                  <label className="block space-y-1.5 text-sm text-zinc-300">
-                    <span>Transaction ID / Confirmation Link / Receipt</span>
-                    <input
-                      required
-                      value={linkUrl}
-                      onChange={(e) => setLinkUrl(e.target.value)}
-                      placeholder="https://… or receipt / txn reference"
-                      className={fieldClass}
-                    />
-                  </label>
-                ) : null}
 
                 {method === 'via_card' ? (
                   <div className="space-y-3">

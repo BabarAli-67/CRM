@@ -90,7 +90,7 @@ export default function CloserMyCallbacksPage() {
                   to="/dashboard/closer/leads"
                   className="font-medium text-orange-400 hover:underline"
                 >
-                  Claimed Leads
+                  Leads
                 </Link>
               </p>
             </div>
