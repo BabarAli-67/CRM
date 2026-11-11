@@ -176,6 +176,7 @@ export default function LeadForm({
 
   const [form, setForm] = useState(() => mapInitialToForm(initialValues));
   const [error, setError] = useState('');
+  const [salesAmountError, setSalesAmountError] = useState('');
   const [toast, setToast] = useState('');
 
   const existingFollowUp = initialValues?.followUp?.callbackAt;
@@ -195,6 +196,7 @@ export default function LeadForm({
   useEffect(() => {
     setForm(mapInitialToForm(initialValues));
     setError('');
+    setSalesAmountError('');
     const parts = splitDateTime(initialValues?.followUp?.callbackAt);
     setScheduleCallback(Boolean(initialValues?.followUp?.callbackAt));
     setCbDate(parts.date);
@@ -352,19 +354,22 @@ export default function LeadForm({
   });
 
   const handleChange = (field) => (e) => {
+    if (field === 'salesAmount') {
+      setSalesAmountError('');
+    }
     setForm((prev) => ({ ...prev, [field]: e.target.value }));
   };
 
   const buildPayload = () => {
     const salesRaw = form.salesAmount.trim();
-    let salesAmount = null;
-    if (salesRaw !== '') {
-      const n = Number(salesRaw);
-      if (Number.isNaN(n) || n < 0) {
-        throw new Error('Sales amount must be a valid non-negative number.');
-      }
-      salesAmount = n;
+    if (salesRaw === '') {
+      throw new Error('Please enter the sales amount.');
     }
+    const n = Number(salesRaw);
+    if (Number.isNaN(n) || n < 0) {
+      throw new Error('Sales amount must be a valid non-negative number.');
+    }
+    const salesAmount = n;
 
     if (!form.closerId) {
       throw new Error('Assign Closer is required.');
@@ -388,9 +393,15 @@ export default function LeadForm({
 
   const submit = (handOff) => {
     setError('');
+    setSalesAmountError('');
 
     if (!form.businessName.trim() || !form.phone.trim()) {
       setError('Business name and phone are required.');
+      return;
+    }
+
+    if (!form.salesAmount.trim()) {
+      setSalesAmountError('Please enter the sales amount.');
       return;
     }
 
@@ -408,7 +419,12 @@ export default function LeadForm({
     try {
       payload = buildPayload();
     } catch (err) {
-      setError(err.message || 'Invalid form values.');
+      const message = err.message || 'Invalid form values.';
+      if (message === 'Please enter the sales amount.') {
+        setSalesAmountError(message);
+      } else {
+        setError(message);
+      }
       return;
     }
 
@@ -606,12 +622,15 @@ export default function LeadForm({
             </label>
 
             <label className={labelClass}>
-              <span>Sales Amount</span>
+              <span>
+                Sales Amount <span className="text-red-500">*</span>
+              </span>
               <div className="relative">
                 <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-zinc-500">
                   $
                 </span>
                 <input
+                  required
                   type="number"
                   min="0"
                   step="0.01"
@@ -620,8 +639,15 @@ export default function LeadForm({
                   onChange={handleChange('salesAmount')}
                   className={`${fieldClass} pl-7`}
                   placeholder="0.00"
+                  aria-required="true"
+                  aria-invalid={Boolean(salesAmountError)}
                 />
               </div>
+              {salesAmountError ? (
+                <p className="text-xs text-red-400" role="alert">
+                  {salesAmountError}
+                </p>
+              ) : null}
             </label>
 
             <label className={labelClass}>

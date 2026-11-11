@@ -106,6 +106,17 @@ const resolveApprovedCloser = async (closerId) => {
   return closer;
 };
 
+const parseRequiredSalesAmount = (value) => {
+  if (value === undefined || value === '' || value === null) {
+    throw new ApiError(400, 'Sales amount is required');
+  }
+  const n = Number(value);
+  if (Number.isNaN(n) || n < 0) {
+    throw new ApiError(400, 'salesAmount must be a non-negative number');
+  }
+  return n;
+};
+
 export const createLead = asyncHandler(async (req, res) => {
   const { businessName, phone, closerId } = req.body;
 
@@ -114,12 +125,14 @@ export const createLead = asyncHandler(async (req, res) => {
   }
 
   const closer = await resolveApprovedCloser(closerId);
+  const salesAmount = parseRequiredSalesAmount(req.body.salesAmount);
 
   const payload = {
     businessName: String(businessName).trim(),
     phone: String(phone).trim(),
     agentId: req.user._id,
     closerId: closer._id,
+    salesAmount,
     status: 'with_agent',
     stage: 'active',
   };
@@ -138,24 +151,13 @@ export const createLead = asyncHandler(async (req, res) => {
       field === 'businessName' ||
       field === 'phone' ||
       field === 'websiteLink' ||
-      field === 'notes'
+      field === 'notes' ||
+      field === 'salesAmount'
     ) {
       continue;
     }
     if (req.body[field] !== undefined) {
-      if (field === 'salesAmount') {
-        if (req.body[field] === '' || req.body[field] === null) {
-          payload[field] = null;
-        } else {
-          const n = Number(req.body[field]);
-          if (Number.isNaN(n) || n < 0) {
-            throw new ApiError(400, 'salesAmount must be a non-negative number');
-          }
-          payload[field] = n;
-        }
-      } else {
-        payload[field] = req.body[field] === '' ? null : req.body[field];
-      }
+      payload[field] = req.body[field] === '' ? null : req.body[field];
     }
   }
 
@@ -631,7 +633,9 @@ export const updateLead = asyncHandler(async (req, res) => {
   for (const field of UPDATABLE_FIELDS) {
     if (req.body[field] !== undefined) {
       if (field === 'salesAmount') {
-        if (req.body[field] === '' || req.body[field] === null) {
+        if (req.user.role === 'sales_agent') {
+          lead[field] = parseRequiredSalesAmount(req.body[field]);
+        } else if (req.body[field] === '' || req.body[field] === null) {
           lead[field] = null;
         } else {
           const n = Number(req.body[field]);
@@ -647,6 +651,14 @@ export const updateLead = asyncHandler(async (req, res) => {
             : req.body[field];
       }
     }
+  }
+
+  // Agents must always leave a sales amount on save (even if omitted from PATCH)
+  if (
+    req.user.role === 'sales_agent' &&
+    (lead.salesAmount === null || lead.salesAmount === undefined)
+  ) {
+    throw new ApiError(400, 'Sales amount is required');
   }
 
   // Agents may reassign closer while the lead is still on their desk
