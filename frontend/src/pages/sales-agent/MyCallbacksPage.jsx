@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import CallbackForm from '../../components/callbacks/CallbackForm.jsx';
+import CallbackListTabs from '../../components/callbacks/CallbackListTabs.jsx';
 import CallbackTable from '../../components/callbacks/CallbackTable.jsx';
 import SalesAgentShell from '../../components/sales-agent/SalesAgentShell.jsx';
 import {
@@ -9,11 +10,25 @@ import {
   getMyCallbacks,
   updateCallback,
 } from '../../services/callback.service.js';
+import {
+  countCallbacksByTab,
+  defaultCallbackListTab,
+  filterCallbacksByTab,
+} from '../../utils/callbackListTabs.js';
+
+const TAB_EMPTY = {
+  all: 'No upcoming callbacks. Use + Add Callback or schedule from My Leads.',
+  upcoming: 'No upcoming callbacks.',
+  overdue: 'No overdue callbacks.',
+  done: 'No completed, attended, or promoted callbacks yet.',
+};
 
 export default function MyCallbacksPage() {
   const queryClient = useQueryClient();
   const [composerOpen, setComposerOpen] = useState(false);
   const [editTarget, setEditTarget] = useState(null);
+  const [listTab, setListTab] = useState('upcoming');
+  const [tabInitialized, setTabInitialized] = useState(false);
 
   const {
     data: callbacks = [],
@@ -25,6 +40,22 @@ export default function MyCallbacksPage() {
     queryFn: () => getMyCallbacks(false),
     refetchInterval: 30_000,
   });
+
+  const tabCounts = useMemo(
+    () => countCallbacksByTab(callbacks),
+    [callbacks]
+  );
+
+  useEffect(() => {
+    if (tabInitialized || isLoading) return;
+    setListTab(defaultCallbackListTab(tabCounts));
+    setTabInitialized(true);
+  }, [tabInitialized, isLoading, tabCounts]);
+
+  const filteredCallbacks = useMemo(
+    () => filterCallbacksByTab(callbacks, listTab),
+    [callbacks, listTab]
+  );
 
   const saveMutation = useMutation({
     mutationFn: async (payload) => {
@@ -87,6 +118,13 @@ export default function MyCallbacksPage() {
           </button>
         </div>
 
+        <CallbackListTabs
+          activeTab={listTab}
+          counts={tabCounts}
+          onChange={setListTab}
+          ariaLabel="Agent callback sections"
+        />
+
         {isLoading ? (
           <p className="py-8 text-center text-sm text-zinc-500">Loading…</p>
         ) : isError ? (
@@ -95,7 +133,8 @@ export default function MyCallbacksPage() {
           </p>
         ) : (
           <CallbackTable
-            callbacks={callbacks}
+            callbacks={filteredCallbacks}
+            emptyMessage={TAB_EMPTY[listTab] || TAB_EMPTY.all}
             onEdit={(row) => {
               setEditTarget(row);
               setComposerOpen(true);

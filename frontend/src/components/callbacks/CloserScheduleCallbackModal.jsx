@@ -5,12 +5,21 @@ import {
   updateCloserCallback,
 } from '../../services/callback.service.js';
 
-const HOURS = Array.from({ length: 12 }, (_, i) =>
-  String(i + 1).padStart(2, '0')
-);
-const MINUTES = Array.from({ length: 60 }, (_, i) => String(i).padStart(2, '0'));
-
 const pad = (n) => String(n).padStart(2, '0');
+
+/** Digits only; empty string allowed while typing. */
+const digitsOnly = (raw, maxLen) => {
+  const d = String(raw || '').replace(/\D/g, '');
+  return maxLen ? d.slice(0, maxLen) : d;
+};
+
+const clampOnBlur = (raw, min, max, { padTo = 0 } = {}) => {
+  if (raw === '' || raw == null) return '';
+  const n = Number(raw);
+  if (Number.isNaN(n)) return '';
+  const clamped = Math.min(max, Math.max(min, Math.trunc(n)));
+  return padTo > 0 ? String(clamped).padStart(padTo, '0') : String(clamped);
+};
 
 const todayDateValue = () => {
   const d = new Date();
@@ -51,9 +60,30 @@ const nowDateTimeParts = () => splitDateTime(new Date());
 
 /** Combine local date + 12h clock into an ISO timestamp. */
 const toIsoTimestamp = ({ date, hour, minute, period }) => {
-  if (!date || !hour || !minute || !period) return null;
+  if (
+    !date ||
+    hour === '' ||
+    minute === '' ||
+    hour == null ||
+    minute == null ||
+    !period
+  ) {
+    return null;
+  }
 
   let h = Number(hour);
+  const mi = Number(minute);
+  if (
+    Number.isNaN(h) ||
+    Number.isNaN(mi) ||
+    h < 1 ||
+    h > 12 ||
+    mi < 0 ||
+    mi > 59
+  ) {
+    return null;
+  }
+
   if (period === 'AM') {
     if (h === 12) h = 0;
   } else if (h !== 12) {
@@ -61,7 +91,7 @@ const toIsoTimestamp = ({ date, hour, minute, period }) => {
   }
 
   const [y, m, day] = date.split('-').map(Number);
-  const local = new Date(y, m - 1, day, h, Number(minute), 0, 0);
+  const local = new Date(y, m - 1, day, h, mi, 0, 0);
   if (Number.isNaN(local.getTime())) return null;
   return local.toISOString();
 };
@@ -70,6 +100,9 @@ const fieldClass =
   'w-full rounded-lg border border-zinc-700/80 bg-zinc-950 px-3 py-2.5 text-sm text-zinc-100 outline-none transition focus:border-orange-500/50 focus:ring-2 focus:ring-orange-500/20';
 
 const selectClass = `${fieldClass} appearance-none cursor-pointer`;
+
+const numInputClass =
+  'w-full rounded-lg border border-zinc-700 bg-zinc-900 py-2 text-center text-sm text-white outline-none transition focus:border-orange-500/50 focus:ring-2 focus:ring-orange-500/20 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none';
 
 const blankContact = () => ({
   businessName: '',
@@ -131,6 +164,16 @@ export default function CloserScheduleCallbackModal({
     setNotes(blank.notes);
     setSelectedLeadId(blank.selectedLeadId);
   };
+
+  // Lock background page scroll while the popup is open
+  useEffect(() => {
+    if (!open) return undefined;
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [open]);
 
   // Reset every time the modal opens (or locked lead / reschedule target changes)
   useEffect(() => {
@@ -250,7 +293,17 @@ export default function CloserScheduleCallbackModal({
       return;
     }
 
-    const iso = toIsoTimestamp({ date, hour, minute, period });
+    const normalizedHour = clampOnBlur(hour, 1, 12, { padTo: 2 });
+    const normalizedMinute = clampOnBlur(minute, 0, 59, { padTo: 2 });
+    setHour(normalizedHour);
+    setMinute(normalizedMinute);
+
+    const iso = toIsoTimestamp({
+      date,
+      hour: normalizedHour,
+      minute: normalizedMinute,
+      period,
+    });
     if (!iso) {
       setError('Please provide a valid date and time.');
       return;
@@ -303,7 +356,7 @@ export default function CloserScheduleCallbackModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-zinc-950/75 p-4 backdrop-blur-sm sm:items-center">
+    <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-zinc-950/75 p-4 backdrop-blur-sm sm:p-6">
       <button
         type="button"
         aria-label="Close form backdrop"
@@ -314,9 +367,9 @@ export default function CloserScheduleCallbackModal({
         role="dialog"
         aria-modal="true"
         aria-labelledby="closer-schedule-callback-title"
-        className="relative z-10 w-full max-w-md animate-in fade-in zoom-in-95 overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900 shadow-2xl shadow-black/50"
+        className="relative z-10 my-4 flex max-h-[min(85vh,720px)] w-full max-w-md flex-col overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900 shadow-2xl shadow-black/50 sm:my-8"
       >
-        <div className="flex items-center justify-between border-b border-zinc-800 px-5 py-4">
+        <div className="flex shrink-0 items-center justify-between border-b border-zinc-800 px-5 py-4">
           <h2
             id="closer-schedule-callback-title"
             className="font-display text-lg font-semibold text-white"
@@ -326,6 +379,7 @@ export default function CloserScheduleCallbackModal({
           <button
             type="button"
             onClick={onClose}
+            aria-label="Close"
             className="rounded-lg px-2 py-1 text-sm text-zinc-400 transition hover:bg-zinc-800 hover:text-white"
           >
             ✕
@@ -335,8 +389,10 @@ export default function CloserScheduleCallbackModal({
         <form
           key={`${open}-${sourceMode}-${formKey}`}
           onSubmit={handleSubmit}
-          className="space-y-5 px-5 py-5"
+          className="flex min-h-0 flex-1 flex-col"
+          noValidate
         >
+          <div className="min-h-0 flex-1 space-y-5 overflow-y-auto overscroll-contain px-5 py-5 pr-3">
           {allowStandalone && !isReschedule && !lockedLead ? (
             <div className="space-y-3">
               <div className="flex overflow-hidden rounded-lg border border-zinc-700/80 bg-zinc-950 p-0.5">
@@ -455,33 +511,37 @@ export default function CloserScheduleCallbackModal({
                 <span className="text-[11px] uppercase tracking-wide text-zinc-500">
                   Hour
                 </span>
-                <select
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  min={1}
+                  max={12}
+                  placeholder="HH"
                   value={hour}
-                  onChange={(e) => setHour(e.target.value)}
-                  className={selectClass}
-                >
-                  {HOURS.map((h) => (
-                    <option key={h} value={h}>
-                      {h}
-                    </option>
-                  ))}
-                </select>
+                  onChange={(e) => setHour(digitsOnly(e.target.value, 2))}
+                  onBlur={() =>
+                    setHour(clampOnBlur(hour, 1, 12, { padTo: 2 }))
+                  }
+                  className={numInputClass}
+                />
               </label>
               <label className="block space-y-1">
                 <span className="text-[11px] uppercase tracking-wide text-zinc-500">
                   Minute
                 </span>
-                <select
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  min={0}
+                  max={59}
+                  placeholder="MM"
                   value={minute}
-                  onChange={(e) => setMinute(e.target.value)}
-                  className={selectClass}
-                >
-                  {MINUTES.map((m) => (
-                    <option key={m} value={m}>
-                      {m}
-                    </option>
-                  ))}
-                </select>
+                  onChange={(e) => setMinute(digitsOnly(e.target.value, 2))}
+                  onBlur={() =>
+                    setMinute(clampOnBlur(minute, 0, 59, { padTo: 2 }))
+                  }
+                  className={numInputClass}
+                />
               </label>
               <div className="space-y-1">
                 <span className="text-[11px] uppercase tracking-wide text-zinc-500">
@@ -533,12 +593,14 @@ export default function CloserScheduleCallbackModal({
               {error}
             </p>
           ) : null}
+          </div>
 
-          <div className="flex flex-wrap justify-end gap-2 border-t border-zinc-800 pt-4">
+          <div className="flex shrink-0 flex-wrap justify-end gap-2 border-t border-zinc-800 bg-zinc-900 px-5 py-4">
             <button
               type="button"
               onClick={onClose}
-              className="rounded-xl border border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-300 transition hover:bg-zinc-800"
+              disabled={mutation.isPending}
+              className="rounded-xl border border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-300 transition hover:bg-zinc-800 disabled:opacity-60"
             >
               Cancel
             </button>

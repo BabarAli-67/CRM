@@ -66,6 +66,7 @@ const BADGE = {
 export default function CloserCallbackTable({
   callbacks = [],
   onOpenLead = null,
+  emptyMessage = 'No callbacks scheduled. Use + Add Callback or schedule from Leads.',
 }) {
   const queryClient = useQueryClient();
   const [rescheduleTarget, setRescheduleTarget] = useState(null);
@@ -101,9 +102,7 @@ export default function CloserCallbackTable({
 
   if (rows.length === 0) {
     return (
-      <p className="py-12 text-center text-sm text-zinc-500">
-        No callbacks scheduled. Use + Add Callback or schedule from Leads.
-      </p>
+      <p className="py-12 text-center text-sm text-zinc-500">{emptyMessage}</p>
     );
   }
 

@@ -1,6 +1,7 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
+import CallbackListTabs from '../../components/callbacks/CallbackListTabs.jsx';
 import CloserCallbackTable, {
   summarizeCloserCallbacks,
 } from '../../components/callbacks/CloserCallbackTable.jsx';
@@ -9,10 +10,24 @@ import LeadDetailModal from '../../components/leads/LeadDetailModal.jsx';
 import CloserShell from '../../components/closer/CloserShell.jsx';
 import { getMyCloserCallbacks } from '../../services/callback.service.js';
 import { getAssignedLeads, getLeadById } from '../../services/lead.service.js';
+import {
+  countCallbacksByTab,
+  defaultCallbackListTab,
+  filterCallbacksByTab,
+} from '../../utils/callbackListTabs.js';
+
+const TAB_EMPTY = {
+  all: 'No callbacks scheduled. Use + Add Callback or schedule from Leads.',
+  upcoming: 'No upcoming callbacks.',
+  overdue: 'No overdue callbacks.',
+  done: 'No completed or attended callbacks yet.',
+};
 
 export default function CloserMyCallbacksPage() {
   const [composerOpen, setComposerOpen] = useState(false);
   const [detailLead, setDetailLead] = useState(null);
+  const [listTab, setListTab] = useState('upcoming');
+  const [tabInitialized, setTabInitialized] = useState(false);
 
   const {
     data: callbacks = [],
@@ -33,6 +48,22 @@ export default function CloserMyCallbacksPage() {
   const summary = useMemo(
     () => summarizeCloserCallbacks(callbacks),
     [callbacks]
+  );
+
+  const tabCounts = useMemo(
+    () => countCallbacksByTab(callbacks),
+    [callbacks]
+  );
+
+  useEffect(() => {
+    if (tabInitialized || isLoading) return;
+    setListTab(defaultCallbackListTab(tabCounts));
+    setTabInitialized(true);
+  }, [tabInitialized, isLoading, tabCounts]);
+
+  const filteredCallbacks = useMemo(
+    () => filterCallbacksByTab(callbacks, listTab),
+    [callbacks, listTab]
   );
 
   const openLead = async (row) => {
@@ -104,6 +135,13 @@ export default function CloserMyCallbacksPage() {
             </button>
           </div>
 
+          <CallbackListTabs
+            activeTab={listTab}
+            counts={tabCounts}
+            onChange={setListTab}
+            ariaLabel="Closer callback sections"
+          />
+
           {isLoading ? (
             <p className="py-12 text-center text-sm text-zinc-500">Loading…</p>
           ) : isError ? (
@@ -111,7 +149,11 @@ export default function CloserMyCallbacksPage() {
               {error?.response?.data?.message || 'Failed to load callbacks.'}
             </p>
           ) : (
-            <CloserCallbackTable callbacks={callbacks} onOpenLead={openLead} />
+            <CloserCallbackTable
+              callbacks={filteredCallbacks}
+              onOpenLead={openLead}
+              emptyMessage={TAB_EMPTY[listTab] || TAB_EMPTY.all}
+            />
           )}
         </div>
       </section>

@@ -20,7 +20,11 @@ const formatPkt = (value) => {
 export const leadEditPath = (leadId) =>
   `/dashboard/sales-agent/leads/${leadId}/edit`;
 
-export default function CallbackTable({ callbacks = [], onEdit = null }) {
+export default function CallbackTable({
+  callbacks = [],
+  onEdit = null,
+  emptyMessage = 'No upcoming callbacks. Use + Add Callback or schedule from My Leads.',
+}) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [promoteTarget, setPromoteTarget] = useState(null);
@@ -57,9 +61,7 @@ export default function CallbackTable({ callbacks = [], onEdit = null }) {
 
   if (rows.length === 0) {
     return (
-      <p className="py-10 text-center text-sm text-zinc-500">
-        No upcoming callbacks. Use + Add Callback or schedule from My Leads.
-      </p>
+      <p className="py-10 text-center text-sm text-zinc-500">{emptyMessage}</p>
     );
   }
 
