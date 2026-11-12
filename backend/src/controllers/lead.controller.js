@@ -7,6 +7,7 @@ import User from '../models/user.model.js';
 import Callback from '../models/callback.model.js';
 import { resolveCallbacksForLead } from '../utils/callbackResolve.util.js';
 import { escalateStaleAgentLeads, AGENT_HOLD_MS } from '../utils/leadEscalation.util.js';
+import { buildAlertFlagsForSchedule } from '../utils/alertTiming.util.js';
 
 const refId = (ref) => {
   if (!ref) return null;
@@ -714,10 +715,11 @@ export const updateLead = asyncHandler(async (req, res) => {
         },
       };
 
-      // Reschedule clears prior alert firings so reminders can fire for the new time
+      // Reschedule: arm exact-time; skip 5-min warning if <5 minutes remain
       if (nextAt !== null && nextAt !== prevAt) {
-        lead.followUp.alerts.fiveMinFired = false;
-        lead.followUp.alerts.exactTimeFired = false;
+        lead.followUp.alerts = buildAlertFlagsForSchedule(
+          lead.followUp.callbackAt
+        );
         lead.followUp.acknowledged = false;
       }
     }
@@ -917,16 +919,12 @@ export const setFollowUp = asyncHandler(async (req, res) => {
       : acknowledged === true
         ? true
         : lead.followUp?.acknowledged || false,
-    alerts: {
-      fiveMinFired:
-        timeChanged
-          ? false
-          : lead.followUp?.alerts?.fiveMinFired || false,
-      exactTimeFired:
-        timeChanged
-          ? false
-          : lead.followUp?.alerts?.exactTimeFired || false,
-    },
+    alerts: timeChanged
+      ? buildAlertFlagsForSchedule(callbackAt)
+      : {
+          fiveMinFired: lead.followUp?.alerts?.fiveMinFired || false,
+          exactTimeFired: lead.followUp?.alerts?.exactTimeFired || false,
+        },
   };
 
   await lead.save();

@@ -6,6 +6,7 @@ import Callback from '../models/callback.model.js';
 import Lead from '../models/lead.model.js';
 import User from '../models/user.model.js';
 import { healStaleAgentCallbacks } from '../utils/callbackResolve.util.js';
+import { buildAlertFlagsForSchedule } from '../utils/alertTiming.util.js';
 
 const isOwnerOrSuperAdmin = (callback, user) => {
   if (user.role === 'super_admin') return true;
@@ -92,6 +93,8 @@ export const createCallback = asyncHandler(async (req, res) => {
     (lead?.closerId ? String(lead.closerId) : null);
   const closer = await resolveApprovedCloser(closerSource);
 
+  const scheduleAlerts = buildAlertFlagsForSchedule(callbackAtDate);
+
   const callback = await Callback.create({
     businessName: resolvedName,
     phone: resolvedPhone,
@@ -101,6 +104,7 @@ export const createCallback = asyncHandler(async (req, res) => {
     agentId: req.user._id,
     leadId: linkedLeadId,
     assignedCloserId: closer._id,
+    alerts: scheduleAlerts,
   });
 
   // Keep lead Follow-up (PKT) column in sync when scheduling from a lead
@@ -114,16 +118,13 @@ export const createCallback = asyncHandler(async (req, res) => {
       callbackAt: callbackAtDate,
       notes: notes || lead.followUp?.notes || null,
       acknowledged: nextAt !== prevAt ? false : lead.followUp?.acknowledged || false,
-      alerts: {
-        fiveMinFired:
-          nextAt !== prevAt
-            ? false
-            : lead.followUp?.alerts?.fiveMinFired || false,
-        exactTimeFired:
-          nextAt !== prevAt
-            ? false
-            : lead.followUp?.alerts?.exactTimeFired || false,
-      },
+      alerts:
+        nextAt !== prevAt
+          ? scheduleAlerts
+          : {
+              fiveMinFired: lead.followUp?.alerts?.fiveMinFired || false,
+              exactTimeFired: lead.followUp?.alerts?.exactTimeFired || false,
+            },
     };
     await lead.save();
   }
@@ -237,12 +238,8 @@ export const updateCallback = asyncHandler(async (req, res) => {
   }
   if (callbackAt !== undefined) {
     callback.callbackAt = new Date(callbackAt);
-    // Reschedule clears prior alert firings so reminders can fire for the new time
-    if (!callback.alerts) {
-      callback.alerts = { fiveMinFired: false, exactTimeFired: false };
-    }
-    callback.alerts.fiveMinFired = false;
-    callback.alerts.exactTimeFired = false;
+    // Reschedule: arm exact-time; skip 5-min warning if <5 minutes remain
+    callback.alerts = buildAlertFlagsForSchedule(callback.callbackAt);
     if (callback.status === 'attended') {
       callback.status = 'pending';
     }
@@ -286,9 +283,7 @@ export const updateCallback = asyncHandler(async (req, res) => {
       } else if (callbackAt !== undefined) {
         lead.followUp.callbackAt = callback.callbackAt;
         lead.followUp.acknowledged = false;
-        if (!lead.followUp.alerts) lead.followUp.alerts = {};
-        lead.followUp.alerts.fiveMinFired = false;
-        lead.followUp.alerts.exactTimeFired = false;
+        lead.followUp.alerts = buildAlertFlagsForSchedule(callback.callbackAt);
         await lead.save();
       }
     }
@@ -450,6 +445,8 @@ export const createCloserCallback = asyncHandler(async (req, res) => {
     );
   }
 
+  const scheduleAlerts = buildAlertFlagsForSchedule(callbackAtDate);
+
   const callback = await Callback.create({
     businessName: resolvedName,
     phone: resolvedPhone,
@@ -460,10 +457,7 @@ export const createCloserCallback = asyncHandler(async (req, res) => {
     agentId: lead?.agentId || null,
     leadId: linkedLeadId,
     status: 'pending',
-    alerts: {
-      fiveMinFired: false,
-      exactTimeFired: false,
-    },
+    alerts: scheduleAlerts,
   });
 
   if (lead) {
@@ -476,16 +470,13 @@ export const createCloserCallback = asyncHandler(async (req, res) => {
       callbackAt: callbackAtDate,
       notes: notes || lead.followUp?.notes || null,
       acknowledged: nextAt !== prevAt ? false : lead.followUp?.acknowledged || false,
-      alerts: {
-        fiveMinFired:
-          nextAt !== prevAt
-            ? false
-            : lead.followUp?.alerts?.fiveMinFired || false,
-        exactTimeFired:
-          nextAt !== prevAt
-            ? false
-            : lead.followUp?.alerts?.exactTimeFired || false,
-      },
+      alerts:
+        nextAt !== prevAt
+          ? scheduleAlerts
+          : {
+              fiveMinFired: lead.followUp?.alerts?.fiveMinFired || false,
+              exactTimeFired: lead.followUp?.alerts?.exactTimeFired || false,
+            },
     };
     await lead.save();
   }
@@ -542,11 +533,8 @@ export const updateCloserCallback = asyncHandler(async (req, res) => {
       throw new ApiError(400, 'callbackAt must be a valid date');
     }
     callback.callbackAt = next;
-    if (!callback.alerts) {
-      callback.alerts = { fiveMinFired: false, exactTimeFired: false };
-    }
-    callback.alerts.fiveMinFired = false;
-    callback.alerts.exactTimeFired = false;
+    // Reschedule: arm exact-time; skip 5-min warning if <5 minutes remain
+    callback.alerts = buildAlertFlagsForSchedule(next);
     if (callback.status === 'completed') {
       callback.status = 'pending';
     }
@@ -588,10 +576,7 @@ export const updateCloserCallback = asyncHandler(async (req, res) => {
         callbackAt: callback.callbackAt,
         notes: callback.notes || lead.followUp?.notes || null,
         acknowledged: false,
-        alerts: {
-          fiveMinFired: false,
-          exactTimeFired: false,
-        },
+        alerts: buildAlertFlagsForSchedule(callback.callbackAt),
       };
       await lead.save();
     }

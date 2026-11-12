@@ -84,6 +84,7 @@ export default function GlobalRemindersBridge() {
             id: cb._id,
             kind: 'callback',
             triggerAt: cb.callbackAt,
+            createdAt: cb.createdAt,
             notifyUserIds: agentId ? [String(agentId)] : [],
             // warningTriggered / dueTriggered (persisted as fiveMinFired / exactTimeFired)
             alerts: {
@@ -111,6 +112,7 @@ export default function GlobalRemindersBridge() {
             id: cb._id,
             kind: 'closer_callback',
             triggerAt: cb.callbackAt,
+            createdAt: cb.createdAt,
             notifyUserIds: closerId ? [String(closerId)] : [String(userId)],
             alerts: {
               fiveMinFired: Boolean(cb.alerts?.fiveMinFired),

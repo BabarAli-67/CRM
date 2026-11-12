@@ -43,6 +43,7 @@ export function buildLeadFollowUpReminders(leads, currentUserId, options = {}) {
         kind: 'followup',
         triggerAt: lead.followUp.callbackAt,
         notifyUserIds,
+        // Early-warning skip is persisted on followUp.alerts.fiveMinFired at save
         alerts: lead.followUp.alerts || {
           fiveMinFired: false,
           exactTimeFired: false,

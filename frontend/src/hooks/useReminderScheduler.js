@@ -40,6 +40,19 @@ function isDueNowWindow(triggerMs, now = Date.now()) {
 }
 
 /**
+ * Skip the early warning when the callback was created/rescheduled with less
+ * than 5 minutes of lead time (5-min mark was already in the past at save).
+ * Backend also sets alerts.fiveMinFired in that case; this is a client guard.
+ */
+function wasScheduledInsideFiveMinuteWindow(item, triggerMs) {
+  const createdRaw = item?.createdAt ?? item?.item?.createdAt;
+  if (createdRaw == null || createdRaw === '') return false;
+  const createdMs = new Date(createdRaw).getTime();
+  if (!Number.isFinite(createdMs)) return false;
+  return triggerMs - createdMs < FIVE_MIN_MS;
+}
+
+/**
  * Schedule 5-minute and exact-time reminder chimes for callbacks / lead follow-ups.
  * Uses setTimeout plus a visibility/poll safety net so alerts still fire when
  * the agent is on another dashboard tab or the browser throttles timers.
@@ -75,6 +88,7 @@ export default function useReminderScheduler(items = [], options = {}) {
           notifyUserIds: item.notifyUserIds,
           fiveMinFired: item.alerts?.fiveMinFired ?? false,
           exactTimeFired: item.alerts?.exactTimeFired ?? false,
+          createdAt: item.createdAt ?? null,
         }))
       ),
     [items]
@@ -97,8 +111,9 @@ export default function useReminderScheduler(items = [], options = {}) {
 
       // Final guard — never fire for distant future / wrong calendar day
       const now = Date.now();
-      if (alertType === 'fiveMin' && !isWithinFiveMinuteWindow(triggerMs, now)) {
-        return;
+      if (alertType === 'fiveMin') {
+        if (wasScheduledInsideFiveMinuteWindow(item, triggerMs)) return;
+        if (!isWithinFiveMinuteWindow(triggerMs, now)) return;
       }
       if (alertType === 'exact' && !isDueNowWindow(triggerMs, now)) {
         return;
@@ -175,11 +190,11 @@ export default function useReminderScheduler(items = [], options = {}) {
         if (Number.isNaN(triggerAt)) continue;
 
         const alerts = item.alerts || {};
+        const skipFiveMin =
+          Boolean(alerts.fiveMinFired) ||
+          wasScheduledInsideFiveMinuteWindow(item, triggerAt);
 
-        if (
-          !alerts.fiveMinFired &&
-          isWithinFiveMinuteWindow(triggerAt, now)
-        ) {
+        if (!skipFiveMin && isWithinFiveMinuteWindow(triggerAt, now)) {
           fire(item, 'fiveMin');
         }
         if (!alerts.exactTimeFired && isDueNowWindow(triggerAt, now)) {
@@ -199,8 +214,11 @@ export default function useReminderScheduler(items = [], options = {}) {
 
       const fiveMinBefore = triggerAt - FIVE_MIN_MS;
       const alerts = item.alerts || {};
+      const skipFiveMin =
+        Boolean(alerts.fiveMinFired) ||
+        wasScheduledInsideFiveMinuteWindow(item, triggerAt);
 
-      schedule(item, 'fiveMin', fiveMinBefore, Boolean(alerts.fiveMinFired));
+      schedule(item, 'fiveMin', fiveMinBefore, skipFiveMin);
       schedule(item, 'exact', triggerAt, Boolean(alerts.exactTimeFired));
     }
 
