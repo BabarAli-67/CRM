@@ -271,6 +271,53 @@ export const getCloserDisqualifiedLeads = asyncHandler(async (req, res) => {
 });
 
 /**
+ * Restore a disqualified lead back to the Closer's active Leads desk.
+ * Clears DQ reason and sets stage/status so it appears in assigned-to-me.
+ */
+export const restoreDisqualifiedLead = asyncHandler(async (req, res) => {
+  const lead = await Lead.findById(req.params.id);
+
+  if (!lead) {
+    throw new ApiError(404, 'Lead not found');
+  }
+
+  if (lead.stage !== 'disqualified') {
+    throw new ApiError(400, 'Only disqualified leads can be moved back to Leads');
+  }
+
+  const isSuperAdmin = req.user.role === 'super_admin';
+  const isCloserOwner =
+    req.user.role === 'closer' &&
+    lead.closerId &&
+    String(lead.closerId) === String(req.user._id);
+
+  if (!isSuperAdmin && !isCloserOwner) {
+    throw new ApiError(403, 'You can only restore your own disqualified leads');
+  }
+
+  // Ensure the closer desk list (`with_closer` / `in_progress`) will include it
+  if (req.user.role === 'closer' && !lead.closerId) {
+    lead.closerId = req.user._id;
+  }
+
+  lead.stage = 'active';
+  lead.status = 'with_closer';
+  lead.disqualifiedReason = null;
+
+  await lead.save();
+  await lead.populate([
+    { path: 'agentId', select: 'fullName username role' },
+    { path: 'closerId', select: 'fullName username role' },
+  ]);
+
+  res
+    .status(200)
+    .json(
+      new ApiResponse(200, { lead }, 'Lead restored to active Leads successfully')
+    );
+});
+
+/**
  * Permanently delete a disqualified lead.
  * Closers may only delete their own disqualified leads; super_admin may delete any.
  */
@@ -1027,16 +1074,17 @@ export const closeLead = asyncHandler(async (req, res) => {
     assignedCloserId = assignedCloserId || userId;
   }
 
+  // Active desk leads OR recovering a disqualified lead into Closed Sales
   const lead = await Lead.findOne({
     _id: req.params.id,
-    stage: 'active',
+    stage: { $in: ['active', 'disqualified'] },
     $or: [{ agentId: userId }, { closerId: userId }],
   });
 
   if (!lead) {
     throw new ApiError(
       409,
-      'This lead is no longer active — it may have just been closed or disqualified.'
+      'This lead is no longer available to close — it may already be a closed sale.'
     );
   }
 
@@ -1085,6 +1133,7 @@ export const closeLead = asyncHandler(async (req, res) => {
   }
 
   lead.stage = 'closed_sale';
+  lead.disqualifiedReason = null;
   lead.closedAt = new Date();
   lead.closedBy = userId;
   lead.payment = paymentDoc;

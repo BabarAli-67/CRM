@@ -43,6 +43,12 @@ export const deleteLeadPermanently = async (id) => {
   return response.data.data;
 };
 
+/** Restore a disqualified lead to the Closer's active Leads tab. */
+export const restoreDisqualifiedLead = async (id) => {
+  const response = await api.patch(`/leads/${id}/restore`);
+  return response.data.data.lead;
+};
+
 /** Sales agent — own closed sales history. */
 export const getMyClosedSales = async () => {
   const response = await api.get('/leads/mine/closed');

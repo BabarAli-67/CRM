@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useState } from 'react';
 import LeadDetailModal from '../../components/leads/LeadDetailModal.jsx';
 import LeadTable from '../../components/leads/LeadTable.jsx';
+import CloseSaleModal from '../../components/leads/CloseSaleModal.jsx';
 import MoveToCstModal from '../../components/leads/MoveToCstModal.jsx';
 import CloserScheduleCallbackModal from '../../components/callbacks/CloserScheduleCallbackModal.jsx';
 import CloserShell from '../../components/closer/CloserShell.jsx';
@@ -14,6 +15,7 @@ import {
   getCloserTeamAgents,
   getLeadById,
   moveLeadToCst,
+  restoreDisqualifiedLead,
 } from '../../services/lead.service.js';
 import { formatUserRef } from '../../utils/formatUserRef.util.js';
 import {
@@ -70,6 +72,7 @@ export default function AssignedLeadsPage() {
   const [detailLead, setDetailLead] = useState(null);
   const [scheduleLead, setScheduleLead] = useState(null);
   const [moveToCstLead, setMoveToCstLead] = useState(null);
+  const [closeSaleLead, setCloseSaleLead] = useState(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [actionError, setActionError] = useState('');
   const [actionMessage, setActionMessage] = useState('');
@@ -230,6 +233,37 @@ export default function AssignedLeadsPage() {
     onError: (err) => {
       setActionError(
         err?.response?.data?.message || 'Failed to delete lead permanently.'
+      );
+    },
+  });
+
+  const restoreMutation = useMutation({
+    mutationFn: (id) => restoreDisqualifiedLead(id),
+    onSuccess: (lead) => {
+      const id = lead?._id;
+      setActionMessage('Lead moved back to Leads.');
+      queryClient.setQueryData(['closerDisqualified'], (old) => {
+        if (!Array.isArray(old) || !id) return old;
+        return old.filter((l) => String(l._id) !== String(id));
+      });
+      queryClient.setQueryData(['assignedLeads'], (old) => {
+        const list = Array.isArray(old) ? old : [];
+        if (!lead?._id) return list;
+        if (list.some((l) => String(l._id) === String(lead._id))) {
+          return list.map((l) =>
+            String(l._id) === String(lead._id) ? { ...l, ...lead } : l
+          );
+        }
+        return [lead, ...list];
+      });
+      queryClient.invalidateQueries({ queryKey: ['closerDisqualified'] });
+      queryClient.invalidateQueries({ queryKey: ['assignedLeads'] });
+      queryClient.invalidateQueries({ queryKey: ['pipeline', 'leads'] });
+      queryClient.invalidateQueries({ queryKey: ['allLeads'] });
+    },
+    onError: (err) => {
+      setActionError(
+        err?.response?.data?.message || 'Failed to move lead back to Leads.'
       );
     },
   });
@@ -453,7 +487,8 @@ export default function AssignedLeadsPage() {
                 Disqualified Leads
               </h2>
               <p className="mt-1 text-sm text-zinc-500">
-                Leads you marked as disqualified — permanently remove when done
+                Stay here until you restore to Leads, move to Closed Sales, or
+                delete permanently
               </p>
             </div>
 
@@ -486,6 +521,9 @@ export default function AssignedLeadsPage() {
                       const deleting =
                         deleteMutation.isPending &&
                         deleteMutation.variables === row._id;
+                      const restoring =
+                        restoreMutation.isPending &&
+                        restoreMutation.variables === row._id;
                       return (
                         <tr key={row._id} className={rowClass}>
                           <td className={`${tdClass} font-medium text-white`}>
@@ -520,11 +558,34 @@ export default function AssignedLeadsPage() {
                               </button>
                               <button
                                 type="button"
-                                disabled={deleting}
+                                onClick={() => {
+                                  setActionError('');
+                                  setActionMessage('');
+                                  setCloseSaleLead(row);
+                                }}
+                                className="rounded-lg border border-orange-500/40 bg-orange-600/15 px-3 py-1.5 text-xs font-semibold text-orange-300 hover:bg-orange-600/25"
+                              >
+                                Move to Closed Sales
+                              </button>
+                              <button
+                                type="button"
+                                disabled={restoring || deleting}
+                                onClick={() => {
+                                  setActionError('');
+                                  setActionMessage('');
+                                  restoreMutation.mutate(row._id);
+                                }}
+                                className="rounded-lg border border-emerald-500/40 bg-emerald-600/15 px-3 py-1.5 text-xs font-semibold text-emerald-300 hover:bg-emerald-600/25 disabled:opacity-60"
+                              >
+                                {restoring ? 'Moving…' : 'Move to Leads'}
+                              </button>
+                              <button
+                                type="button"
+                                disabled={deleting || restoring}
                                 onClick={() => {
                                   if (
                                     !window.confirm(
-                                      `Permanently delete "${row.businessName}"? This cannot be undone.`
+                                      'Are you sure you want to permanently delete this lead? This cannot be undone.'
                                     )
                                   ) {
                                     return;
@@ -767,6 +828,18 @@ export default function AssignedLeadsPage() {
             formData,
           })
         }
+      />
+
+      <CloseSaleModal
+        open={Boolean(closeSaleLead)}
+        lead={closeSaleLead}
+        onClose={() => setCloseSaleLead(null)}
+        onSuccess={() => {
+          setActionMessage('Lead moved to Closed Sales.');
+          setToast(true);
+          setCloseSaleLead(null);
+          setTab('closed');
+        }}
       />
     </CloserShell>
   );

@@ -130,6 +130,7 @@ function applyCloseCaches(queryClient, leadId, closedLead) {
 
   queryClient.setQueryData(['myLeads'], removeFromList);
   queryClient.setQueryData(['assignedLeads'], removeFromList);
+  queryClient.setQueryData(['closerDisqualified'], removeFromList);
 
   // Strip linked callbacks from agent agenda so chimes stop immediately
   queryClient.setQueryData(['myCallbacks'], (old) => {
@@ -164,6 +165,7 @@ function applyCloseCaches(queryClient, leadId, closedLead) {
   queryClient.removeQueries({ queryKey: ['lead', leadId] });
   queryClient.invalidateQueries({ queryKey: ['myLeads'] });
   queryClient.invalidateQueries({ queryKey: ['assignedLeads'] });
+  queryClient.invalidateQueries({ queryKey: ['closerDisqualified'] });
   queryClient.invalidateQueries({ queryKey: ['allLeads'] });
   queryClient.invalidateQueries({ queryKey: ['pipeline', 'leads'] });
   queryClient.invalidateQueries({ queryKey: ['myCallbacks'] });

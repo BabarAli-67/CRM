@@ -15,6 +15,7 @@ import {
   getLeadById,
   updateLead,
   disqualifyLead,
+  restoreDisqualifiedLead,
   deleteLeadPermanently,
   setFollowUp,
   markFollowUpAlert,
@@ -113,6 +114,13 @@ router.patch(
   restrictTo('sales_agent', 'closer', 'super_admin'),
   blockReadOnlyAdmin,
   disqualifyLead
+);
+
+router.patch(
+  '/:id/restore',
+  restrictTo('closer', 'super_admin'),
+  blockReadOnlyAdmin,
+  restoreDisqualifiedLead
 );
 
 router.delete(
