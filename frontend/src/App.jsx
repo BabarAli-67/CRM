@@ -17,8 +17,10 @@ import CloserMyCallbacksPage from './pages/closer/CloserMyCallbacksPage.jsx';
 import CloserDashboardPage from './pages/CloserDashboard.page.jsx';
 import CstManagerDashboardPage from './pages/CstManagerDashboard.page.jsx';
 import HandoverQueuePage from './pages/cst-manager/HandoverQueuePage.jsx';
+import ClientDetailPage from './pages/cst-manager/ClientDetailPage.jsx';
 import TechTeamDashboardPage from './pages/TechTeamDashboard.page.jsx';
 import MyProjectsPage from './pages/tech-team/MyProjectsPage.jsx';
+import TechClientPortfolioPage from './pages/tech-team/TechClientPortfolioPage.jsx';
 
 import ReminderDevHarnessPage from './pages/ReminderDevHarness.page.jsx';
 
@@ -150,6 +152,14 @@ function App() {
         }
       />
       <Route
+        path="/dashboard/cst-manager/client/:id"
+        element={
+          <RoleRoute allowedRoles={['cst_manager']}>
+            <ClientDetailPage />
+          </RoleRoute>
+        }
+      />
+      <Route
         path="/dashboard/tech-team"
         element={
           <RoleRoute allowedRoles={['tech_team']}>
@@ -162,6 +172,14 @@ function App() {
         element={
           <RoleRoute allowedRoles={['tech_team']}>
             <MyProjectsPage />
+          </RoleRoute>
+        }
+      />
+      <Route
+        path="/dashboard/tech-team/client/:id"
+        element={
+          <RoleRoute allowedRoles={['tech_team']}>
+            <TechClientPortfolioPage />
           </RoleRoute>
         }
       />

@@ -54,6 +54,24 @@ const leadSchema = new mongoose.Schema(
       default: null,
       trim: true,
     },
+    /** Optional niche / industry (CST profile context; may be blank). */
+    niche: {
+      type: String,
+      default: null,
+      trim: true,
+    },
+    /** Optional street / mailing address (CST profile context; may be blank). */
+    locationAddress: {
+      type: String,
+      default: null,
+      trim: true,
+    },
+    /** Lead source label (CST profile context; may be blank). */
+    leadSource: {
+      type: String,
+      default: null,
+      trim: true,
+    },
     salesAmount: {
       type: Number,
       default: null,
@@ -220,11 +238,17 @@ const leadSchema = new mongoose.Schema(
           enum: [
             'awaiting_handover',
             'pending_review',
+            'onboarded',
             'assigned',
             'in_progress',
             'completed',
           ],
           default: 'awaiting_handover',
+        },
+        /** When CST clicked Onboard Client (entered Onboard tab). */
+        onboardedAt: {
+          type: Date,
+          default: null,
         },
         assignedTechId: {
           type: mongoose.Schema.Types.ObjectId,
@@ -279,6 +303,225 @@ const leadSchema = new mongoose.Schema(
           type: String,
           default: null,
           trim: true,
+        },
+        /**
+         * CST activation call (set from Client Detail Section A).
+         * Missing/undefined → treat as not completed (No).
+         */
+        activationCall: {
+          type: {
+            done: {
+              type: Boolean,
+              default: false,
+            },
+            at: {
+              type: Date,
+              default: null,
+            },
+          },
+          default: undefined,
+        },
+        /**
+         * Onboarding welcome email (Client Detail Section B via EmailJS).
+         * Missing/undefined → treat as not sent (No).
+         */
+        welcomeEmail: {
+          type: {
+            sent: {
+              type: Boolean,
+              default: false,
+            },
+            at: {
+              type: Date,
+              default: null,
+            },
+            toEmail: {
+              type: String,
+              default: null,
+              trim: true,
+              lowercase: true,
+            },
+          },
+          default: undefined,
+        },
+        /**
+         * CST retention callback (Client Detail Section C).
+         * Exact-time dashboard alert only (fiveMinFired always true to skip early warning).
+         */
+        retention: {
+          type: {
+            at: {
+              type: Date,
+              default: null,
+            },
+            status: {
+              type: String,
+              enum: ['scheduled', 'done'],
+              default: null,
+            },
+            alerts: {
+              fiveMinFired: {
+                type: Boolean,
+                default: true,
+              },
+              exactTimeFired: {
+                type: Boolean,
+                default: false,
+              },
+            },
+            doneAt: {
+              type: Date,
+              default: null,
+            },
+          },
+          default: undefined,
+        },
+        /**
+         * Products / Services & Custom Scope (Client Detail Section D).
+         * selected: seo | web | social_media | other
+         */
+        serviceScope: {
+          type: {
+            selected: {
+              type: [
+                {
+                  type: String,
+                  enum: ['seo', 'web', 'social_media', 'other'],
+                },
+              ],
+              default: [],
+            },
+            otherNote: {
+              type: String,
+              default: null,
+              trim: true,
+            },
+          },
+          default: undefined,
+        },
+        /**
+         * Upselling & Split Payment Ledger (Client Detail Section E).
+         * Separate from base sale payment / salesAmount — never mixed.
+         * Pending = max(0, totalAmount - paidAmount); computed on the client.
+         */
+        upsellLedger: {
+          type: [
+            {
+              entryId: {
+                type: String,
+                required: true,
+                trim: true,
+              },
+              title: {
+                type: String,
+                default: '',
+                trim: true,
+              },
+              totalAmount: {
+                type: Number,
+                default: 0,
+                min: 0,
+              },
+              paidAmount: {
+                type: Number,
+                default: 0,
+                min: 0,
+              },
+            },
+          ],
+          default: undefined,
+        },
+        /**
+         * Cumulative paid total = salesAmount (base) + sum(upsell paid).
+         * Never overwrites salesAmount — recomputed on portfolio save.
+         */
+        totalCollectedAmount: {
+          type: Number,
+          default: null,
+          min: 0,
+        },
+        /**
+         * Contract value = salesAmount (base) + sum(upsell totals).
+         * Recomputed on portfolio save alongside totalCollectedAmount.
+         */
+        totalContractValue: {
+          type: Number,
+          default: null,
+          min: 0,
+        },
+        /**
+         * Live Portfolio keywords (Section F) — Tech manages; CST view-only.
+         * text = keyword phrase; position = ranking (e.g. "#3", "Page 1 - Pos 4").
+         * Legacy rows without position remain valid (position defaults null).
+         */
+        portfolioKeywords: {
+          type: [
+            {
+              keywordId: { type: String, required: true, trim: true },
+              text: { type: String, required: true, trim: true },
+              position: { type: String, default: null, trim: true },
+              note: { type: String, default: null, trim: true },
+              at: { type: Date, default: Date.now },
+            },
+          ],
+          default: undefined,
+        },
+        /**
+         * Monthly report PDFs (Section F) — Tech uploads; CST views/downloads.
+         */
+        monthlyReports: {
+          type: [
+            {
+              reportId: { type: String, required: true, trim: true },
+              title: { type: String, required: true, trim: true },
+              originalName: { type: String, default: null },
+              storedFilename: { type: String, required: true },
+              mimeType: { type: String, default: 'application/pdf' },
+              sizeBytes: { type: Number, default: null },
+              relativePath: { type: String, required: true },
+              uploadedBy: {
+                type: mongoose.Schema.Types.ObjectId,
+                ref: 'User',
+                default: null,
+              },
+              at: { type: Date, default: Date.now },
+            },
+          ],
+          default: undefined,
+        },
+        /**
+         * Client change request log (Section F) — CST/Tech log; Tech updates status.
+         */
+        changeRequests: {
+          type: [
+            {
+              requestId: { type: String, required: true, trim: true },
+              category: {
+                type: String,
+                enum: ['seo', 'web', 'social_media', 'other'],
+                required: true,
+              },
+              description: { type: String, required: true, trim: true },
+              status: {
+                type: String,
+                enum: ['pending', 'in_progress', 'completed'],
+                default: 'pending',
+              },
+              loggedAt: { type: Date, default: Date.now },
+              loggedBy: {
+                type: mongoose.Schema.Types.ObjectId,
+                ref: 'User',
+                default: null,
+              },
+              statusUpdatedAt: { type: Date, default: null },
+              statusUpdatedBy: {
+                type: mongoose.Schema.Types.ObjectId,
+                ref: 'User',
+                default: null,
+              },
+            },
+          ],
+          default: undefined,
         },
         /** Tech execution progress (mirrors assigned → in_progress → completed). */
         techStatus: {

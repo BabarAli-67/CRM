@@ -13,6 +13,31 @@ const EXACT_CATCHUP_MS = 2 * 60 * 1000;
 const MAX_TIMEOUT_MS = 12 * 60 * 60 * 1000;
 /** Backup poll — catches timers throttled while the tab was backgrounded. */
 const POLL_MS = 15_000;
+/** Faster poll for CST retention exact-time items. */
+const FAST_POLL_MS = 3_000;
+
+/** Module-level fire guards so reschedule can clear them from outside the hook. */
+const firedKeys = new Set();
+
+/**
+ * Clear session fire guards (and optionally only for one reminder target).
+ * Call when CST saves a new Retention Date/Time so the new schedule can ring.
+ */
+export function clearReminderFireKeys({ kind, id } = {}) {
+  if (!kind && !id) {
+    firedKeys.clear();
+    return;
+  }
+  for (const key of [...firedKeys]) {
+    if (kind && id) {
+      if (key.startsWith(`${kind}:${id}:`)) firedKeys.delete(key);
+    } else if (kind) {
+      if (key.startsWith(`${kind}:`)) firedKeys.delete(key);
+    } else if (String(key).includes(`:${id}:`)) {
+      firedKeys.delete(key);
+    }
+  }
+}
 
 /**
  * Parse trigger to epoch ms. Rejects invalid / NaN timestamps.
@@ -53,6 +78,20 @@ function wasScheduledInsideFiveMinuteWindow(item, triggerMs) {
 }
 
 /**
+ * Should this signed-in user be alerted for the item?
+ *
+ * Callbacks / lead follow-ups stay owner-scoped (notifyUserIds must contain the
+ * current user). CST retention is desk-wide — any signed-in CST Manager must
+ * hear it — so those items opt out with `notifyAll` instead of relying on an
+ * id match against the session user payload.
+ */
+function isNotifiable(item, currentUserId) {
+  if (item?.notifyAll) return true;
+  const notifyIds = (item?.notifyUserIds || []).map(String);
+  return notifyIds.includes(currentUserId);
+}
+
+/**
  * Schedule 5-minute and exact-time reminder chimes for callbacks / lead follow-ups.
  * Uses setTimeout plus a visibility/poll safety net so alerts still fire when
  * the agent is on another dashboard tab or the browser throttles timers.
@@ -75,9 +114,6 @@ export default function useReminderScheduler(items = [], options = {}) {
   markAlertRef.current = markAlert;
   itemsRef.current = items;
 
-  // Session guard — once per callbackId + interval (fiveMin / exact)
-  const firedRef = useRef(new Set());
-
   const scheduleKey = useMemo(
     () =>
       JSON.stringify(
@@ -86,6 +122,7 @@ export default function useReminderScheduler(items = [], options = {}) {
           kind: item.kind,
           triggerAt: item.triggerAt,
           notifyUserIds: item.notifyUserIds,
+          notifyAll: Boolean(item.notifyAll),
           fiveMinFired: item.alerts?.fiveMinFired ?? false,
           exactTimeFired: item.alerts?.exactTimeFired ?? false,
           createdAt: item.createdAt ?? null,
@@ -102,9 +139,14 @@ export default function useReminderScheduler(items = [], options = {}) {
       return () => {};
     }
 
+    // Retention uses the same dual-phase scheduler as callbacks; poll a bit
+    // faster so CST exact-time alerts land close to the scheduled minute.
+    const needsFastPoll = list.some((item) => item?.kind === 'retention');
+    const pollMs = needsFastPoll ? FAST_POLL_MS : POLL_MS;
+
     const fire = async (item, alertType) => {
       const key = `${item.kind}:${item.id}:${alertType}:${item.triggerAt}`;
-      if (firedRef.current.has(key)) return;
+      if (firedKeys.has(key)) return;
 
       const triggerMs = parseTriggerMs(item.triggerAt);
       if (Number.isNaN(triggerMs)) return;
@@ -115,11 +157,12 @@ export default function useReminderScheduler(items = [], options = {}) {
         if (wasScheduledInsideFiveMinuteWindow(item, triggerMs)) return;
         if (!isWithinFiveMinuteWindow(triggerMs, now)) return;
       }
-      if (alertType === 'exact' && !isDueNowWindow(triggerMs, now)) {
-        return;
+      if (alertType === 'exact') {
+        // Same due window as Agent / Closer callbacks (arrived or ≤2 min late)
+        if (!isDueNowWindow(triggerMs, now)) return;
       }
 
-      firedRef.current.add(key);
+      firedKeys.add(key);
 
       try {
         showPopupRef.current?.({
@@ -128,6 +171,7 @@ export default function useReminderScheduler(items = [], options = {}) {
           alertType,
           triggerAt: item.triggerAt,
           businessName: item.businessName,
+          clientName: item.clientName,
           phone: item.phone,
           item,
         });
@@ -142,20 +186,20 @@ export default function useReminderScheduler(items = [], options = {}) {
             : { id: item.id, kind: item.kind, exactTimeFired: true };
         await markAlertRef.current?.(payload);
       } catch {
-        firedRef.current.delete(key);
+        firedKeys.delete(key);
       }
     };
 
     const schedule = (item, alertType, targetMs, alreadyFired) => {
       if (alreadyFired) {
-        firedRef.current.add(
+        firedKeys.add(
           `${item.kind}:${item.id}:${alertType}:${item.triggerAt}`
         );
         return;
       }
 
       const key = `${item.kind}:${item.id}:${alertType}:${item.triggerAt}`;
-      if (firedRef.current.has(key)) return;
+      if (firedKeys.has(key)) return;
 
       const now = Date.now();
       const delta = targetMs - now;
@@ -183,8 +227,7 @@ export default function useReminderScheduler(items = [], options = {}) {
 
       for (const item of live) {
         if (!item?.id || !item?.triggerAt) continue;
-        const notifyIds = (item.notifyUserIds || []).map(String);
-        if (!notifyIds.includes(currentUserId)) continue;
+        if (!isNotifiable(item, currentUserId)) continue;
 
         const triggerAt = parseTriggerMs(item.triggerAt);
         if (Number.isNaN(triggerAt)) continue;
@@ -206,8 +249,7 @@ export default function useReminderScheduler(items = [], options = {}) {
     for (const item of list) {
       if (!item?.id || !item?.triggerAt) continue;
 
-      const notifyIds = (item.notifyUserIds || []).map(String);
-      if (!notifyIds.includes(currentUserId)) continue;
+      if (!isNotifiable(item, currentUserId)) continue;
 
       const triggerAt = parseTriggerMs(item.triggerAt);
       if (Number.isNaN(triggerAt)) continue;
@@ -227,11 +269,11 @@ export default function useReminderScheduler(items = [], options = {}) {
       liveKeys.add(`${item.kind}:${item.id}:fiveMin:${item.triggerAt}`);
       liveKeys.add(`${item.kind}:${item.id}:exact:${item.triggerAt}`);
     }
-    for (const key of [...firedRef.current]) {
-      if (!liveKeys.has(key)) firedRef.current.delete(key);
+    for (const key of [...firedKeys]) {
+      if (!liveKeys.has(key)) firedKeys.delete(key);
     }
 
-    const pollId = window.setInterval(scanAll, POLL_MS);
+    const pollId = window.setInterval(scanAll, pollMs);
     const onVisible = () => {
       if (document.visibilityState === 'visible') scanAll();
     };

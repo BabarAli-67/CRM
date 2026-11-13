@@ -22,7 +22,8 @@ let activeNodes = [];
 let alarmGeneration = 0;
 let alarmPlaying = false;
 
-const ALARM_MP3 = '/alarm.mp3';
+/** Prefer static file chimes (cross-platform). Web Audio oscillator is last resort. */
+const ALARM_SOURCES = ['/alarm.mp3', '/alarm.wav'];
 const PULSE_HZ = 1200;
 const PULSE_EVERY_MS = 1500;
 
@@ -42,22 +43,27 @@ const resumeContext = async (ctx) => {
   }
 };
 
+/** Tiny silent WAV — unlocks HTMLAudio without ever touching /alarm.* */
+const SILENT_WAV =
+  'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA';
+
 /**
  * Unlock media playback after a user gesture (required by browsers).
- * Safe to call repeatedly.
+ * Never plays the reminder alarm asset — clicks must stay silent.
+ * Safe to call repeatedly (subsequent calls only resume AudioContext).
  */
 export async function unlockAudioPlayback() {
   try {
     const ctx = ensureContext();
     if (ctx) await resumeContext(ctx);
 
-    if (typeof Audio !== 'undefined') {
+    // Prime HTMLAudio once with a silent data-URI — never /alarm.mp3|/alarm.wav
+    if (typeof Audio !== 'undefined' && !audioUnlocked) {
       if (!primedAudio) {
-        primedAudio = new Audio(ALARM_MP3);
+        primedAudio = new Audio(SILENT_WAV);
         primedAudio.preload = 'auto';
-        primedAudio.volume = 0.01;
+        primedAudio.volume = 0;
       }
-      // Silent/near-silent play primes HTML5 Audio for later looping alarm
       primedAudio.currentTime = 0;
       const playPromise = primedAudio.play();
       if (playPromise?.then) {
@@ -65,7 +71,6 @@ export async function unlockAudioPlayback() {
       }
       primedAudio.pause();
       primedAudio.currentTime = 0;
-      primedAudio.volume = 1;
     }
 
     audioUnlocked = true;
@@ -80,36 +85,27 @@ const bindUnlockOnGesture = () => {
   if (unlockBound || typeof window === 'undefined') return;
   unlockBound = true;
 
-  const unlock = () => {
+  const onGesture = () => {
+    // Resume only — unlockAudioPlayback itself never starts the alarm loop
     unlockAudioPlayback();
   };
 
-  // Keep listening across the session — first gesture unlocks; later gestures
-  // re-resume if the OS suspended the context while the tab was backgrounded.
-  window.addEventListener('pointerdown', unlock, { passive: true });
-  window.addEventListener('keydown', unlock, { passive: true });
-  window.addEventListener('touchstart', unlock, { passive: true });
-  window.addEventListener('click', unlock, { passive: true });
+  // Gestures unlock/resume Autoplay policy only; they must never startChime
+  window.addEventListener('pointerdown', onGesture, { passive: true });
+  window.addEventListener('keydown', onGesture, { passive: true });
+  window.addEventListener('touchstart', onGesture, { passive: true });
 };
 
-bindUnlockOnGesture();
-
-/** Probe public `/alarm.mp3` — resolves null if missing / unloadable. */
-function tryLoadAlarmMp3() {
+/** Probe a single static alarm URL — resolves the element or null. */
+function tryLoadAlarmSource(src) {
   return new Promise((resolve) => {
-    if (typeof Audio === 'undefined') {
+    if (typeof Audio === 'undefined' || !src) {
       resolve(null);
       return;
     }
 
-    const audio = primedAudio
-      ? primedAudio
-      : (() => {
-          const a = new Audio(ALARM_MP3);
-          a.preload = 'auto';
-          return a;
-        })();
-
+    const audio = new Audio(src);
+    audio.preload = 'auto';
     audio.loop = true;
     audio.volume = 1.0;
 
@@ -126,7 +122,6 @@ function tryLoadAlarmMp3() {
 
     audio.addEventListener('canplaythrough', onOk, { once: true });
     audio.addEventListener('error', onErr, { once: true });
-
     audio.load();
 
     window.setTimeout(() => {
@@ -135,6 +130,15 @@ function tryLoadAlarmMp3() {
       else finish(null);
     }, 2500);
   });
+}
+
+/** Prefer `/alarm.mp3`, then `/alarm.wav` — never rely on oscillator first. */
+async function tryLoadAlarmMp3() {
+  for (const src of ALARM_SOURCES) {
+    const audio = await tryLoadAlarmSource(src);
+    if (audio) return audio;
+  }
+  return null;
 }
 
 function playPulseBurst(ctx) {
@@ -199,24 +203,29 @@ export function stopChime() {
   alarmPlaying = false;
   alarmGeneration += 1;
 
-  if (htmlAlarm) {
+  const silence = (audio) => {
+    if (!audio) return;
     try {
-      htmlAlarm.pause();
-      htmlAlarm.currentTime = 0;
-      htmlAlarm.loop = false;
+      audio.pause();
+      audio.loop = false;
+      audio.currentTime = 0;
     } catch {
       // ignore
     }
-    // Keep primedAudio reference for next unlock; don't nuke src if shared
-    if (htmlAlarm !== primedAudio) {
-      try {
-        htmlAlarm.src = '';
-      } catch {
-        // ignore
-      }
+  };
+
+  silence(htmlAlarm);
+  if (htmlAlarm && htmlAlarm !== primedAudio) {
+    try {
+      htmlAlarm.src = '';
+    } catch {
+      // ignore
     }
-    htmlAlarm = null;
   }
+  htmlAlarm = null;
+
+  // Also silence the unlock-primed element so nothing keeps looping in background
+  silence(primedAudio);
 
   if (pulseTimer != null) {
     window.clearInterval(pulseTimer);

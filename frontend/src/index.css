@@ -43,4 +43,30 @@
   .scrollbar-thumb-zinc-800::-webkit-scrollbar-thumb:hover {
     background-color: theme('colors.zinc.700');
   }
+
+  /* Client Detail tab panel — dark track + orange accent thumb */
+  .scrollbar-portfolio {
+    scrollbar-width: thin;
+    scrollbar-color: #f25e26 #1a1a1a;
+  }
+
+  .scrollbar-portfolio::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  .scrollbar-portfolio::-webkit-scrollbar-track {
+    background: #1a1a1a;
+    border-radius: 9999px;
+  }
+
+  .scrollbar-portfolio::-webkit-scrollbar-thumb {
+    background-color: #f25e26;
+    border-radius: 9999px;
+    border: 2px solid #1a1a1a;
+  }
+
+  .scrollbar-portfolio::-webkit-scrollbar-thumb:hover {
+    background-color: #ff6a36;
+  }
 }

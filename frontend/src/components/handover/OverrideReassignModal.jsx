@@ -7,6 +7,7 @@ import { ADMIN_BTN_GHOST, ADMIN_BTN_PRIMARY, ADMIN_INPUT } from '../adminBrand.j
 const CST_STATUSES = [
   { value: 'awaiting_handover', label: 'Awaiting CST handover' },
   { value: 'pending_review', label: 'Handed over to CST' },
+  { value: 'onboarded', label: 'Onboarded (CST)' },
   { value: 'assigned', label: 'Assigned' },
   { value: 'in_progress', label: 'In progress' },
   { value: 'completed', label: 'Completed' },

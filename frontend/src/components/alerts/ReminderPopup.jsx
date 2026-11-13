@@ -6,6 +6,7 @@ import {
   updateCallback,
   updateCloserCallback,
 } from '../../services/callback.service.js';
+import { markRetentionAlert } from '../../services/handover.service.js';
 import {
   markLeadFollowUpAlert,
   setLeadFollowUp,
@@ -33,6 +34,15 @@ const notify = () => {
 export function enqueueReminderPopup(payload) {
   if (!payload) return;
 
+  // Avoid stacking duplicate alerts for the same target + phase
+  const alreadyQueued = queue.some(
+    (e) =>
+      e.kind === payload.kind &&
+      String(e.id) === String(payload.id) &&
+      e.alertType === (payload.alertType || 'alert')
+  );
+  if (alreadyQueued) return;
+
   const entry = {
     queueId: `${payload.kind || 'item'}-${payload.id}-${payload.alertType || 'alert'}-${Date.now()}`,
     id: payload.id,
@@ -43,11 +53,40 @@ export function enqueueReminderPopup(payload) {
       payload.businessName ||
       payload.item?.businessName ||
       'Unknown business',
+    clientName:
+      payload.clientName ||
+      payload.item?.clientName ||
+      '',
     phone: payload.phone || payload.item?.phone || '—',
     item: payload.item,
   };
 
   queue.push(entry);
+  notify();
+}
+
+/**
+ * Drop queued popups for a target (e.g. retention rescheduled) and silence
+ * the alarm if the active card was removed.
+ */
+export function clearQueuedReminders({ kind, id } = {}) {
+  if (!kind && id == null) {
+    queue.length = 0;
+    stopChime();
+    notify();
+    return;
+  }
+  const before = queue[0]?.queueId;
+  for (let i = queue.length - 1; i >= 0; i -= 1) {
+    const row = queue[i];
+    const kindOk = !kind || row.kind === kind;
+    const idOk = id == null || String(row.id) === String(id);
+    if (kindOk && idOk) queue.splice(i, 1);
+  }
+  if (before && queue[0]?.queueId !== before) {
+    stopChime();
+  }
+  if (queue.length === 0) stopChime();
   notify();
 }
 
@@ -76,8 +115,11 @@ const formatPkt = (value) => {
   });
 };
 
-const kindLabel = (kind) =>
-  kind === 'followup' ? 'Lead Follow-up' : 'Callback';
+const kindLabel = (kind) => {
+  if (kind === 'followup') return 'Lead Follow-up';
+  if (kind === 'retention') return 'Retention Callback';
+  return 'Callback';
+};
 
 function patchCallbackAlerts(queryClient, queryKey, id, alertPatch) {
   queryClient.setQueryData(queryKey, (old) => {
@@ -122,6 +164,31 @@ function patchLeadFollowUpAlerts(queryClient, leadId, alertPatch, extra = {}) {
   queryClient.setQueryData(['assignedLeads'], patchList);
 }
 
+function patchRetentionAlert(queryClient, id, alertPatch, extra = {}) {
+  queryClient.setQueryData(['retentionReminders'], (old) => {
+    if (!Array.isArray(old)) return old;
+    return old.map((lead) => {
+      if (String(lead._id) !== String(id)) return lead;
+      return {
+        ...lead,
+        handover: {
+          ...(lead.handover || {}),
+          retention: {
+            ...(lead.handover?.retention || {}),
+            ...extra,
+            alerts: {
+              fiveMinFired: true,
+              exactTimeFired: false,
+              ...(lead.handover?.retention?.alerts || {}),
+              ...alertPatch,
+            },
+          },
+        },
+      };
+    });
+  });
+}
+
 /**
  * Persist only the phase that was dismissed — never both flags together.
  * Warning OK → fiveMinFired only (due alert must still fire).
@@ -134,6 +201,17 @@ async function persistPhaseAck(reminder, queryClient) {
   const alertPatch = isWarning
     ? { fiveMinFired: true }
     : { exactTimeFired: true };
+
+  if (reminder.kind === 'retention') {
+    patchRetentionAlert(queryClient, reminder.id, { exactTimeFired: true });
+    await markRetentionAlert(reminder.id, { exactTimeFired: true });
+    queryClient.invalidateQueries({ queryKey: ['retentionReminders'] });
+    queryClient.invalidateQueries({ queryKey: ['lead', reminder.id] });
+    queryClient.invalidateQueries({
+      queryKey: ['lead', reminder.id, 'portfolio'],
+    });
+    return;
+  }
 
   // Optimistic local flags (phase-scoped)
   if (reminder.kind === 'callback') {
@@ -189,12 +267,59 @@ async function persistPhaseAck(reminder, queryClient) {
 }
 
 /**
- * Single toast card — phase-specific alert with OK only.
+ * Single toast card — phase-specific alert with OK.
+ * Retention: Business + Client + OK only.
  */
 function ReminderPopup({ reminder, onOk, acknowledging = false }) {
   if (!reminder) return null;
 
+  const isRetention = reminder.kind === 'retention';
   const isExact = reminder.alertType === 'exact';
+
+  if (isRetention) {
+    return (
+      <div
+        role="alertdialog"
+        aria-modal="true"
+        aria-live="assertive"
+        className="pointer-events-auto w-full max-w-md overflow-hidden rounded-xl border border-orange-400/40 bg-zinc-950 shadow-2xl shadow-black/50"
+      >
+        <div className="border-b border-orange-500/30 bg-orange-600/20 px-4 py-3">
+          <p className="text-xs font-semibold uppercase tracking-wide text-orange-300/90">
+            Retention Callback · Due now
+          </p>
+        </div>
+
+        <div className="space-y-2 px-4 py-3 text-zinc-100">
+          <p className="text-sm">
+            <span className="font-medium text-zinc-400">Business Name:</span>{' '}
+            {reminder.businessName}
+          </p>
+          <p className="text-sm">
+            <span className="font-medium text-zinc-400">Client Name:</span>{' '}
+            {reminder.clientName?.trim() || '—'}
+          </p>
+
+          <div className="flex flex-wrap items-center gap-2 pt-2">
+            <button
+              type="button"
+              disabled={acknowledging}
+              onClick={onOk}
+              className="rounded-md bg-orange-600 px-4 py-2 text-sm font-semibold text-white hover:bg-orange-500 disabled:opacity-60"
+            >
+              {acknowledging ? 'OK…' : 'OK'}
+            </button>
+            {queue.length > 1 ? (
+              <span className="ml-auto text-xs text-zinc-500">
+                +{queue.length - 1} more
+              </span>
+            ) : null}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   const headline = isExact
     ? `Callback Due Now: ${reminder.businessName}`
     : `Upcoming Callback in 5 mins: ${reminder.businessName}`;
@@ -260,7 +385,8 @@ function ReminderPopup({ reminder, onOk, acknowledging = false }) {
 
 /**
  * Mount once in the authenticated shell. Shows one reminder at a time from the queue.
- * Alarm loops while visible; OK (or 60s auto) acknowledges only the current phase.
+ * Alarm loops while visible; OK stops audio immediately and acknowledges.
+ * Retention stays until OK (no 60s auto-ack). Other kinds keep 60s auto-ack.
  */
 export function ReminderPopupHost() {
   const queryClient = useQueryClient();
@@ -273,10 +399,13 @@ export function ReminderPopupHost() {
 
   const handleOk = useCallback(async () => {
     if (!active || acknowledging) return;
-    setAcknowledging(true);
+    // Stop audio first — before any await — so the beep never sticks
     stopChime();
+    setAcknowledging(true);
     const current = active;
     dismissFront();
+    // If queue is now empty, guarantee silence again after unmount path
+    if (queue.length === 0) stopChime();
     try {
       await persistPhaseAck(current, queryClient);
     } catch {
@@ -284,7 +413,9 @@ export function ReminderPopupHost() {
       queryClient.invalidateQueries({ queryKey: ['closerCallbacks'] });
       queryClient.invalidateQueries({ queryKey: ['myLeads'] });
       queryClient.invalidateQueries({ queryKey: ['assignedLeads'] });
+      queryClient.invalidateQueries({ queryKey: ['retentionReminders'] });
     } finally {
+      stopChime();
       setAcknowledging(false);
     }
   }, [active, acknowledging, queryClient]);
@@ -297,8 +428,10 @@ export function ReminderPopupHost() {
     }
 
     const isExact = active.alertType === 'exact';
-    const label =
-      active.kind === 'followup'
+    const isRetention = active.kind === 'retention';
+    const label = isRetention
+      ? `Retention Due Now: ${active.businessName}`
+      : active.kind === 'followup'
         ? isExact
           ? `Follow-up Due Now: ${active.businessName}`
           : `Upcoming Follow-up in 5 mins: ${active.businessName}`
@@ -307,15 +440,30 @@ export function ReminderPopupHost() {
           : `Upcoming Callback in 5 mins: ${active.businessName}`;
 
     showBrowserNotification({
-      title: isExact ? 'Flash CRM · Due Now' : 'Flash CRM · 5 min warning',
+      title: isRetention
+        ? 'Flash CRM · Retention Due'
+        : isExact
+          ? 'Flash CRM · Due Now'
+          : 'Flash CRM · 5 min warning',
       body: label,
       tag: `flashcrm-${active.kind}-${active.id}-${active.alertType}`,
     });
 
-    startAlarmLoop();
+    let cancelled = false;
+    startAlarmLoop().then(() => {
+      // If this popup was already closed while audio was loading, stay silent
+      if (cancelled) stopChime();
+    });
+
+    // Retention: stay until OK. Other kinds: 60s auto-ack.
+    if (isRetention) {
+      return () => {
+        cancelled = true;
+        stopChime();
+      };
+    }
 
     const safetyId = window.setTimeout(() => {
-      // Auto-ack current phase only (same as OK) so due can still fire later
       stopChime();
       const current = queue[0];
       if (current && current.queueId === active.queueId) {
@@ -330,6 +478,7 @@ export function ReminderPopupHost() {
     }, AUTO_STOP_MS);
 
     return () => {
+      cancelled = true;
       window.clearTimeout(safetyId);
       stopChime();
     };

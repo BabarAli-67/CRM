@@ -9,6 +9,10 @@ import {
   markCloserCallbackAlert,
 } from '../../services/callback.service.js';
 import {
+  getRetentionReminders,
+  markRetentionAlert,
+} from '../../services/handover.service.js';
+import {
   getAssignedLeads,
   getMyLeads,
   markLeadFollowUpAlert,
@@ -18,8 +22,10 @@ import { requestNotificationPermission } from '../../utils/browserNotification.u
 import { buildLeadFollowUpReminders } from '../../utils/leadReminders.js';
 
 /**
- * Always-on reminder bridge for department dashboards (Agent + Closer).
+ * Always-on reminder bridge for department dashboards (Agent + Closer + CST).
  * Keeps independent 5-min (warning) + on-time (due) timers alive on every tab.
+ * CST retention uses the same exact-time due window as Agent/Closer callbacks
+ * (fiveMinFired pre-set so only the on-time phase arms).
  * Dismissing warning must never mute the due chime — each phase has its own flag:
  *   alerts.fiveMinFired  ≈ warningTriggered
  *   alerts.exactTimeFired ≈ dueTriggered
@@ -45,6 +51,7 @@ export default function GlobalRemindersBridge() {
 
   const isAgent = role === 'sales_agent';
   const isCloser = role === 'closer';
+  const isCst = role === 'cst_manager';
 
   const { data: callbacks = [] } = useQuery({
     queryKey: ['myCallbacks'],
@@ -74,7 +81,52 @@ export default function GlobalRemindersBridge() {
     refetchInterval: 30_000,
   });
 
+  const { data: retentionLeads = [] } = useQuery({
+    queryKey: ['retentionReminders'],
+    queryFn: getRetentionReminders,
+    enabled: isCst,
+    refetchInterval: 3_000,
+    staleTime: 0,
+    refetchOnMount: 'always',
+    refetchIntervalInBackground: true,
+  });
+
   const reminderItems = useMemo(() => {
+    if (isCst) {
+      const uid = String(userId || user?.id || '');
+      return (retentionLeads || [])
+        .filter(
+          (lead) =>
+            lead?.handover?.retention?.at &&
+            lead?.handover?.retention?.status === 'scheduled' &&
+            // Still awaiting CST dismiss / mark-done
+            !Boolean(lead?.handover?.retention?.alerts?.exactTimeFired)
+        )
+        .map((lead) => ({
+          id: lead._id,
+          kind: 'retention',
+          triggerAt: lead.handover.retention.at,
+          createdAt:
+            lead.handover?.retention?.at ||
+            lead.updatedAt ||
+            lead.createdAt,
+          notifyUserIds: uid ? [uid] : [],
+          // Retention is desk-wide: ring for whichever CST Manager is signed in
+          notifyAll: true,
+          alerts: {
+            // Exact-time only — same as callbacks once fiveMin is skipped
+            fiveMinFired: true,
+            exactTimeFired: Boolean(
+              lead.handover.retention.alerts?.exactTimeFired
+            ),
+          },
+          businessName: lead.businessName,
+          clientName: lead.clientName,
+          phone: lead.phone,
+          item: lead,
+        }));
+    }
+
     if (isAgent) {
       const callbackItems = (callbacks || [])
         .filter((cb) => cb.status === 'pending')
@@ -146,11 +198,14 @@ export default function GlobalRemindersBridge() {
   }, [
     isAgent,
     isCloser,
+    isCst,
     callbacks,
     closerCallbacks,
     myLeads,
     assignedLeads,
+    retentionLeads,
     userId,
+    user?.id,
   ]);
 
   useReminderScheduler(reminderItems, {
@@ -166,6 +221,34 @@ export default function GlobalRemindersBridge() {
         exactTimeFired: Boolean(oldAlerts.exactTimeFired),
         ...patch,
       });
+
+      if (kind === 'retention') {
+        // Same as callbacks: persist phase flag when the scheduler fires (and on OK)
+        if (typeof exactTimeFired === 'boolean' && exactTimeFired) {
+          queryClient.setQueryData(['retentionReminders'], (old) => {
+            if (!Array.isArray(old)) return old;
+            return old.map((lead) => {
+              if (String(lead._id) !== String(id)) return lead;
+              return {
+                ...lead,
+                handover: {
+                  ...(lead.handover || {}),
+                  retention: {
+                    ...(lead.handover?.retention || {}),
+                    alerts: {
+                      fiveMinFired: true,
+                      exactTimeFired: true,
+                    },
+                  },
+                },
+              };
+            });
+          });
+          await markRetentionAlert(id, { exactTimeFired: true });
+          queryClient.invalidateQueries({ queryKey: ['retentionReminders'] });
+        }
+        return;
+      }
 
       if (kind === 'callback') {
         queryClient.setQueryData(['myCallbacks'], (old) => {

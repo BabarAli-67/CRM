@@ -1,3 +1,4 @@
+import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import MilestoneStepper from '../../components/handover/MilestoneStepper.jsx';
 import TechTeamShell from '../../components/tech-team/TechTeamShell.jsx';
@@ -113,6 +114,12 @@ export default function MyProjectsPage() {
                         Assigned {formatPkt(project.handover?.assignedAt)}
                         {project.phone ? ` · ${project.phone}` : ''}
                       </p>
+                      <Link
+                        to={`/dashboard/tech-team/client/${project._id}`}
+                        className="mt-2 inline-flex text-sm font-semibold text-orange-400 hover:text-orange-300"
+                      >
+                        Open Live Portfolio →
+                      </Link>
                     </div>
                     {links.length > 0 ? (
                       <div className="flex flex-wrap gap-x-3 gap-y-1 text-sm">

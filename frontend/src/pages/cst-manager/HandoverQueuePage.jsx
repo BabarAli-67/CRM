@@ -1,14 +1,19 @@
 import { useMemo, useState } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
-import ClientOnboardModal from '../../components/handover/ClientOnboardModal.jsx';
+import { Link, useSearchParams } from 'react-router-dom';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import LeadDetailModal from '../../components/leads/LeadDetailModal.jsx';
 import CstManagerShell from '../../components/cst-manager/CstManagerShell.jsx';
 import {
   getHandoverQueue,
   getTechPipeline,
+  markClientOnboarded,
 } from '../../services/handover.service.js';
 import { formatUserRef } from '../../utils/formatUserRef.util.js';
-import { formatPaymentSummary } from '../../utils/formatPayment.util.js';
+import {
+  formatMoneyAmount,
+  formatPaymentSummary,
+  getClientRevenueTotals,
+} from '../../utils/formatPayment.util.js';
 
 const formatPkt = (value) => {
   if (!value) return '—';
@@ -22,10 +27,50 @@ const formatPkt = (value) => {
   });
 };
 
+/** Compact PKT clock for Activation Call Yes badge, e.g. "11:05 PM". */
+const formatPktTime = (value) => {
+  if (!value) return '';
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleTimeString('en-PK', {
+    timeZone: 'Asia/Karachi',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  });
+};
+
+/**
+ * Activation Call badge — muted No when unset; green Yes + PKT time after Client Detail save.
+ */
+function ActivationCallBadge({ handover }) {
+  const done = Boolean(handover?.activationCall?.done);
+  const at = handover?.activationCall?.at;
+  if (!done) {
+    return (
+      <span className="inline-flex rounded-full bg-zinc-500/15 px-2.5 py-0.5 text-xs font-semibold text-zinc-400 ring-1 ring-zinc-600/40">
+        No
+      </span>
+    );
+  }
+  const timeLabel = formatPktTime(at);
+  return (
+    <span className="inline-flex rounded-full bg-emerald-500/15 px-2.5 py-0.5 text-xs font-semibold text-emerald-300 ring-1 ring-emerald-500/35">
+      {timeLabel ? `Yes (${timeLabel} PKT)` : 'Yes'}
+    </span>
+  );
+}
+
 const TABS = [
   { id: 'pending', label: 'Pending Review' },
+  { id: 'onboard', label: 'Onboard' },
   { id: 'tech', label: 'Tech Status' },
 ];
+
+const TAB_IDS = new Set(TABS.map((t) => t.id));
+
+const resolveTab = (value) =>
+  TAB_IDS.has(value) ? value : 'pending';
 
 const TECH_BADGE = {
   assigned: {
@@ -52,10 +97,23 @@ function resolveTechStatus(lead) {
 
 export default function HandoverQueuePage() {
   const queryClient = useQueryClient();
-  const [tab, setTab] = useState('pending');
-  const [onboardTarget, setOnboardTarget] = useState(null);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tab = resolveTab(searchParams.get('tab'));
+  const setTab = (next) => {
+    const id = resolveTab(next);
+    setSearchParams(
+      (prev) => {
+        const nextParams = new URLSearchParams(prev);
+        if (id === 'pending') nextParams.delete('tab');
+        else nextParams.set('tab', id);
+        return nextParams;
+      },
+      { replace: true }
+    );
+  };
   const [detailLead, setDetailLead] = useState(null);
   const [message, setMessage] = useState('');
+  const [actionError, setActionError] = useState('');
 
   const {
     data: queueLeads = [],
@@ -85,6 +143,16 @@ export default function HandoverQueuePage() {
     [queueLeads]
   );
 
+  const onboardRows = useMemo(
+    () =>
+      [...queueLeads.filter((l) => l.handover?.cstStatus === 'onboarded')].sort(
+        (a, b) =>
+          new Date(b.handover?.onboardedAt || b.updatedAt || 0) -
+          new Date(a.handover?.onboardedAt || a.updatedAt || 0)
+      ),
+    [queueLeads]
+  );
+
   const techCounts = useMemo(() => {
     let assigned = 0;
     let inProgress = 0;
@@ -98,6 +166,45 @@ export default function HandoverQueuePage() {
     return { assigned, inProgress, completed };
   }, [techLeads]);
 
+  const tabCount = (id) => {
+    if (id === 'pending') return pendingRows.length;
+    if (id === 'onboard') return onboardRows.length;
+    if (id === 'tech') return techLeads.length;
+    return 0;
+  };
+
+  const onboardMutation = useMutation({
+    mutationFn: (id) => markClientOnboarded(id),
+    onSuccess: (lead) => {
+      setActionError('');
+      setMessage(
+        lead?.businessName
+          ? `“${lead.businessName}” moved to Onboard.`
+          : 'Client moved to Onboard.'
+      );
+      queryClient.setQueryData(['handoverQueue'], (old) => {
+        if (!Array.isArray(old) || !lead?._id) return old;
+        const exists = old.some((l) => String(l._id) === String(lead._id));
+        if (exists) {
+          return old.map((l) =>
+            String(l._id) === String(lead._id) ? { ...l, ...lead } : l
+          );
+        }
+        return [...old, lead];
+      });
+      queryClient.invalidateQueries({ queryKey: ['handoverQueue'] });
+      queryClient.invalidateQueries({ queryKey: ['pipeline', 'leads'] });
+      queryClient.invalidateQueries({ queryKey: ['pipeline', 'handoverQueue'] });
+      setTab('onboard');
+    },
+    onError: (err) => {
+      setMessage('');
+      setActionError(
+        err?.response?.data?.message || 'Failed to move client to Onboard.'
+      );
+    },
+  });
+
   return (
     <CstManagerShell title="Handover Queue">
       <section className="w-full rounded-2xl border border-zinc-800/80 bg-zinc-900/50 p-6 shadow-xl sm:p-8">
@@ -110,33 +217,52 @@ export default function HandoverQueuePage() {
               Onboard new clients · track live Tech delivery status
             </p>
           </div>
-          <div className="flex flex-wrap gap-1 rounded-full border border-zinc-800 bg-zinc-950/50 p-1">
-            {TABS.map((t) => (
+        </div>
+
+        <nav
+          className="mb-6 flex flex-wrap gap-2 rounded-2xl border border-zinc-800/80 bg-zinc-950/50 p-1.5"
+          aria-label="Handover sections"
+        >
+          {TABS.map((t) => {
+            const active = tab === t.id;
+            const count = tabCount(t.id);
+            return (
               <button
                 key={t.id}
                 type="button"
                 onClick={() => setTab(t.id)}
-                className={[
-                  'rounded-full px-3.5 py-1.5 text-sm font-medium transition',
-                  tab === t.id
-                    ? 'bg-orange-600 text-white'
-                    : 'text-zinc-400 hover:text-zinc-200',
-                ].join(' ')}
+                className={`relative flex-1 rounded-full px-4 py-2.5 font-display text-sm font-semibold transition sm:flex-none ${
+                  active
+                    ? 'bg-orange-600 text-white shadow-lg shadow-orange-600/25'
+                    : 'text-zinc-400 hover:bg-zinc-800/60 hover:text-white'
+                }`}
               >
-                {t.label}
-                {t.id === 'pending' && pendingRows.length > 0
-                  ? ` (${pendingRows.length})`
-                  : null}
-                {t.id === 'tech' && techLeads.length > 0
-                  ? ` (${techLeads.length})`
-                  : null}
+                <span className="inline-flex items-center justify-center gap-2">
+                  {t.label}
+                  <span
+                    className={`inline-flex min-w-[1.25rem] items-center justify-center rounded-full px-1.5 py-0.5 text-[11px] font-bold tabular-nums ${
+                      active
+                        ? 'bg-white/20 text-white'
+                        : count > 0
+                          ? 'bg-orange-600/20 text-orange-300'
+                          : 'bg-zinc-800 text-zinc-500'
+                    }`}
+                  >
+                    {count}
+                  </span>
+                </span>
               </button>
-            ))}
-          </div>
-        </div>
+            );
+          })}
+        </nav>
 
         {message ? (
           <p className="mb-3 text-sm text-emerald-400">{message}</p>
+        ) : null}
+        {actionError ? (
+          <p className="mb-3 text-sm text-red-400" role="alert">
+            {actionError}
+          </p>
         ) : null}
 
         {tab === 'pending' ? (
@@ -157,55 +283,103 @@ export default function HandoverQueuePage() {
                 <thead className="border-b border-zinc-800 bg-zinc-950/40 text-xs uppercase tracking-wide text-zinc-500">
                   <tr>
                     <th className="px-4 py-3.5 font-medium">Business</th>
-                    <th className="px-4 py-3.5 font-medium">Created By</th>
                     <th className="px-4 py-3.5 font-medium">Payment</th>
+                    <th className="px-4 py-3.5 font-medium">Activation Call</th>
                     <th className="px-4 py-3.5 font-medium">Closed (PKT)</th>
                     <th className="px-4 py-3.5 font-medium">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {pendingRows.map((row) => (
-                    <tr
-                      key={row._id}
-                      className="border-b border-zinc-800/50 last:border-0 transition-colors hover:bg-zinc-800/25"
-                    >
-                      <td className="px-4 py-3.5 font-medium text-white">
-                        {row.businessName}
-                      </td>
-                      <td className="px-4 py-3.5 text-zinc-400">
-                        {formatUserRef(row.agentId) || '—'}
-                      </td>
-                      <td className="px-4 py-3.5 max-w-[14rem] truncate text-zinc-300">
-                        {formatPaymentSummary(row.payment)}
-                      </td>
-                      <td className="px-4 py-3.5 whitespace-nowrap text-zinc-400">
-                        {formatPkt(row.closedAt)}
-                      </td>
-                      <td className="px-4 py-3.5">
-                        <div className="flex flex-wrap gap-2">
+                  {pendingRows.map((row) => {
+                    const busy =
+                      onboardMutation.isPending &&
+                      onboardMutation.variables === row._id;
+                    return (
+                      <tr
+                        key={row._id}
+                        className="border-b border-zinc-800/50 last:border-0 transition-colors hover:bg-zinc-800/25"
+                      >
+                        <td className="px-4 py-3.5 font-medium text-white">
+                          {row.businessName}
+                        </td>
+                        <td className="px-4 py-3.5 max-w-[14rem] truncate text-zinc-300">
+                          {formatPaymentSummary(row.payment)}
+                        </td>
+                        <td className="px-4 py-3.5 whitespace-nowrap">
+                          <ActivationCallBadge handover={row.handover} />
+                        </td>
+                        <td className="px-4 py-3.5 whitespace-nowrap text-zinc-400">
+                          {formatPkt(row.closedAt)}
+                        </td>
+                        <td className="px-4 py-3.5">
                           <button
                             type="button"
-                            onClick={() => setDetailLead(row)}
-                            className="rounded-lg border border-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-300 hover:bg-zinc-800/60"
-                          >
-                            View details
-                          </button>
-                          <button
-                            type="button"
+                            disabled={busy || onboardMutation.isPending}
                             onClick={() => {
                               setMessage('');
-                              setOnboardTarget(row);
+                              setActionError('');
+                              onboardMutation.mutate(row._id);
                             }}
-                            className="rounded-lg bg-orange-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-orange-500"
+                            className="rounded-lg bg-orange-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-orange-500 disabled:cursor-not-allowed disabled:opacity-60"
                           >
-                            Onboard Client
+                            {busy ? 'Moving…' : 'Onboard Client'}
                           </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
+            </div>
+          )
+        ) : null}
+
+        {tab === 'onboard' ? (
+          queueLoading ? (
+            <p className="py-12 text-center text-sm text-zinc-500">Loading…</p>
+          ) : queueError ? (
+            <p className="py-12 text-center text-sm text-red-400">
+              {queueErr?.response?.data?.message ||
+                'Failed to load onboarded clients.'}
+            </p>
+          ) : onboardRows.length === 0 ? (
+            <p className="py-12 text-center text-sm text-zinc-500">
+              No onboarded clients yet. Use Onboard Client from Pending Review.
+            </p>
+          ) : (
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {onboardRows.map((row) => {
+                const revenue = getClientRevenueTotals(row);
+                return (
+                  <Link
+                    key={row._id}
+                    to={`/dashboard/cst-manager/client/${row._id}`}
+                    className="block rounded-xl border border-zinc-800/70 bg-zinc-950/50 px-4 py-3.5 transition hover:border-orange-500/40 hover:bg-zinc-950/80 focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-500/40"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <h3 className="truncate font-display text-sm font-bold tracking-tight text-white">
+                        {row.businessName || '—'}
+                      </h3>
+                      <ActivationCallBadge handover={row.handover} />
+                    </div>
+                    <p className="mt-1 truncate text-xs text-zinc-400">
+                      {row.clientName?.trim() || 'No client name'}
+                    </p>
+                    <p className="mt-2 text-xs text-zinc-500">
+                      Collected{' '}
+                      <span className="font-semibold text-emerald-300">
+                        {formatMoneyAmount(revenue.totalCollected)}
+                      </span>
+                      {revenue.upsellPaid > 0 ? (
+                        <span className="text-zinc-600">
+                          {' '}
+                          · base {formatMoneyAmount(revenue.baseAmount)}
+                        </span>
+                      ) : null}
+                    </p>
+                  </Link>
+                );
+              })}
             </div>
           )
         ) : null}
@@ -239,7 +413,7 @@ export default function HandoverQueuePage() {
               </p>
             ) : techLeads.length === 0 ? (
               <p className="py-12 text-center text-sm text-zinc-500">
-                No onboarded clients with Tech yet.
+                No clients with Tech yet.
               </p>
             ) : (
               <div className="overflow-x-auto rounded-xl border border-zinc-800/60">
@@ -305,24 +479,6 @@ export default function HandoverQueuePage() {
           </div>
         ) : null}
       </section>
-
-      <ClientOnboardModal
-        open={Boolean(onboardTarget)}
-        lead={onboardTarget}
-        onClose={() => setOnboardTarget(null)}
-        onSuccess={(updated) => {
-          setMessage(
-            updated?.businessName
-              ? `“${updated.businessName}” onboarded and assigned to tech.`
-              : 'Client onboarded and assigned to tech.'
-          );
-          queryClient.invalidateQueries({ queryKey: ['handoverQueue'] });
-          queryClient.invalidateQueries({ queryKey: ['cstTechPipeline'] });
-          queryClient.invalidateQueries({ queryKey: ['myProjects'] });
-          queryClient.invalidateQueries({ queryKey: ['pipeline', 'leads'] });
-          setTab('tech');
-        }}
-      />
 
       <LeadDetailModal
         open={Boolean(detailLead)}

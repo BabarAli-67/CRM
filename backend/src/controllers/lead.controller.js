@@ -428,6 +428,7 @@ export const moveLeadToCst = asyncHandler(async (req, res) => {
   const current = lead.handover?.cstStatus;
   if (
     current === 'pending_review' ||
+    current === 'onboarded' ||
     current === 'assigned' ||
     current === 'in_progress' ||
     current === 'completed'
@@ -594,6 +595,8 @@ export const getAllLeads = asyncHandler(async (req, res) => {
 });
 
 export const getLeadById = asyncHandler(async (req, res) => {
+  // Full lead document — no field projection. Preserves Agent intake, Closer
+  // payment/handover (document sign, upscale), and CST metadata for Client Detail.
   const lead = await Lead.findById(req.params.id)
     .populate('agentId', 'fullName username role')
     .populate('closerId', 'fullName username role')
@@ -601,6 +604,10 @@ export const getLeadById = asyncHandler(async (req, res) => {
     .populate({
       path: 'handover.assignedTechId',
       select: 'fullName username role',
+    })
+    .populate({
+      path: 'sourceCallbackId',
+      select: 'businessName phone callbackAt notes status',
     });
 
   if (!lead) {
@@ -614,7 +621,6 @@ export const getLeadById = asyncHandler(async (req, res) => {
     );
   }
 
-  // Full document including payment + creator fields (authorized roles only)
   res.status(200).json(new ApiResponse(200, { lead }, 'Lead retrieved'));
 });
 
