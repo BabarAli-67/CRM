@@ -116,7 +116,8 @@ export const getHandoverQueue = asyncHandler(async (req, res) => {
 
 /**
  * CST moves a pending_review client into the Onboard tab (no tech assign yet).
- * Atomic $set only — never replaces handover / intake / payment fields.
+ * Sets cstStatus=onboarded so the client appears on Onboard + Tech Status
+ * (Onboarded / Active) until a tech is assigned. Atomic $set only.
  */
 export const markClientOnboarded = asyncHandler(async (req, res) => {
   const now = new Date();
@@ -131,6 +132,8 @@ export const markClientOnboarded = asyncHandler(async (req, res) => {
       $set: {
         'handover.cstStatus': 'onboarded',
         'handover.onboardedAt': now,
+        // Clear tech execution until Assign Tech — keeps Tech board tag as Onboarded
+        'handover.techStatus': null,
       },
     },
     {
@@ -1087,14 +1090,21 @@ export const updateChangeRequestStatus = asyncHandler(async (req, res) => {
 });
 
 /**
- * CST view of onboarded clients currently with Tech (or completed).
- * Surfaces live techStatus for Assigned / In Progress / Completed.
+ * CST Tech Status board — Onboarded (active, awaiting tech) + live Tech delivery.
  */
 export const getTechPipeline = asyncHandler(async (req, res) => {
   const leads = await Lead.find({
     stage: 'closed_sale',
-    'handover.assignedTechId': { $ne: null },
-    'handover.cstStatus': { $in: ['assigned', 'in_progress', 'completed'] },
+    $or: [
+      // Freshly onboarded — visible as Onboarded / Active before tech assign
+      { 'handover.cstStatus': 'onboarded' },
+      {
+        'handover.assignedTechId': { $ne: null },
+        'handover.cstStatus': {
+          $in: ['assigned', 'in_progress', 'completed'],
+        },
+      },
+    ],
   })
     .select(
       'stage status clientName businessName phone workEmail personalEmail yelpLink websiteLink gmbLink servicesArea serviceOffered salesAmount payment handover closedAt closedBy agentId closerId notes createdAt updatedAt'
@@ -1103,7 +1113,10 @@ export const getTechPipeline = asyncHandler(async (req, res) => {
     .populate('closerId', 'fullName username role')
     .populate('closedBy', 'fullName username role')
     .populate('handover.assignedTechId', 'fullName username role')
-    .sort({ 'handover.assignedAt': -1 });
+    .sort({
+      'handover.onboardedAt': -1,
+      'handover.assignedAt': -1,
+    });
 
   res
     .status(200)

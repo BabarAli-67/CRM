@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import LeadDetailModal from '../../components/leads/LeadDetailModal.jsx';
@@ -73,6 +73,10 @@ const resolveTab = (value) =>
   TAB_IDS.has(value) ? value : 'pending';
 
 const TECH_BADGE = {
+  onboarded: {
+    label: 'Onboarded · Active',
+    className: 'bg-orange-500/15 text-orange-300 ring-1 ring-orange-500/40',
+  },
   assigned: {
     label: 'Assigned to Tech',
     className: 'bg-sky-500/15 text-sky-300 ring-1 ring-sky-500/35',
@@ -88,11 +92,9 @@ const TECH_BADGE = {
 };
 
 function resolveTechStatus(lead) {
-  return (
-    lead?.handover?.techStatus ||
-    lead?.handover?.cstStatus ||
-    'assigned'
-  );
+  const cst = lead?.handover?.cstStatus;
+  if (cst === 'onboarded') return 'onboarded';
+  return lead?.handover?.techStatus || cst || 'assigned';
 }
 
 export default function HandoverQueuePage() {
@@ -114,6 +116,12 @@ export default function HandoverQueuePage() {
   const [detailLead, setDetailLead] = useState(null);
   const [message, setMessage] = useState('');
   const [actionError, setActionError] = useState('');
+
+  useEffect(() => {
+    if (!message) return undefined;
+    const id = window.setTimeout(() => setMessage(''), 4_000);
+    return () => window.clearTimeout(id);
+  }, [message]);
 
   const {
     data: queueLeads = [],
@@ -154,16 +162,18 @@ export default function HandoverQueuePage() {
   );
 
   const techCounts = useMemo(() => {
+    let onboarded = 0;
     let assigned = 0;
     let inProgress = 0;
     let completed = 0;
     for (const lead of techLeads) {
       const s = resolveTechStatus(lead);
-      if (s === 'completed') completed += 1;
+      if (s === 'onboarded') onboarded += 1;
+      else if (s === 'completed') completed += 1;
       else if (s === 'in_progress') inProgress += 1;
       else assigned += 1;
     }
-    return { assigned, inProgress, completed };
+    return { onboarded, assigned, inProgress, completed };
   }, [techLeads]);
 
   const tabCount = (id) => {
@@ -177,11 +187,7 @@ export default function HandoverQueuePage() {
     mutationFn: (id) => markClientOnboarded(id),
     onSuccess: (lead) => {
       setActionError('');
-      setMessage(
-        lead?.businessName
-          ? `“${lead.businessName}” moved to Onboard.`
-          : 'Client moved to Onboard.'
-      );
+      setMessage('Client moved to Onboard');
       queryClient.setQueryData(['handoverQueue'], (old) => {
         if (!Array.isArray(old) || !lead?._id) return old;
         const exists = old.some((l) => String(l._id) === String(lead._id));
@@ -192,7 +198,17 @@ export default function HandoverQueuePage() {
         }
         return [...old, lead];
       });
+      // Optimistic Tech Status board — Onboarded · Active until Assign Tech
+      queryClient.setQueryData(['cstTechPipeline'], (old) => {
+        if (!Array.isArray(old) || !lead?._id) return old;
+        const without = old.filter(
+          (l) => String(l._id) !== String(lead._id)
+        );
+        if (lead.handover?.cstStatus !== 'onboarded') return without;
+        return [lead, ...without];
+      });
       queryClient.invalidateQueries({ queryKey: ['handoverQueue'] });
+      queryClient.invalidateQueries({ queryKey: ['cstTechPipeline'] });
       queryClient.invalidateQueries({ queryKey: ['pipeline', 'leads'] });
       queryClient.invalidateQueries({ queryKey: ['pipeline', 'handoverQueue'] });
       setTab('onboard');
@@ -257,10 +273,18 @@ export default function HandoverQueuePage() {
         </nav>
 
         {message ? (
-          <p className="mb-3 text-sm text-emerald-400">{message}</p>
+          <p
+            className="mb-4 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm font-medium text-emerald-300"
+            role="status"
+          >
+            {message}
+          </p>
         ) : null}
         {actionError ? (
-          <p className="mb-3 text-sm text-red-400" role="alert">
+          <p
+            className="mb-4 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300"
+            role="alert"
+          >
             {actionError}
           </p>
         ) : null}
@@ -360,11 +384,16 @@ export default function HandoverQueuePage() {
                       <h3 className="truncate font-display text-sm font-bold tracking-tight text-white">
                         {row.businessName || '—'}
                       </h3>
+                      <span className="inline-flex shrink-0 rounded-full bg-orange-500/15 px-2 py-0.5 text-[11px] font-semibold text-orange-300 ring-1 ring-orange-500/40">
+                        Onboarded · Active
+                      </span>
+                    </div>
+                    <div className="mt-1.5 flex flex-wrap items-center gap-2">
+                      <p className="truncate text-xs text-zinc-400">
+                        {row.clientName?.trim() || 'No client name'}
+                      </p>
                       <ActivationCallBadge handover={row.handover} />
                     </div>
-                    <p className="mt-1 truncate text-xs text-zinc-400">
-                      {row.clientName?.trim() || 'No client name'}
-                    </p>
                     <p className="mt-2 text-xs text-zinc-500">
                       Collected{' '}
                       <span className="font-semibold text-emerald-300">
@@ -386,7 +415,12 @@ export default function HandoverQueuePage() {
 
         {tab === 'tech' ? (
           <div className="space-y-5">
-            <div className="grid gap-3 sm:grid-cols-3">
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <StatusSummary
+                label="Onboarded / Active"
+                value={techCounts.onboarded}
+                accent="text-orange-300"
+              />
               <StatusSummary
                 label="Not Started"
                 value={techCounts.assigned}
@@ -448,7 +482,9 @@ export default function HandoverQueuePage() {
                           </td>
                           <td className="px-4 py-3.5 text-zinc-300">
                             {formatUserRef(row.handover?.assignedTechId) ||
-                              '—'}
+                              (statusKey === 'onboarded'
+                                ? 'Awaiting assign'
+                                : '—')}
                           </td>
                           <td className="px-4 py-3.5">
                             <span
@@ -458,7 +494,10 @@ export default function HandoverQueuePage() {
                             </span>
                           </td>
                           <td className="px-4 py-3.5 whitespace-nowrap text-zinc-400">
-                            {formatPkt(row.handover?.assignedAt)}
+                            {formatPkt(
+                              row.handover?.assignedAt ||
+                                row.handover?.onboardedAt
+                            )}
                           </td>
                           <td className="px-4 py-3.5">
                             <button
