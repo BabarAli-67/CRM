@@ -18,6 +18,7 @@ import {
 import {
   appendSavedCard,
   buildSavedCardEntry,
+  syncLegacyCardsIntoVault,
 } from '../utils/savedCard.util.js';
 import { buildAlertFlagsForSchedule } from '../utils/alertTiming.util.js';
 import { randomUUID } from 'crypto';
@@ -866,6 +867,11 @@ export const getLeadById = asyncHandler(async (req, res) => {
       403,
       'You can only view leads you own or are assigned to'
     );
+  }
+
+  // Merge legacy base-deal card into savedCards vault (append-only, never overwrite)
+  if (syncLegacyCardsIntoVault(lead)) {
+    await lead.save();
   }
 
   res.status(200).json(new ApiResponse(200, { lead }, 'Lead retrieved'));

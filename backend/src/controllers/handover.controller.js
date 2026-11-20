@@ -8,6 +8,7 @@ import User from '../models/user.model.js';
 import {
   appendSavedCard,
   buildSavedCardEntry,
+  syncLegacyCardsIntoVault,
 } from '../utils/savedCard.util.js';
 import { emitToUser } from '../sockets/ioInstance.util.js';
 import { randomUUID } from 'crypto';
@@ -1029,6 +1030,9 @@ export const addClientUpsell = asyncHandler(async (req, res) => {
   if (!lead) {
     throw new ApiError(404, 'Client not found in CST handover pipeline');
   }
+
+  // Ensure base-deal / legacy cards are in the vault before Old Card selection
+  syncLegacyCardsIntoVault(lead);
 
   const service = String(req.body?.service || '')
     .trim()

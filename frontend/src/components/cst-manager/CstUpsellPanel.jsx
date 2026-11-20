@@ -12,6 +12,7 @@ import {
   getClientRevenueTotals,
   getUnifiedUpsellLedger,
 } from '../../utils/formatPayment.util.js';
+import { getAggregatedSavedCards } from '../../utils/savedCards.util.js';
 
 const fieldClass =
   'w-full rounded-xl border border-zinc-700 bg-zinc-950/60 px-4 py-2.5 text-sm text-white outline-none transition focus:border-[#F25E26]/50 focus:ring-2 focus:ring-[#F25E26]/20';
@@ -60,8 +61,8 @@ const emptyForm = (hasSavedCards) => ({
  */
 export default function CstUpsellPanel({ lead, onLeadUpdated }) {
   const savedCards = useMemo(
-    () => (Array.isArray(lead?.savedCards) ? lead.savedCards : []),
-    [lead?.savedCards]
+    () => getAggregatedSavedCards(lead),
+    [lead]
   );
 
   const [form, setForm] = useState(() => emptyForm(savedCards.length > 0));
@@ -69,23 +70,23 @@ export default function CstUpsellPanel({ lead, onLeadUpdated }) {
   const [message, setMessage] = useState('');
 
   useEffect(() => {
-    setForm((prev) => ({
-      ...emptyForm(savedCards.length > 0),
-      // Keep draft quiet when lead refreshes mid-edit only if not dirty
-      selectedCardId: savedCards[0]?.cardId || prev.selectedCardId || '',
-      paymentOption: savedCards.length
-        ? prev.paymentOption || 'old_card'
-        : prev.paymentOption === 'old_card'
-          ? 'new_card'
-          : prev.paymentOption || 'new_card',
-    }));
-  }, [lead?._id]);
-
-  useEffect(() => {
-    if (!form.selectedCardId && savedCards[0]?.cardId) {
-      setForm((prev) => ({ ...prev, selectedCardId: savedCards[0].cardId }));
-    }
-  }, [savedCards, form.selectedCardId]);
+    setForm((prev) => {
+      const stillValid = savedCards.some(
+        (c) => String(c.cardId) === String(prev.selectedCardId)
+      );
+      return {
+        ...prev,
+        selectedCardId: stillValid
+          ? prev.selectedCardId
+          : savedCards[0]?.cardId || '',
+        paymentOption:
+          prev.paymentOption === 'old_card' && savedCards.length === 0
+            ? 'new_card'
+            : prev.paymentOption ||
+              (savedCards.length ? 'old_card' : 'new_card'),
+      };
+    });
+  }, [lead?._id, savedCards]);
 
   const detectedBrand = useMemo(
     () => detectCardBrand(form.cardNumber),
@@ -116,8 +117,12 @@ export default function CstUpsellPanel({ lead, onLeadUpdated }) {
   const mutation = useMutation({
     mutationFn: (payload) => addClientUpsell(lead._id, payload),
     onSuccess: (updated) => {
+      const cards = getAggregatedSavedCards(updated);
       setMessage('Upsell added.');
-      setForm(emptyForm((updated?.savedCards || []).length > 0));
+      setForm({
+        ...emptyForm(cards.length > 0),
+        selectedCardId: cards[cards.length - 1]?.cardId || cards[0]?.cardId || '',
+      });
       onLeadUpdated?.(updated);
     },
     onError: (err) => {
@@ -347,26 +352,39 @@ export default function CstUpsellPanel({ lead, onLeadUpdated }) {
             </p>
           ) : (
             <div className="space-y-3">
-              {savedCards.length > 1 ? (
-                <label className="block space-y-1.5 text-sm text-zinc-300">
-                  <span className="font-medium">Select saved card</span>
-                  <select
-                    value={form.selectedCardId}
-                    onChange={(e) => setField('selectedCardId', e.target.value)}
-                    className={fieldClass}
-                  >
-                    {savedCards.map((c) => (
-                      <option key={c.cardId} value={c.cardId}>
-                        {(c.cardBrand || 'Card').toUpperCase()} · ••••{' '}
-                        {c.cardLast4}
-                        {c.nameOnCard ? ` · ${c.nameOnCard}` : ''}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              ) : null}
+              <div>
+                <p className="mb-2 text-xs font-medium uppercase tracking-wide text-zinc-500">
+                  Select saved card
+                </p>
+                <div
+                  className="flex flex-wrap gap-2"
+                  role="tablist"
+                  aria-label="Saved cards"
+                >
+                  {savedCards.map((card, index) => {
+                    const active =
+                      String(form.selectedCardId) === String(card.cardId);
+                    return (
+                      <button
+                        key={card.cardId || `card-${index}`}
+                        type="button"
+                        role="tab"
+                        aria-selected={active}
+                        onClick={() => setField('selectedCardId', card.cardId)}
+                        className={`rounded-full px-3.5 py-1.5 text-sm font-semibold transition ${
+                          active
+                            ? 'bg-[#F25E26] text-white shadow-lg shadow-[#F25E26]/25'
+                            : 'border border-white/15 bg-[#0A0A0A] text-white hover:border-[#F25E26]/50 hover:text-[#F25E26]'
+                        }`}
+                      >
+                        Old Card {index + 1}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
               {selectedSaved ? (
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div className="grid grid-cols-1 gap-3 rounded-xl border border-white/10 bg-black/30 p-3 sm:grid-cols-2">
                   <ReadonlyField
                     label="Card Number"
                     value={maskCardNumber(selectedSaved.cardLast4)}
