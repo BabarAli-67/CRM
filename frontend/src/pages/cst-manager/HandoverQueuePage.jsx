@@ -17,6 +17,10 @@ import {
   getClientRevenueTotals,
 } from '../../utils/formatPayment.util.js';
 import { retentionAlertAtFromClosedAt } from '../../utils/emailjs.util.js';
+import {
+  formatPktDateTimeLong,
+  getRetentionBadge,
+} from '../../utils/retention.util.js';
 import { pktDateKey } from '../../components/closer/CloserTableFilterBar.jsx';
 
 const formatPkt = (value) => {
@@ -372,7 +376,6 @@ export default function HandoverQueuePage() {
                     <th className="px-4 py-3.5 font-medium">Payment</th>
                     <th className="px-4 py-3.5 font-medium">Closed (PKT)</th>
                     <th className="px-4 py-3.5 font-medium">Welcome Email</th>
-                    <th className="px-4 py-3.5 font-medium">Retention Alert</th>
                     <th className="px-4 py-3.5 font-medium">Actions</th>
                   </tr>
                 </thead>
@@ -381,8 +384,6 @@ export default function HandoverQueuePage() {
                     const busy =
                       onboardMutation.isPending &&
                       onboardMutation.variables === row._id;
-                    const retentionPreview =
-                      retentionAlertAtFromClosedAt(row.closedAt);
                     return (
                       <tr
                         key={row._id}
@@ -405,18 +406,6 @@ export default function HandoverQueuePage() {
                             lead={row}
                             onOpen={setWelcomeLead}
                           />
-                        </td>
-                        <td className="px-4 py-3.5 whitespace-nowrap text-zinc-300">
-                          {retentionPreview ? (
-                            <span className="inline-flex flex-col gap-0.5">
-                              <span className="text-[11px] font-semibold uppercase tracking-wide text-[#F25E26]/80">
-                                +30 days
-                              </span>
-                              <span>{formatPkt(retentionPreview)}</span>
-                            </span>
-                          ) : (
-                            '—'
-                          )}
                         </td>
                         <td className="px-4 py-3.5">
                           <button
@@ -479,13 +468,11 @@ export default function HandoverQueuePage() {
               <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                 {filteredOnboardRows.map((row) => {
                   const revenue = getClientRevenueTotals(row);
-                  // Base = deal paymentOffered; Collected/Pending include upsells
+                  // Base = deal paymentOffered; Collected/Pending include upsells + retention
                   const base = revenue.baseOffered;
                   const collected = revenue.totalCollected;
                   const pending = revenue.totalPending;
-                  const retentionAt =
-                    row.handover?.retention?.at ||
-                    retentionAlertAtFromClosedAt(row.closedAt);
+                  const retentionBadge = getRetentionBadge(row);
 
                   const unread = Number(row.unreadCommentCount) || 0;
 
@@ -495,7 +482,7 @@ export default function HandoverQueuePage() {
                       to={
                         unread > 0
                           ? `/dashboard/cst-manager/client/${row._id}?tab=comments`
-                          : `/dashboard/cst-manager/client/${row._id}`
+                          : `/dashboard/cst-manager/client/${row._id}?tab=retention`
                       }
                       className="block rounded-xl border border-white/10 bg-[#111111] px-4 py-3.5 transition hover:border-[#F25E26]/45 hover:bg-[#161616] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#F25E26]/40"
                     >
@@ -503,6 +490,17 @@ export default function HandoverQueuePage() {
                         <h3 className="truncate font-display text-sm font-bold tracking-tight text-white">
                           {row.businessName?.trim() || '—'}
                         </h3>
+                        {retentionBadge ? (
+                          <span
+                            className={`inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-[10px] font-bold ring-1 ${
+                              retentionBadge.kind === 'paid'
+                                ? 'bg-emerald-500/15 text-emerald-300 ring-emerald-500/40'
+                                : 'bg-[#F25E26]/15 text-[#F25E26] ring-[#F25E26]/40'
+                            }`}
+                          >
+                            {retentionBadge.label}
+                          </span>
+                        ) : null}
                         {unread > 0 ? (
                           <span className="inline-flex shrink-0 items-center rounded-full bg-[#F25E26]/15 px-2 py-0.5 text-[10px] font-bold text-[#F25E26] ring-1 ring-[#F25E26]/40">
                             {unread === 1
@@ -531,10 +529,12 @@ export default function HandoverQueuePage() {
                         </div>
                         <div className="flex gap-2">
                           <dt className="shrink-0 text-zinc-500">
-                            Retention Date
+                            Next Retention
                           </dt>
                           <dd className="min-w-0 text-zinc-200">
-                            {retentionAt ? formatPkt(retentionAt) : '—'}
+                            {retentionBadge?.at
+                              ? formatPktDateTimeLong(retentionBadge.at)
+                              : '—'}
                           </dd>
                         </div>
                       </dl>

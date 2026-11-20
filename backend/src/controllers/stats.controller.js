@@ -1,21 +1,21 @@
-import dayjs from 'dayjs';
-import utc from 'dayjs/plugin/utc.js';
-import timezone from 'dayjs/plugin/timezone.js';
 import asyncHandler from '../utils/asyncHandler.util.js';
+import { ApiError } from '../utils/apiError.util.js';
 import { ApiResponse } from '../utils/apiResponse.util.js';
 import Lead from '../models/lead.model.js';
-import { TZ } from '../utils/shiftTime.util.js';
+import { resolvePktMonthRange } from '../utils/shiftTime.util.js';
 
-dayjs.extend(utc);
-dayjs.extend(timezone);
-
+/** Optional ?month=YYYY-MM (PKT). Defaults to the current Asia/Karachi month. */
 export const getMyClosedCount = asyncHandler(async (req, res) => {
-  const monthStart = dayjs().tz(TZ).startOf('month').toDate();
-  const monthEnd = dayjs().tz(TZ).add(1, 'month').startOf('month').toDate();
+  let range;
+  try {
+    range = resolvePktMonthRange(req.query.month);
+  } catch {
+    throw new ApiError(400, 'month must be YYYY-MM');
+  }
 
   const filter = {
     stage: 'closed_sale',
-    closedAt: { $gte: monthStart, $lt: monthEnd },
+    closedAt: { $gte: range.start, $lt: range.end },
   };
 
   if (req.user.role === 'closer') {
@@ -27,5 +27,11 @@ export const getMyClosedCount = asyncHandler(async (req, res) => {
   const count = await Lead.countDocuments(filter);
 
   // Vanishing Rule: count only — never return lead documents
-  res.status(200).json(new ApiResponse(200, { count }, 'Closed count retrieved'));
+  res.status(200).json(
+    new ApiResponse(
+      200,
+      { count, month: range.month, timezone: 'Asia/Karachi' },
+      'Closed count retrieved'
+    )
+  );
 });

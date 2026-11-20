@@ -6,8 +6,10 @@ import {
   brandPayloadId,
   cardDigitsOnly,
   detectCardBrand,
+  formatCardBrandLabel,
   formatCardNumber,
   maxCardDigits,
+  resolveCardBrandId,
 } from '../../utils/cardBrand.util.js';
 import {
   formatCstStatus,
@@ -64,7 +66,6 @@ const labelClass = 'block space-y-1 text-sm';
 
 const METHOD_OPTIONS = [
   { value: 'via_card', label: 'Card' },
-  { value: 'via_link', label: 'Payment Link' },
   { value: 'other', label: 'Others' },
 ];
 
@@ -74,47 +75,57 @@ const formatExpiry = (raw) => {
   return `${digits.slice(0, 2)}/${digits.slice(2)}`;
 };
 
-const emptyFormFromLead = (lead) => ({
-  clientName: lead?.clientName || '',
-  businessName: lead?.businessName || '',
-  personalPhone: lead?.personalPhone || '',
-  businessPhone: lead?.businessPhone || '',
-  businessEmail: lead?.businessEmail || '',
-  personalEmail: lead?.personalEmail || '',
-  websiteLink: lead?.websiteLink || '',
-  gmbLink: lead?.gmbLink || '',
-  serviceAreas: lead?.serviceAreas || '',
-  servicesOffered: lead?.servicesOffered || '',
-  paymentOffered:
+const computePendingDisplay = (offeredRaw, receivedRaw) => {
+  const offered = Number(String(offeredRaw ?? '').trim());
+  const received = Number(receivedRaw) || 0;
+  if (Number.isNaN(offered)) return '';
+  return String(Math.max(0, offered - received));
+};
+
+const emptyFormFromLead = (lead) => {
+  const paymentOffered =
     lead?.paymentOffered != null && lead?.paymentOffered !== ''
       ? String(lead.paymentOffered)
       : lead?.salesAmount != null && lead?.salesAmount !== ''
         ? String(lead.salesAmount)
-        : '',
-  paymentReceived:
-    lead?.paymentReceived != null && lead?.paymentReceived !== ''
-      ? String(lead.paymentReceived)
-      : '0',
-  paymentPending:
-    lead?.paymentPending != null && lead?.paymentPending !== ''
-      ? String(lead.paymentPending)
-      : '',
-  notes: lead?.notes || '',
-  paymentMethod: lead?.payment?.method || 'via_link',
-  otherDetails: lead?.payment?.otherDetails || '',
-  linkUrl: lead?.payment?.linkUrl || '',
-  cardHolderName: lead?.payment?.cardHolderName || '',
-  billingZip: lead?.payment?.billingZip || '',
-  cardNumber: '',
-  cardExpiry: '',
-  cardCvv: '',
-});
+        : '';
+  const receivedRaw = lead?.paymentReceived;
+  const receivedNum = Number(receivedRaw);
+  // Empty when nothing received yet so placeholder="0" stays visible
+  const paymentReceived =
+    receivedRaw != null &&
+    receivedRaw !== '' &&
+    !Number.isNaN(receivedNum) &&
+    receivedNum > 0
+      ? String(receivedRaw)
+      : '';
 
-const computePendingDisplay = (offeredRaw, receivedRaw) => {
-  const offered = Number(String(offeredRaw ?? '').trim());
-  const received = Number(String(receivedRaw ?? '').trim() || '0');
-  if (Number.isNaN(offered) || Number.isNaN(received)) return '';
-  return String(Math.max(0, offered - received));
+  return {
+    clientName: lead?.clientName || '',
+    businessName: lead?.businessName || '',
+    personalPhone: lead?.personalPhone || '',
+    businessPhone: lead?.businessPhone || '',
+    businessEmail: lead?.businessEmail || '',
+    personalEmail: lead?.personalEmail || '',
+    websiteLink: lead?.websiteLink || '',
+    gmbLink: lead?.gmbLink || '',
+    serviceAreas: lead?.serviceAreas || '',
+    servicesOffered: lead?.servicesOffered || '',
+    paymentOffered,
+    paymentReceived,
+    paymentPending: computePendingDisplay(paymentOffered, paymentReceived),
+    notes: lead?.notes || '',
+    paymentMethod:
+      lead?.payment?.method === 'via_card' || lead?.payment?.method === 'other'
+        ? lead.payment.method
+        : 'via_card',
+    otherDetails: lead?.payment?.otherDetails || '',
+    cardHolderName: lead?.payment?.cardHolderName || '',
+    billingZip: lead?.payment?.billingZip || '',
+    cardNumber: '',
+    cardExpiry: '',
+    cardCvv: '',
+  };
 };
 
 const normalizeUrl = (raw) => {
@@ -200,13 +211,6 @@ export default function LeadDetailModal({
   };
 
   const buildPaymentPayload = () => {
-    if (form.paymentMethod === 'via_link') {
-      const url = String(form.linkUrl || '').trim();
-      if (!url) {
-        return { error: 'Enter the payment link / reference URL.' };
-      }
-      return { method: 'via_link', linkUrl: normalizeUrl(url) || url };
-    }
     if (form.paymentMethod === 'other') {
       const details = form.otherDetails.trim();
       if (details.length < 2) {
@@ -292,7 +296,7 @@ export default function LeadDetailModal({
 
     const offeredRaw = form.paymentOffered.trim();
     let paymentOffered = null;
-    let paymentReceived = Number(form.paymentReceived.trim() || '0');
+    let paymentReceived = Number(form.paymentReceived) || 0;
     if (Number.isNaN(paymentReceived) || paymentReceived < 0) {
       setEditError('Payment received must be a valid non-negative number.');
       return;
@@ -527,9 +531,7 @@ export default function LeadDetailModal({
                     </div>
                   </label>
                   <label className={labelClass}>
-                    <span className="text-zinc-400">
-                      Payment Received {isClosed ? '*' : ''}
-                    </span>
+                    <span className="text-zinc-400">Payment Received</span>
                     <div className="relative">
                       <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-zinc-500">
                         $
@@ -538,10 +540,10 @@ export default function LeadDetailModal({
                         type="number"
                         min="0"
                         step="0.01"
-                        required={isClosed}
                         value={form.paymentReceived}
                         onChange={setField('paymentReceived')}
                         className={`${fieldClass} pl-7`}
+                        placeholder="0"
                       />
                     </div>
                   </label>
@@ -622,9 +624,12 @@ export default function LeadDetailModal({
                     <div className="space-y-3">
                       {payment?.method === 'via_card' && payment.cardLast4 ? (
                         <p className="text-xs text-zinc-500">
-                          Current card: {payment.cardBrand || 'Card'} · ••••{' '}
-                          {payment.cardLast4}. Leave blank to keep, or enter a
-                          new card below.
+                          Current card:{' '}
+                          {formatCardBrandLabel(
+                            resolveCardBrandId(payment) || payment.cardBrand
+                          ) || 'Card'}{' '}
+                          · •••• {payment.cardLast4}. Leave blank to keep, or
+                          enter a new card below.
                         </p>
                       ) : null}
                       <label className={labelClass}>
@@ -707,21 +712,6 @@ export default function LeadDetailModal({
                         />
                       </label>
                     </div>
-                  ) : null}
-
-                  {form.paymentMethod === 'via_link' ? (
-                    <label className={labelClass}>
-                      <span className="text-zinc-400">
-                        Payment link / reference
-                      </span>
-                      <input
-                        type="url"
-                        value={form.linkUrl}
-                        onChange={setField('linkUrl')}
-                        placeholder="https://"
-                        className={fieldClass}
-                      />
-                    </label>
                   ) : null}
 
                   {form.paymentMethod === 'other' ? (
@@ -813,17 +803,13 @@ export default function LeadDetailModal({
                   )}
                 </Row>
                 <Row label="Payment">{formatPaymentSummary(payment)}</Row>
-                {payment?.method === 'via_link' ? (
-                  <Row label="Method">Payment Link</Row>
-                ) : null}
-                {payment?.method === 'via_link' && payment.linkUrl ? (
-                  <Row label="Payment link">
-                    <LinkValue href={payment.linkUrl} />
-                  </Row>
-                ) : null}
                 {payment?.method === 'via_card' ? (
                   <>
-                    <Row label="Card brand">{payment.cardBrand || '—'}</Row>
+                    <Row label="Card brand">
+                      {formatCardBrandLabel(
+                        resolveCardBrandId(payment) || payment.cardBrand
+                      ) || '—'}
+                    </Row>
                     <Row label="Card last 4">
                       {payment.cardLast4 ? `•••• ${payment.cardLast4}` : '—'}
                     </Row>

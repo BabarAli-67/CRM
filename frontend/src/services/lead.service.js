@@ -20,8 +20,11 @@ export const handLeadToCloser = async (id) => {
   return response.data.data.lead;
 };
 
-export const getCloserClosedSales = async () => {
-  const response = await api.get('/leads/closer-closed');
+/** @param {string} [month] YYYY-MM (PKT); omit for current month */
+export const getCloserClosedSales = async (month) => {
+  const response = await api.get('/leads/closer-closed', {
+    params: month ? { month } : undefined,
+  });
   return response.data.data.leads;
 };
 
@@ -49,9 +52,11 @@ export const restoreDisqualifiedLead = async (id) => {
   return response.data.data.lead;
 };
 
-/** Sales agent — own closed sales history. */
-export const getMyClosedSales = async () => {
-  const response = await api.get('/leads/mine/closed');
+/** Sales agent — own closed sales for a PKT month (default: current). */
+export const getMyClosedSales = async (month) => {
+  const response = await api.get('/leads/mine/closed', {
+    params: month ? { month } : undefined,
+  });
   return response.data.data.leads;
 };
 

@@ -13,6 +13,7 @@ import useAuth from '../../hooks/useAuth.hook.js';
 import { getHistory, getTodayStatus } from '../../services/attendance.service.js';
 import { getMyClosedCount } from '../../services/stats.service.js';
 import { getShift } from '../../services/shift.service.js';
+import { currentPktMonth } from '../../utils/pktMonth.util.js';
 const ROLE_LABELS = {
   sales_agent: 'Sales Agent',
   closer: 'Closer',
@@ -69,12 +70,7 @@ function isItemActive(item, pathname, search) {
   return pathname === itemPath;
 }
 
-const currentMonthValue = () => {
-  // Match backend shiftDate calendar (Asia/Karachi)
-  return new Date().toLocaleDateString('en-CA', {
-    timeZone: 'Asia/Karachi',
-  }).slice(0, 7);
-};
+const currentMonthValue = () => currentPktMonth();
 
 const formatShiftClock = (hhmm) => {
   if (!hhmm || typeof hhmm !== 'string') return '—';
@@ -178,8 +174,17 @@ function derivePulse(attendance, nowMs = Date.now()) {
 
 function DepartmentKpiStrip({ role }) {
   const showClosedCount = role === 'sales_agent' || role === 'closer';
-  const month = currentMonthValue();
+  const [month, setMonth] = useState(currentMonthValue);
   const [tickNow, setTickNow] = useState(() => Date.now());
+
+  // Keep KPI month in sync when the PKT calendar rolls over
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      const next = currentMonthValue();
+      setMonth((prev) => (prev === next ? prev : next));
+    }, 60_000);
+    return () => window.clearInterval(id);
+  }, []);
 
   const { data: todayData } = useQuery({
     queryKey: ['todayAttendance'],
@@ -193,8 +198,8 @@ function DepartmentKpiStrip({ role }) {
   });
 
   const { data: closedCount } = useQuery({
-    queryKey: ['myClosedCount'],
-    queryFn: getMyClosedCount,
+    queryKey: ['myClosedCount', month],
+    queryFn: () => getMyClosedCount(month),
     enabled: showClosedCount,
     refetchInterval: 60_000,
   });
@@ -258,7 +263,9 @@ function DepartmentKpiStrip({ role }) {
     isOnDuty,
   ]);
 
-  const activityLabel = showClosedCount ? 'Closed sales' : 'Hours this month';
+  const activityLabel = showClosedCount
+    ? 'Closed sales this month'
+    : 'Hours this month';
   const activityValue = showClosedCount
     ? typeof closedCount === 'number'
       ? String(closedCount)

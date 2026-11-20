@@ -3,6 +3,7 @@ import { protect, restrictTo } from '../middlewares/auth.middleware.js';
 import { blockReadOnlyAdmin } from '../middlewares/permission.middleware.js';
 import monthlyReportUpload from '../middlewares/monthlyReportUpload.middleware.js';
 import clientCommentUpload from '../middlewares/clientCommentUpload.middleware.js';
+import cstHandoverUpload from '../middlewares/cstHandoverUpload.middleware.js';
 import {
   getHandoverQueue,
   getTechPipeline,
@@ -14,9 +15,13 @@ import {
   setRetention,
   markRetentionAlert,
   markRetentionDone,
+  markRetentionPaid,
   setServiceScope,
   saveClientPortfolio,
   addClientUpsell,
+  updateClientBalances,
+  updateClientSignedDocument,
+  serveClientSignedDocument,
   addClientComment,
   markClientCommentsRead,
   getCommentNotifications,
@@ -97,6 +102,12 @@ router.patch(
 );
 
 router.patch(
+  '/:id/retention/paid',
+  restrictTo('cst_manager'),
+  markRetentionPaid
+);
+
+router.patch(
   '/:id/service-scope',
   restrictTo('cst_manager'),
   setServiceScope
@@ -106,6 +117,35 @@ router.patch(
   '/:id/portfolio',
   restrictTo('cst_manager'),
   saveClientPortfolio
+);
+
+router.patch(
+  '/:id/balances',
+  restrictTo('cst_manager', 'super_admin'),
+  updateClientBalances
+);
+
+router.patch(
+  '/:id/signed-document',
+  restrictTo('cst_manager', 'super_admin'),
+  (req, res, next) => {
+    cstHandoverUpload.single('signedDocument')(req, res, (err) => {
+      if (err) {
+        return res.status(400).json({
+          success: false,
+          message: err.message || 'Failed to upload signed document',
+        });
+      }
+      return next();
+    });
+  },
+  updateClientSignedDocument
+);
+
+router.get(
+  '/:id/signed-document',
+  restrictTo('cst_manager', 'super_admin', 'admin', 'tech_team'),
+  serveClientSignedDocument
 );
 
 router.post(

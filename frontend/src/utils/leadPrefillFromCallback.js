@@ -30,7 +30,7 @@ export function leadPrefillFromCallback(callback, { closerIdOverride } = {}) {
     serviceAreas: '',
     servicesOffered: '',
     paymentOffered: '',
-    paymentReceived: '0',
+    paymentReceived: '',
     paymentPending: '',
     sourceCallbackId: callback._id ? String(callback._id) : null,
   };

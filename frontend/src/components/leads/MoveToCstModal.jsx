@@ -3,8 +3,10 @@ import {
   brandPayloadId,
   cardDigitsOnly,
   detectCardBrand,
+  formatCardBrandLabel,
   formatCardNumber,
   maxCardDigits,
+  resolveCardBrandId,
 } from '../../utils/cardBrand.util.js';
 
 const pillActive =
@@ -18,7 +20,6 @@ const fieldClass =
 const PAY_OPTIONS = [
   { value: 'old_card', label: 'Old Card' },
   { value: 'new_card', label: 'New Card' },
-  { value: 'via_link', label: 'Link' },
   { value: 'other', label: 'Others' },
 ];
 
@@ -76,7 +77,7 @@ export default function MoveToCstModal({
   const [upsell, setUpsell] = useState(null);
   const [serviceName, setServiceName] = useState('');
   const [priceOffered, setPriceOffered] = useState('');
-  const [priceReceived, setPriceReceived] = useState('0');
+  const [priceReceived, setPriceReceived] = useState('');
   const [payMethod, setPayMethod] = useState('old_card');
   const [selectedCardId, setSelectedCardId] = useState('');
   const [cardNumber, setCardNumber] = useState('');
@@ -97,7 +98,7 @@ export default function MoveToCstModal({
 
   const pendingLeft = useMemo(() => {
     const offered = Number(priceOffered);
-    const received = Number(priceReceived === '' ? 0 : priceReceived);
+    const received = Number(priceReceived) || 0;
     if (Number.isNaN(offered) || Number.isNaN(received)) return 0;
     return Math.max(0, offered - received);
   }, [priceOffered, priceReceived]);
@@ -109,7 +110,7 @@ export default function MoveToCstModal({
     setUpsell(null);
     setServiceName('');
     setPriceOffered('');
-    setPriceReceived('0');
+    setPriceReceived('');
     setPayMethod(savedCards.length ? 'old_card' : 'new_card');
     setSelectedCardId(savedCards[0]?.cardId || '');
     setCardNumber('');
@@ -135,7 +136,7 @@ export default function MoveToCstModal({
     if (!serviceName.trim()) return false;
     if (priceOffered === '' || priceOffered == null) return false;
     const offered = Number(priceOffered);
-    const received = Number(priceReceived === '' ? 0 : priceReceived);
+    const received = Number(priceReceived) || 0;
     if (Number.isNaN(offered) || offered < 0) return false;
     if (Number.isNaN(received) || received < 0) return false;
     if (received > offered) return false;
@@ -258,7 +259,7 @@ export default function MoveToCstModal({
     }
     if (upsell) {
       const offered = Number(priceOffered);
-      const received = Number(priceReceived === '' ? 0 : priceReceived);
+      const received = Number(priceReceived) || 0;
       if (Number.isNaN(offered) || offered < 0) {
         setError('Price Offered must be a valid non-negative number.');
         return;
@@ -455,9 +456,7 @@ export default function MoveToCstModal({
                   </div>
                 </label>
                 <label className="block space-y-1.5 text-sm text-zinc-300">
-                  <span className="font-medium">
-                    Price Received <span className="text-red-400">*</span>
-                  </span>
+                  <span className="font-medium">Price Received</span>
                   <div className="relative">
                     <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-zinc-500">
                       $
@@ -533,13 +532,18 @@ export default function MoveToCstModal({
                           onChange={(e) => setSelectedCardId(e.target.value)}
                           className={`${fieldClass} appearance-none`}
                         >
-                          {savedCards.map((c) => (
-                            <option key={c.cardId} value={c.cardId}>
-                              {(c.cardBrand || 'Card').toUpperCase()} · ••••{' '}
-                              {c.cardLast4}
-                              {c.nameOnCard ? ` · ${c.nameOnCard}` : ''}
-                            </option>
-                          ))}
+                          {savedCards.map((c) => {
+                            const brand =
+                              formatCardBrandLabel(
+                                resolveCardBrandId(c) || c.cardBrand
+                              ) || 'Card';
+                            return (
+                              <option key={c.cardId} value={c.cardId}>
+                                {brand} · •••• {c.cardLast4}
+                                {c.nameOnCard ? ` · ${c.nameOnCard}` : ''}
+                              </option>
+                            );
+                          })}
                         </select>
                       </label>
                     ) : null}
@@ -549,7 +553,17 @@ export default function MoveToCstModal({
                           <span className="text-zinc-500">Card Number</span>
                           <input
                             readOnly
-                            value={maskCardNumber(selectedSaved.cardLast4)}
+                            value={(() => {
+                              const brand =
+                                formatCardBrandLabel(
+                                  resolveCardBrandId(selectedSaved) ||
+                                    selectedSaved.cardBrand
+                                ) || '';
+                              const masked = maskCardNumber(
+                                selectedSaved.cardLast4
+                              );
+                              return brand ? `${brand} — ${masked}` : masked;
+                            })()}
                             className={`${fieldClass} opacity-90`}
                             tabIndex={-1}
                           />
@@ -688,12 +702,10 @@ export default function MoveToCstModal({
                 </div>
               ) : null}
 
-              {payMethod === 'via_link' || payMethod === 'other' ? (
+              {payMethod === 'other' ? (
                 <label className="block space-y-1.5 text-sm text-zinc-300">
                   <span>
-                    {payMethod === 'via_link'
-                      ? 'Payment Link / Transaction Reference'
-                      : 'Payment Notes / Details'}{' '}
+                    Payment Notes / Details{' '}
                     <span className="text-red-400">*</span>
                   </span>
                   <textarea
@@ -702,11 +714,7 @@ export default function MoveToCstModal({
                     value={payReference}
                     onChange={(e) => setPayReference(e.target.value)}
                     className={`${fieldClass} resize-y`}
-                    placeholder={
-                      payMethod === 'via_link'
-                        ? 'https://… or transaction id'
-                        : 'Bank transfer, cash, etc.'
-                    }
+                    placeholder="Bank transfer, cash, etc."
                   />
                 </label>
               ) : null}

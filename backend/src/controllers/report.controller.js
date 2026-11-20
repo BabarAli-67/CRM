@@ -5,11 +5,12 @@ import asyncHandler from '../utils/asyncHandler.util.js';
 import { ApiError } from '../utils/apiError.util.js';
 import { ApiResponse } from '../utils/apiResponse.util.js';
 import Lead from '../models/lead.model.js';
-import { TZ } from '../utils/shiftTime.util.js';
+import { TZ, resolvePktMonthRange } from '../utils/shiftTime.util.js';
 
 dayjs.extend(utc);
 dayjs.extend(timezone);
 
+/** Admin Month-End Report — month/year ints → PKT window (shared helper). */
 const resolveMonthRange = (month, year) => {
   const nowPkt = dayjs().tz(TZ);
   const m = month !== undefined && month !== '' ? Number(month) : nowPkt.month() + 1;
@@ -22,14 +23,19 @@ const resolveMonthRange = (month, year) => {
     throw new ApiError(400, 'year must be a valid 4-digit year');
   }
 
-  const start = dayjs.tz(`${y}-${String(m).padStart(2, '0')}-01`, TZ).startOf('day');
-  const end = start.add(1, 'month');
+  const yyyyMm = `${y}-${String(m).padStart(2, '0')}`;
+  let range;
+  try {
+    range = resolvePktMonthRange(yyyyMm);
+  } catch {
+    throw new ApiError(400, 'month must be a valid calendar month');
+  }
 
   return {
     month: m,
     year: y,
-    start: start.toDate(),
-    end: end.toDate(),
+    start: range.start,
+    end: range.end,
   };
 };
 

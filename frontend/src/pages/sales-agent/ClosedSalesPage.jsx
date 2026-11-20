@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import LeadDetailModal from '../../components/leads/LeadDetailModal.jsx';
 import SalesAgentShell from '../../components/sales-agent/SalesAgentShell.jsx';
@@ -8,6 +8,10 @@ import {
   formatCstStatus,
   formatPaymentSummary,
 } from '../../utils/formatPayment.util.js';
+import {
+  currentPktMonth,
+  formatPktMonthLabel,
+} from '../../utils/pktMonth.util.js';
 
 const formatPkt = (value) => {
   if (!value) return '—';
@@ -23,10 +27,31 @@ const formatPkt = (value) => {
 };
 
 /**
- * Sales agent closed-sales history — leads that left the active desk.
+ * Sales agent closed-sales history — scoped to a PKT calendar month.
+ * Defaults to the current month; archive months via the month picker.
+ * Historical deals stay in MongoDB — only the active view is month-scoped.
  */
 export default function ClosedSalesPage() {
   const [detailLead, setDetailLead] = useState(null);
+  const [month, setMonth] = useState(currentPktMonth);
+  const monthPinnedRef = useRef(false);
+  const liveMonth = currentPktMonth();
+  const viewingArchive = month !== liveMonth;
+
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      if (monthPinnedRef.current) return;
+      const live = currentPktMonth();
+      setMonth((prev) => (prev === live ? prev : live));
+    }, 60_000);
+    return () => window.clearInterval(id);
+  }, []);
+
+  const selectMonth = (value) => {
+    const next = value || currentPktMonth();
+    monthPinnedRef.current = next !== currentPktMonth();
+    setMonth(next);
+  };
 
   const {
     data: leads = [],
@@ -34,21 +59,36 @@ export default function ClosedSalesPage() {
     isError,
     error,
   } = useQuery({
-    queryKey: ['agentClosedSales'],
-    queryFn: getMyClosedSales,
+    queryKey: ['agentClosedSales', month],
+    queryFn: () => getMyClosedSales(month),
     refetchInterval: 30_000,
   });
 
   return (
     <SalesAgentShell title="Closed Sales">
       <section className="w-full rounded-2xl border border-zinc-800/80 bg-zinc-900/50 p-6 shadow-xl sm:p-8">
-        <div className="mb-6">
-          <h2 className="font-display text-xl font-semibold text-white">
-            Closed sales history
-          </h2>
-          <p className="mt-1 text-sm text-zinc-500">
-            Your closed deals · payment summary · CST / fulfillment status
-          </p>
+        <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <h2 className="font-display text-xl font-semibold text-white">
+              Closed sales
+            </h2>
+            <p className="mt-1 text-sm text-zinc-500">
+              {formatPktMonthLabel(month)} (PKT)
+              {viewingArchive ? ' · archive month' : ' · current month'} · resets
+              automatically each month
+            </p>
+          </div>
+          <label className="space-y-1 text-xs font-medium text-zinc-400">
+            <span>Month (PKT)</span>
+            <input
+              type="month"
+              value={month}
+              onChange={(e) => selectMonth(e.target.value)}
+              max={liveMonth}
+              className="block rounded-lg border border-zinc-700 bg-zinc-950/60 px-3 py-2 text-sm text-white outline-none transition [color-scheme:dark] focus:border-[#F25E26]/60 focus:ring-2 focus:ring-[#F25E26]/30"
+              aria-label="Closed sales month (Asia/Karachi)"
+            />
+          </label>
         </div>
 
         {isLoading ? (
@@ -59,7 +99,8 @@ export default function ClosedSalesPage() {
           </p>
         ) : leads.length === 0 ? (
           <p className="py-12 text-center text-sm text-zinc-500">
-            No closed sales yet. Close a lead from My Leads to see it here.
+            No closed sales in {formatPktMonthLabel(month)}. Close a lead from My
+            Leads to see it here.
           </p>
         ) : (
           <div className="overflow-x-auto rounded-xl border border-zinc-800/60">
@@ -85,7 +126,8 @@ export default function ClosedSalesPage() {
                         {row.businessName}
                       </p>
                       <p className="mt-0.5 text-xs text-zinc-500">
-                        {row.businessPhone || row.personalPhone || '—'}                      </p>
+                        {row.businessPhone || row.personalPhone || '—'}
+                      </p>
                     </td>
                     <td className="px-4 py-3.5 text-zinc-300">
                       {formatPaymentSummary(row.payment)}

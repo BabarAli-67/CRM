@@ -455,6 +455,38 @@ const leadSchema = new mongoose.Schema(
               type: Date,
               default: null,
             },
+            /**
+             * Monthly recurring retention payments (never mixed into base paymentReceived).
+             * Each Mark Retention Paid appends one entry and advances `at` by +30 days.
+             */
+            history: {
+              type: [
+                {
+                  entryId: { type: String, required: true, trim: true },
+                  monthLabel: { type: String, default: '', trim: true },
+                  amount: { type: Number, default: 0, min: 0 },
+                  paidAt: { type: Date, default: null },
+                  previousAmount: { type: Number, default: null },
+                  delta: { type: Number, default: 0 },
+                  note: { type: String, default: null, trim: true },
+                  createdBy: {
+                    type: mongoose.Schema.Types.ObjectId,
+                    ref: 'User',
+                    default: null,
+                  },
+                },
+              ],
+              default: undefined,
+            },
+            lastPaidAt: {
+              type: Date,
+              default: null,
+            },
+            lastPaidAmount: {
+              type: Number,
+              default: null,
+              min: 0,
+            },
           },
           default: undefined,
         },

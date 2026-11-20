@@ -66,6 +66,20 @@ export const markRetentionDone = async (leadId) => {
   return response.data.data.lead;
 };
 
+/**
+ * Mark Retention Paid for the current cycle.
+ * @param {string} leadId
+ * @param {{ amount: number, note?: string, paidAt?: string }} payload
+ */
+export const markRetentionPaid = async (leadId, payload) => {
+  const response = await api.patch(`/handover/${leadId}/retention/paid`, {
+    amount: Number(payload?.amount) || 0,
+    ...(payload?.note != null ? { note: payload.note } : {}),
+    ...(payload?.paidAt != null ? { paidAt: payload.paidAt } : {}),
+  });
+  return response.data.data.lead;
+};
+
 /** CST Client Detail — save Products / Services & Custom Scope. */
 export const setServiceScope = async (leadId, { selected, otherNote }) => {
   const response = await api.patch(`/handover/${leadId}/service-scope`, {
@@ -84,6 +98,31 @@ export const saveClientPortfolio = async (leadId, payload) => {
   const response = await api.patch(`/handover/${leadId}/portfolio`, payload);
   return response.data.data.lead;
 };
+
+/** CST — update Base / Upsell / Total pending balances (recomputes Collected). */
+export const updateClientBalances = async (leadId, payload) => {
+  const response = await api.patch(`/handover/${leadId}/balances`, payload);
+  return response.data.data.lead;
+};
+
+/** CST — set Document Sign Yes/No + optional signed file. */
+export const updateClientSignedDocument = async (
+  leadId,
+  { documentSigned, file }
+) => {
+  const formData = new FormData();
+  formData.append('documentSigned', documentSigned ? 'yes' : 'no');
+  if (file) formData.append('signedDocument', file);
+  const response = await api.patch(
+    `/handover/${leadId}/signed-document`,
+    formData,
+    { headers: { 'Content-Type': 'multipart/form-data' } }
+  );
+  return response.data.data.lead;
+};
+
+export const clientSignedDocumentUrl = (leadId) =>
+  `/handover/${leadId}/signed-document`;
 
 /** CST Client Detail — append one upsell (+ optional new saved card). */
 export const addClientUpsell = async (leadId, payload) => {

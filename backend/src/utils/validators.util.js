@@ -130,15 +130,8 @@ export const closeLeadValidator = [
     .isMongoId()
     .withMessage('closerId must be a valid Mongo id'),
   body('payment.method')
-    .isIn(['via_link', 'via_card', 'other'])
-    .withMessage("payment.method must be 'via_link', 'via_card', or 'other'"),
-  body('payment.linkUrl')
-    .if(body('payment.method').equals('via_link'))
-    .notEmpty()
-    .withMessage('payment.linkUrl is required when method is via_link')
-    .trim()
-    .isLength({ max: 500 })
-    .withMessage('payment.linkUrl must be at most 500 characters'),
+    .isIn(['via_card', 'other'])
+    .withMessage("payment.method must be 'via_card' or 'other'"),
   body('payment.cardLast4')
     .if(body('payment.method').equals('via_card'))
     .notEmpty()

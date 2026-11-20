@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft } from 'lucide-react';
@@ -14,6 +14,11 @@ import {
   formatCstStatus,
   formatPaymentSummary,
 } from '../../utils/formatPayment.util.js';
+import {
+  currentPktMonth,
+  formatPktMonthLabel,
+  pktMonthKey,
+} from '../../utils/pktMonth.util.js';
 import {
   ADMIN_BTN_GHOST,
   ADMIN_BTN_PRIMARY,
@@ -62,10 +67,28 @@ export default function PipelineOverviewPage() {
   const [overrideTarget, setOverrideTarget] = useState(null);
   const [detailLead, setDetailLead] = useState(null);
   const [flash, setFlash] = useState('');
+  const [closedMonth, setClosedMonth] = useState(currentPktMonth);
+  const closedMonthPinnedRef = useRef(false);
 
   // Spec: isAdmin true ONLY for super_admin — Auditor is byte-identical minus writes
   const canWrite = user?.isAdmin === true;
   const homePath = user?.role === 'admin' ? '/admin/monitor' : '/admin';
+  const liveClosedMonth = currentPktMonth();
+
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      if (closedMonthPinnedRef.current) return;
+      const live = currentPktMonth();
+      setClosedMonth((prev) => (prev === live ? prev : live));
+    }, 60_000);
+    return () => window.clearInterval(id);
+  }, []);
+
+  const selectClosedMonth = (value) => {
+    const next = value || currentPktMonth();
+    closedMonthPinnedRef.current = next !== currentPktMonth();
+    setClosedMonth(next);
+  };
 
   const callbacksQuery = useQuery({
     queryKey: ['pipeline', 'callbacks'],
@@ -96,8 +119,12 @@ export default function PipelineOverviewPage() {
   );
 
   const closedSales = useMemo(
-    () => allLeads.filter((l) => l.stage === 'closed_sale'),
-    [allLeads]
+    () =>
+      allLeads.filter(
+        (l) =>
+          l.stage === 'closed_sale' && pktMonthKey(l.closedAt) === closedMonth
+      ),
+    [allLeads, closedMonth]
   );
 
   const techProjects = useMemo(
@@ -202,6 +229,9 @@ export default function PipelineOverviewPage() {
         {tab === 'closedSales' ? (
           <ClosedSalesPanel
             leads={closedSales}
+            month={closedMonth}
+            liveMonth={liveClosedMonth}
+            onMonthChange={selectClosedMonth}
             isLoading={leadsQuery.isLoading}
             isError={leadsQuery.isError}
             error={leadsQuery.error}
@@ -387,6 +417,9 @@ function ActiveLeadsPanel({ leads, isLoading, isError, error, onViewDetails }) {
 
 function ClosedSalesPanel({
   leads,
+  month,
+  liveMonth,
+  onMonthChange,
   isLoading,
   isError,
   error,
@@ -394,14 +427,34 @@ function ClosedSalesPanel({
   onOverride,
   onViewDetails,
 }) {
+  const viewingArchive = month !== liveMonth;
   return (
-    <section className={ADMIN_TABLE_WRAP}>
+    <section className="space-y-3">
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <p className="text-sm text-zinc-400">
+          {formatPktMonthLabel(month)} (PKT)
+          {viewingArchive ? ' · archive month' : ' · current month'} · historical
+          deals retained
+        </p>
+        <label className="space-y-1 text-xs font-medium text-zinc-400">
+          <span>Month (PKT)</span>
+          <input
+            type="month"
+            value={month}
+            onChange={(e) => onMonthChange?.(e.target.value)}
+            max={liveMonth}
+            className="block rounded-lg border border-white/15 bg-[#111111] px-3 py-2 text-sm text-white outline-none transition [color-scheme:dark] focus:border-[#F25E26]/60 focus:ring-2 focus:ring-[#F25E26]/30"
+            aria-label="Closed sales month (Asia/Karachi)"
+          />
+        </label>
+      </div>
+      <div className={ADMIN_TABLE_WRAP}>
       <LoadingOrError
         isLoading={isLoading}
         isError={isError}
         error={error}
         rows={leads}
-        empty="No closed sales."
+        empty={`No closed sales in ${formatPktMonthLabel(month)}.`}
       >
         <table className="min-w-full text-left text-sm text-zinc-200">
           <thead className={ADMIN_THEAD}>
@@ -453,6 +506,7 @@ function ClosedSalesPanel({
           </tbody>
         </table>
       </LoadingOrError>
+      </div>
     </section>
   );
 }

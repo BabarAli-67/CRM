@@ -20,7 +20,8 @@ const TAB_EMPTY = {
   all: 'No upcoming callbacks. Use + Add Callback or schedule from My Leads.',
   upcoming: 'No upcoming callbacks.',
   overdue: 'No overdue callbacks.',
-  done: 'No completed, attended, or promoted callbacks yet.',
+  completed: 'No completed callbacks yet.',
+  attended: 'No attended callbacks yet.',
 };
 
 export default function MyCallbacksPage() {

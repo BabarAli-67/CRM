@@ -3,6 +3,8 @@
  * Dedupes by last4 + name + zip (not by missing vs populated expiry).
  */
 
+import { resolveCardBrandId } from './cardBrand.util.js';
+
 const digitsOnly = (value) => String(value || '').replace(/\D/g, '');
 
 /** Map expiry / expiryDate / expDate / cardExpiry → MM/YY or ''. */
@@ -104,9 +106,11 @@ function mergeCardEntries(base, next) {
 function normalizeCandidate(raw) {
   const last4 = normalizeLast4(raw);
   if (last4.length !== 4) return null;
+  const cardBrand = resolveCardBrandId(raw) || null;
   return {
     ...raw,
     cardLast4: last4,
+    cardBrand,
     expiry: normalizeCardExpiry(raw) || null,
     nameOnCard:
       String(raw?.nameOnCard || raw?.cardHolderName || '').trim() || null,

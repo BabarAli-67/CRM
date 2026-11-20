@@ -2,6 +2,63 @@ import { randomUUID } from 'crypto';
 
 const digitsOnly = (value) => String(value || '').replace(/\D/g, '');
 
+/** Same BIN rules as frontend cardBrand.util — keep in sync. */
+const BRAND_RULES = [
+  { id: 'amex', test: (d) => /^3[47]/.test(d) },
+  { id: 'diners', test: (d) => /^3(?:0[0-5]|[68]\d)/.test(d) },
+  { id: 'jcb', test: (d) => /^(?:2131|1800|35\d{0,3})/.test(d) },
+  {
+    id: 'elo',
+    test: (d) =>
+      /^(4011|438935|451416|4576|504175|5067|5090|627780|636297|636368)/.test(d),
+  },
+  {
+    id: 'maestro',
+    test: (d) => /^(5018|5020|5038|5893|6304|6759|6761|6763)/.test(d),
+  },
+  { id: 'unionpay', test: (d) => /^(62|81)/.test(d) },
+  { id: 'discover', test: (d) => /^(6011|65|64[4-9]|622)/.test(d) },
+  {
+    id: 'mastercard',
+    test: (d) =>
+      /^(5[1-5]|222[1-9]|22[3-9]\d|2[3-6]\d{2}|27[01]\d|2720)/.test(d),
+  },
+  { id: 'visa', test: (d) => /^4/.test(d) },
+];
+
+export function detectCardBrandId(digitsOrRaw) {
+  const digits = digitsOnly(digitsOrRaw);
+  if (!digits) return '';
+  for (const brand of BRAND_RULES) {
+    if (brand.test(digits)) return brand.id;
+  }
+  return 'other';
+}
+
+/**
+ * Resolve brand id: stored → cardNumber digits → local_{brand}_ token.
+ */
+export function resolveCardBrandId(card) {
+  if (!card || typeof card !== 'object') return '';
+  const stored = String(card.cardBrand || card.brand || '')
+    .trim()
+    .toLowerCase();
+  if (stored && stored !== 'other' && stored !== 'card' && stored !== 'unknown') {
+    return stored;
+  }
+  const fromDigits = detectCardBrandId(
+    card.cardNumber || card.number || card.pan || ''
+  );
+  if (fromDigits && fromDigits !== 'other') return fromDigits;
+  const token = String(card.cardReferenceToken || '');
+  const m = token.match(/^local_([a-z0-9]+)_/i);
+  if (m?.[1]) {
+    const id = m[1].toLowerCase();
+    if (id && id !== 'card' && id !== 'other' && id !== 'unknown') return id;
+  }
+  return stored === 'other' ? 'other' : '';
+}
+
 /** Map expiry / expiryDate / expDate / cardExpiry → MM/YY or ''. */
 export function normalizeCardExpiry(cardOrValue) {
   if (cardOrValue == null) return '';
@@ -112,6 +169,7 @@ export function buildSavedCardEntry({
   cardLast4,
   cardBrand,
   cardReferenceToken,
+  cardNumber,
   expiry,
   nameOnCard,
   billingZipCode,
@@ -119,18 +177,26 @@ export function buildSavedCardEntry({
   cvcCollected = true,
   addedAt,
 }) {
-  const last4 = digitsOnly(cardLast4).slice(-4);
+  const last4 = digitsOnly(cardLast4 || cardNumber).slice(-4);
   if (last4.length !== 4) {
     throw new Error('cardLast4 is required to save a card');
   }
   const normalizedExpiry = normalizeCardExpiry(expiry) || null;
+  const resolvedBrand =
+    resolveCardBrandId({
+      cardBrand,
+      cardNumber,
+      cardReferenceToken,
+    }) ||
+    (cardBrand ? String(cardBrand).trim().toLowerCase() : '') ||
+    null;
   return {
     cardId: randomUUID(),
     cardLast4: last4,
-    cardBrand: cardBrand ? String(cardBrand).trim() : null,
+    cardBrand: resolvedBrand,
     cardReferenceToken: cardReferenceToken
       ? String(cardReferenceToken).trim()
-      : `local_${cardBrand || 'card'}_${last4}_${Date.now()}`,
+      : `local_${resolvedBrand || 'card'}_${last4}_${Date.now()}`,
     expiry: normalizedExpiry,
     nameOnCard: nameOnCard ? String(nameOnCard).trim() : null,
     billingZipCode: billingZipCode ? String(billingZipCode).trim() : null,
@@ -182,6 +248,7 @@ export function listAggregatedSavedCards(lead) {
     const card = {
       ...raw,
       cardLast4: last4,
+      cardBrand: resolveCardBrandId(raw) || raw?.cardBrand || null,
       expiry: normalizeCardExpiry(raw) || null,
       nameOnCard:
         String(raw?.nameOnCard || raw?.cardHolderName || '').trim() || null,
@@ -207,6 +274,28 @@ export function listAggregatedSavedCards(lead) {
 }
 
 /**
+ * Backfill missing cardBrand on vault entries (token / digit derivation).
+ * Mutates lead; returns true if any brand was written.
+ */
+export function backfillSavedCardBrands(lead) {
+  if (!lead || !Array.isArray(lead.savedCards) || lead.savedCards.length === 0) {
+    return false;
+  }
+  let changed = false;
+  for (let i = 0; i < lead.savedCards.length; i++) {
+    const card = lead.savedCards[i];
+    const resolved = resolveCardBrandId(card);
+    if (!resolved) continue;
+    const current = String(card.cardBrand || '').trim().toLowerCase();
+    if (current === resolved) continue;
+    if (current && current !== 'other' && current !== 'card') continue;
+    lead.savedCards[i].cardBrand = resolved;
+    changed = true;
+  }
+  return changed;
+}
+
+/**
  * Persist any legacy base-deal card into savedCards when missing from the vault.
  * Also backfills empty expiry on an existing matching vault card when payment has it.
  * Mutates lead; returns true if lead.savedCards changed.
@@ -215,11 +304,13 @@ export function syncLegacyCardsIntoVault(lead) {
   if (!lead) return false;
   if (!Array.isArray(lead.savedCards)) lead.savedCards = [];
 
+  let changed = backfillSavedCardBrands(lead);
+
   const payment = lead.payment;
-  if (payment?.method !== 'via_card' || !payment.cardLast4) return false;
+  if (payment?.method !== 'via_card' || !payment.cardLast4) return changed;
 
   const last4 = digitsOnly(payment.cardLast4).slice(-4);
-  if (last4.length !== 4) return false;
+  if (last4.length !== 4) return changed;
 
   const legacy = {
     cardLast4: last4,
@@ -230,10 +321,16 @@ export function syncLegacyCardsIntoVault(lead) {
     nameOnCard: payment.cardHolderName,
     billingZipCode: payment.billingZip,
     cardReferenceToken: payment.cardReferenceToken,
-    cardBrand: payment.cardBrand,
+    cardBrand:
+      resolveCardBrandId({
+        cardBrand: payment.cardBrand,
+        cardReferenceToken: payment.cardReferenceToken,
+      }) ||
+      payment.cardBrand ||
+      null,
   };
   const legacyFp = cardFingerprint(legacy);
-  if (!legacyFp) return false;
+  if (!legacyFp) return changed;
 
   const existingIdx = lead.savedCards.findIndex(
     (c) => cardFingerprint(c) === legacyFp
@@ -248,6 +345,8 @@ export function syncLegacyCardsIntoVault(lead) {
       addedAt: existing.addedAt || lead.closedAt || lead.createdAt,
       cvcOnFile: existing.cvcOnFile !== false,
     });
+    const resolvedBrand =
+      resolveCardBrandId(merged) || merged.cardBrand || null;
     const before = JSON.stringify({
       expiry: existing.expiry || null,
       nameOnCard: existing.nameOnCard || null,
@@ -258,15 +357,15 @@ export function syncLegacyCardsIntoVault(lead) {
       expiry: merged.expiry || null,
       nameOnCard: merged.nameOnCard || null,
       billingZipCode: merged.billingZipCode || null,
-      cardBrand: merged.cardBrand || null,
+      cardBrand: resolvedBrand,
     });
-    if (before === after) return false;
+    if (before === after) return changed;
     lead.savedCards[existingIdx] = {
       ...existing.toObject?.() || existing,
       expiry: merged.expiry,
       nameOnCard: merged.nameOnCard,
       billingZipCode: merged.billingZipCode,
-      cardBrand: merged.cardBrand,
+      cardBrand: resolvedBrand,
       cardReferenceToken:
         merged.cardReferenceToken || existing.cardReferenceToken,
     };
@@ -277,7 +376,7 @@ export function syncLegacyCardsIntoVault(lead) {
     lead,
     buildSavedCardEntry({
       cardLast4: last4,
-      cardBrand: payment.cardBrand || null,
+      cardBrand: legacy.cardBrand || payment.cardBrand || null,
       cardReferenceToken: payment.cardReferenceToken || null,
       expiry: normalizeCardExpiry(legacy) || null,
       nameOnCard: payment.cardHolderName || null,

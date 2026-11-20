@@ -21,7 +21,17 @@ import {
   syncLegacyCardsIntoVault,
 } from '../utils/savedCard.util.js';
 import { buildAlertFlagsForSchedule } from '../utils/alertTiming.util.js';
+import { resolvePktMonthRange } from '../utils/shiftTime.util.js';
 import { randomUUID } from 'crypto';
+
+/** Parse ?month=YYYY-MM for closed-sales scoping. Defaults to current PKT month. */
+const closedSalesMonthRange = (monthQuery) => {
+  try {
+    return resolvePktMonthRange(monthQuery);
+  } catch {
+    throw new ApiError(400, 'month must be YYYY-MM');
+  }
+};
 
 const refId = (ref) => {
   if (!ref) return null;
@@ -299,11 +309,16 @@ export const getAssignedLeads = asyncHandler(async (req, res) => {
     .json(new ApiResponse(200, { leads }, 'Assigned active leads retrieved'));
 });
 
-/** Closed sales awaiting CST handoff for this closer (+ unassigned agent-closed). */
+/** Closed sales awaiting CST handoff for this closer (+ unassigned agent-closed).
+ * Scoped to ?month=YYYY-MM (PKT); defaults to the current Asia/Karachi month.
+ * Historical deals stay in MongoDB — only the active desk view is month-scoped.
+ */
 export const getCloserClosedSales = asyncHandler(async (req, res) => {
   const closerId = req.user._id;
+  const range = closedSalesMonthRange(req.query.month);
   const leads = await Lead.find({
     stage: 'closed_sale',
+    closedAt: { $gte: range.start, $lt: range.end },
     $and: [
       {
         $or: [
@@ -327,9 +342,13 @@ export const getCloserClosedSales = asyncHandler(async (req, res) => {
     .populate('closedBy', 'fullName username role')
     .sort({ closedAt: -1 });
 
-  res
-    .status(200)
-    .json(new ApiResponse(200, { leads }, 'Closer closed sales retrieved'));
+  res.status(200).json(
+    new ApiResponse(
+      200,
+      { leads, month: range.month, timezone: 'Asia/Karachi' },
+      'Closer closed sales retrieved'
+    )
+  );
 });
 
 /** Disqualified leads assigned to this closer. */
@@ -414,14 +433,12 @@ export const deleteLeadPermanently = asyncHandler(async (req, res) => {
     );
   }
 
-  const isSuperAdmin = req.user.role === 'super_admin';
-  const isCloserOwner =
-    req.user.role === 'closer' &&
-    lead.closerId &&
-    String(lead.closerId) === String(req.user._id);
-
-  if (!isSuperAdmin && !isCloserOwner) {
-    throw new ApiError(403, 'You can only delete your own disqualified leads');
+  // Closers cannot permanently delete — Super Admin only
+  if (req.user.role !== 'super_admin') {
+    throw new ApiError(
+      403,
+      'Only Super Admin can permanently delete disqualified leads'
+    );
   }
 
   const leadId = lead._id;
@@ -468,19 +485,27 @@ export const getCloserTeamAgents = asyncHandler(async (req, res) => {
     .json(new ApiResponse(200, { agents }, 'Closer team agents retrieved'));
 });
 
-/** Sales agent — history of leads they closed (or that belong to them as agent). */
+/** Sales agent — closed sales for ?month=YYYY-MM (PKT); defaults to current month.
+ * Does not delete history — only scopes the active dashboard/list view.
+ */
 export const getMyClosedSales = asyncHandler(async (req, res) => {
+  const range = closedSalesMonthRange(req.query.month);
   const leads = await Lead.find({
     agentId: req.user._id,
     stage: 'closed_sale',
+    closedAt: { $gte: range.start, $lt: range.end },
   })
     .populate('closerId', 'fullName username role')
     .populate('closedBy', 'fullName username role')
     .sort({ closedAt: -1 });
 
-  res
-    .status(200)
-    .json(new ApiResponse(200, { leads }, 'My closed sales retrieved'));
+  res.status(200).json(
+    new ApiResponse(
+      200,
+      { leads, month: range.month, timezone: 'Asia/Karachi' },
+      'My closed sales retrieved'
+    )
+  );
 });
 
 /**
@@ -605,7 +630,7 @@ export const moveLeadToCst = asyncHandler(async (req, res) => {
     }
 
     upsellPaymentMethod = String(body.upsellPaymentMethod || '').trim();
-    const allowedPay = new Set(['old_card', 'new_card', 'via_link', 'other']);
+    const allowedPay = new Set(['old_card', 'new_card', 'other']);
     if (!allowedPay.has(upsellPaymentMethod)) {
       throw new ApiError(
         400,
@@ -726,7 +751,6 @@ export const moveLeadToCst = asyncHandler(async (req, res) => {
     const payOptionMap = {
       old_card: 'old_card',
       new_card: 'new_card',
-      via_link: 'link',
       other: 'others',
     };
     const ledgerRow = {
@@ -1085,13 +1109,7 @@ export const updateLead = asyncHandler(async (req, res) => {
       billingZip: null,
       otherDetails: null,
     };
-    if (payment.method === 'via_link') {
-      const url = String(payment.linkUrl || '').trim();
-      if (!url) {
-        throw new ApiError(400, 'payment.linkUrl is required for Payment Link');
-      }
-      paymentDoc.linkUrl = url;
-    } else if (payment.method === 'via_card') {
+    if (payment.method === 'via_card') {
       if (!payment.cardLast4 || !payment.cardReferenceToken || !payment.cardBrand) {
         throw new ApiError(
           400,
@@ -1111,7 +1129,10 @@ export const updateLead = asyncHandler(async (req, res) => {
       }
       paymentDoc.otherDetails = details;
     } else {
-      throw new ApiError(400, 'Invalid payment.method');
+      throw new ApiError(
+        400,
+        "Invalid payment.method — use 'via_card' or 'other'"
+      );
     }
     lead.payment = paymentDoc;
   }
@@ -1340,13 +1361,7 @@ export const closeLead = asyncHandler(async (req, res) => {
     otherDetails: null,
   };
 
-  if (payment.method === 'via_link') {
-    const url = String(payment.linkUrl || '').trim();
-    if (!url) {
-      throw new ApiError(400, 'payment.linkUrl is required when method is via_link');
-    }
-    paymentDoc.linkUrl = url;
-  } else if (payment.method === 'via_card') {
+  if (payment.method === 'via_card') {
     paymentDoc.cardLast4 = payment.cardLast4;
     paymentDoc.cardBrand = payment.cardBrand || null;
     paymentDoc.cardReferenceToken = payment.cardReferenceToken;
@@ -1356,6 +1371,11 @@ export const closeLead = asyncHandler(async (req, res) => {
     paymentDoc.cardExpiry = String(payment.cardExpiry || '').trim() || null;
   } else if (payment.method === 'other') {
     paymentDoc.otherDetails = String(payment.otherDetails || '').trim() || null;
+  } else {
+    throw new ApiError(
+      400,
+      "Invalid payment.method — use 'via_card' or 'other'"
+    );
   }
 
   const userId = req.user._id;

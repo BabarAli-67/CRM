@@ -11,6 +11,7 @@ import {
   brandPayloadId,
   cardDigitsOnly,
   detectCardBrand,
+  formatCardBrandLabel,
   formatCardNumber,
   maxCardDigits,
 } from '../../utils/cardBrand.util.js';
@@ -25,7 +26,6 @@ const numInputClass =
 
 const METHOD_OPTIONS = [
   { value: 'via_card', label: 'Card' },
-  { value: 'via_link', label: 'Payment Link' },
   { value: 'other', label: 'Others' },
 ];
 
@@ -165,15 +165,15 @@ const emptyReview = {
   serviceAreas: '',
   servicesOffered: '',
   paymentOffered: '',
-  paymentReceived: '0',
+  paymentReceived: '',
   paymentPending: '',
   notes: '',
 };
 
 const computePendingDisplay = (offeredRaw, receivedRaw) => {
   const offered = Number(String(offeredRaw ?? '').trim());
-  const received = Number(String(receivedRaw ?? '').trim() || '0');
-  if (Number.isNaN(offered) || Number.isNaN(received)) return '';
+  const received = Number(receivedRaw) || 0;
+  if (Number.isNaN(offered)) return '';
   return String(Math.max(0, offered - received));
 };
 
@@ -185,10 +185,15 @@ const mapLeadToReview = (lead) => {
       : lead.salesAmount != null && lead.salesAmount !== ''
         ? String(lead.salesAmount)
         : '';
+  // Empty when nothing received yet so placeholder="0" stays visible
+  const receivedNum = Number(lead.paymentReceived);
   const paymentReceived =
-    lead.paymentReceived != null && lead.paymentReceived !== ''
+    lead.paymentReceived != null &&
+    lead.paymentReceived !== '' &&
+    !Number.isNaN(receivedNum) &&
+    receivedNum > 0
       ? String(lead.paymentReceived)
-      : '0';
+      : '';
   return {
     clientName: lead.clientName || '',
     businessName: lead.businessName || '',
@@ -236,25 +241,21 @@ function applyCloseCaches(queryClient, leadId, closedLead) {
     });
   });
 
+  const prependClosed = (old) => {
+    const list = Array.isArray(old) ? old : [];
+    if (!closedLead?._id) return list;
+    if (list.some((l) => String(l._id) === String(closedLead._id))) {
+      return list.map((l) =>
+        String(l._id) === String(closedLead._id) ? closedLead : l
+      );
+    }
+    return [closedLead, ...list];
+  };
+
   if (closedLead?._id) {
-    queryClient.setQueryData(['agentClosedSales'], (old) => {
-      const list = Array.isArray(old) ? old : [];
-      if (list.some((l) => String(l._id) === String(closedLead._id))) {
-        return list.map((l) =>
-          String(l._id) === String(closedLead._id) ? closedLead : l
-        );
-      }
-      return [closedLead, ...list];
-    });
-    queryClient.setQueryData(['closerClosedSales'], (old) => {
-      const list = Array.isArray(old) ? old : [];
-      if (list.some((l) => String(l._id) === String(closedLead._id))) {
-        return list.map((l) =>
-          String(l._id) === String(closedLead._id) ? closedLead : l
-        );
-      }
-      return [closedLead, ...list];
-    });
+    // Month-scoped query keys: update every matching cache entry
+    queryClient.setQueriesData({ queryKey: ['agentClosedSales'] }, prependClosed);
+    queryClient.setQueriesData({ queryKey: ['closerClosedSales'] }, prependClosed);
   }
 
   queryClient.removeQueries({ queryKey: ['lead', leadId] });
@@ -267,7 +268,7 @@ function applyCloseCaches(queryClient, leadId, closedLead) {
   queryClient.invalidateQueries({ queryKey: ['myClosedCount'] });
   queryClient.invalidateQueries({ queryKey: ['closerClosedSales'] });
   queryClient.invalidateQueries({ queryKey: ['agentClosedSales'] });
-  queryClient.setQueryData(['myClosedCount'], (old) =>
+  queryClient.setQueriesData({ queryKey: ['myClosedCount'] }, (old) =>
     typeof old === 'number' ? old + 1 : old
   );
 }
@@ -290,7 +291,6 @@ export default function CloseSaleModal({ open, lead, onClose, onSuccess }) {
   const [cardCvv, setCardCvv] = useState('');
   const [cardHolderName, setCardHolderName] = useState('');
   const [billingZip, setBillingZip] = useState('');
-  const [linkUrl, setLinkUrl] = useState('');
   const [otherDetails, setOtherDetails] = useState('');
   const [cbDate, setCbDate] = useState('');
   const [cbHour, setCbHour] = useState('');
@@ -362,7 +362,6 @@ export default function CloseSaleModal({ open, lead, onClose, onSuccess }) {
     setCardCvv('');
     setCardHolderName('');
     setBillingZip('');
-    setLinkUrl('');
     setOtherDetails('');
     setError('');
   }, [open, leadId]);
@@ -418,19 +417,6 @@ export default function CloseSaleModal({ open, lead, onClose, onSuccess }) {
   };
 
   const buildPayment = () => {
-    if (method === 'via_link') {
-      const url = String(linkUrl || '').trim();
-      if (!url) {
-        return { error: 'Enter the payment link / reference URL.' };
-      }
-      return {
-        payment: {
-          method: 'via_link',
-          linkUrl: normalizeUrl(url) || url,
-        },
-      };
-    }
-
     if (method === 'other') {
       const details = otherDetails.trim();
       if (details.length < 2) {
@@ -519,7 +505,7 @@ export default function CloseSaleModal({ open, lead, onClose, onSuccess }) {
       setError('Payment offered must be a valid non-negative number.');
       return;
     }
-    const paymentReceived = Number(review.paymentReceived.trim() || '0');
+    const paymentReceived = Number(review.paymentReceived) || 0;
     if (Number.isNaN(paymentReceived) || paymentReceived < 0) {
       setError('Payment received must be a valid non-negative number.');
       return;
@@ -751,15 +737,12 @@ export default function CloseSaleModal({ open, lead, onClose, onSuccess }) {
                       </div>
                     </label>
                     <label className="block space-y-1.5 text-sm text-zinc-300">
-                      <span>
-                        Payment Received <span className="text-red-500">*</span>
-                      </span>
+                      <span>Payment Received</span>
                       <div className="relative">
                         <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-zinc-500">
                           $
                         </span>
                         <input
-                          required
                           type="number"
                           min="0"
                           step="0.01"
@@ -767,7 +750,6 @@ export default function CloseSaleModal({ open, lead, onClose, onSuccess }) {
                           onChange={handleReviewChange('paymentReceived')}
                           className={`${fieldClass} pl-7`}
                           placeholder="0"
-                          aria-required="true"
                         />
                       </div>
                     </label>
@@ -993,7 +975,9 @@ export default function CloseSaleModal({ open, lead, onClose, onSuccess }) {
                       {detectedBrand.id ? (
                         <span className="text-[11px] text-zinc-500">
                           Detected: {detectedBrand.label}
-                          {cardBrand ? ` · saved as “${cardBrand}”` : ''}
+                          {cardBrand
+                            ? ` · ${formatCardBrandLabel(cardBrand) || cardBrand}`
+                            : ''}
                         </span>
                       ) : (
                         <span className="text-[11px] text-zinc-500">
@@ -1060,20 +1044,6 @@ export default function CloseSaleModal({ open, lead, onClose, onSuccess }) {
                       />
                     </label>
                   </div>
-                ) : null}
-
-                {method === 'via_link' ? (
-                  <label className="block space-y-1.5 text-sm text-zinc-300">
-                    <span>Payment link / reference *</span>
-                    <input
-                      required
-                      type="url"
-                      value={linkUrl}
-                      onChange={(e) => setLinkUrl(e.target.value)}
-                      placeholder="https://pay.example.com/…"
-                      className={fieldClass}
-                    />
-                  </label>
                 ) : null}
 
                 {method === 'other' ? (

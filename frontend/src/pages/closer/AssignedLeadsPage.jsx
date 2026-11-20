@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import LeadDetailModal from '../../components/leads/LeadDetailModal.jsx';
 import LeadTable from '../../components/leads/LeadTable.jsx';
@@ -12,7 +12,6 @@ import CloserTableFilterBar, {
 } from '../../components/closer/CloserTableFilterBar.jsx';
 import { getCloserTeamAgentCallbacks } from '../../services/callback.service.js';
 import {
-  deleteLeadPermanently,
   getAssignedLeads,
   getCloserClosedSales,
   getCloserDisqualifiedLeads,
@@ -25,6 +24,10 @@ import { formatUserRef } from '../../utils/formatUserRef.util.js';
 import {
   formatPaymentSummary,
 } from '../../utils/formatPayment.util.js';
+import {
+  currentPktMonth,
+  formatPktMonthLabel,
+} from '../../utils/pktMonth.util.js';
 
 const formatPkt = (value) => {
   if (!value) return '—';
@@ -104,9 +107,27 @@ export default function AssignedLeadsPage() {
   const [closedBusinessFilter, setClosedBusinessFilter] = useState('');
   const [closedEmailFilter, setClosedEmailFilter] = useState('');
   const [closedDateFilter, setClosedDateFilter] = useState('');
+  const [closedMonth, setClosedMonth] = useState(currentPktMonth);
+  const closedMonthPinnedRef = useRef(false);
   const [teamBusinessFilter, setTeamBusinessFilter] = useState('');
   const [teamEmailFilter, setTeamEmailFilter] = useState('');
   const [teamDateFilter, setTeamDateFilter] = useState('');
+
+  // Follow the live PKT month unless the user pinned an archive month
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      if (closedMonthPinnedRef.current) return;
+      const live = currentPktMonth();
+      setClosedMonth((prev) => (prev === live ? prev : live));
+    }, 60_000);
+    return () => window.clearInterval(id);
+  }, []);
+
+  const selectClosedMonth = (value) => {
+    const next = value || currentPktMonth();
+    closedMonthPinnedRef.current = next !== currentPktMonth();
+    setClosedMonth(next);
+  };
 
   const {
     data: leads = [],
@@ -127,8 +148,8 @@ export default function AssignedLeadsPage() {
     isError: closedError,
     error: closedErr,
   } = useQuery({
-    queryKey: ['closerClosedSales'],
-    queryFn: getCloserClosedSales,
+    queryKey: ['closerClosedSales', closedMonth],
+    queryFn: () => getCloserClosedSales(closedMonth),
     refetchInterval: 20_000,
     refetchOnWindowFocus: true,
     refetchOnMount: 'always',
@@ -245,7 +266,7 @@ export default function AssignedLeadsPage() {
       setDetailLead((prev) =>
         prev && String(prev._id) === String(id) ? null : prev
       );
-      queryClient.setQueryData(['closerClosedSales'], (old) => {
+      queryClient.setQueriesData({ queryKey: ['closerClosedSales'] }, (old) => {
         if (!Array.isArray(old)) return old;
         return old.filter((l) => String(l._id) !== String(id));
       });
@@ -277,25 +298,6 @@ export default function AssignedLeadsPage() {
       state: {},
     });
   }, [location.state, location.pathname, location.search, navigate]);
-
-  const deleteMutation = useMutation({
-    mutationFn: (id) => deleteLeadPermanently(id),
-    onSuccess: (_data, id) => {
-      setActionMessage('Lead permanently deleted.');
-      queryClient.setQueryData(['closerDisqualified'], (old) => {
-        if (!Array.isArray(old)) return old;
-        return old.filter((l) => String(l._id) !== String(id));
-      });
-      queryClient.invalidateQueries({ queryKey: ['closerDisqualified'] });
-      queryClient.invalidateQueries({ queryKey: ['pipeline', 'leads'] });
-      queryClient.invalidateQueries({ queryKey: ['allLeads'] });
-    },
-    onError: (err) => {
-      setActionError(
-        err?.response?.data?.message || 'Failed to delete lead permanently.'
-      );
-    },
-  });
 
   const restoreMutation = useMutation({
     mutationFn: (id) => restoreDisqualifiedLead(id),
@@ -362,15 +364,21 @@ export default function AssignedLeadsPage() {
     closedDateFilter,
   ]);
 
+  const liveClosedMonth = currentPktMonth();
+  const viewingArchiveMonth = closedMonth !== liveClosedMonth;
+
   const hasClosedFilters =
     closedBusinessFilter.trim() !== '' ||
     closedEmailFilter.trim() !== '' ||
-    closedDateFilter.trim() !== '';
+    closedDateFilter.trim() !== '' ||
+    viewingArchiveMonth;
 
   const clearClosedFilters = () => {
     setClosedBusinessFilter('');
     setClosedEmailFilter('');
     setClosedDateFilter('');
+    closedMonthPinnedRef.current = false;
+    setClosedMonth(currentPktMonth());
   };
 
   const selectedAgent = teamAgents.find(
@@ -482,13 +490,27 @@ export default function AssignedLeadsPage() {
 
         {tab === 'closed' ? (
           <>
-            <div className="mb-6">
-              <h2 className="font-display text-lg font-semibold tracking-tight text-white">
-                Closed Sales
-              </h2>
-              <p className="mt-1 text-sm text-zinc-500">
-                Sales awaiting CST handoff — Move to CST sends them to the CST queue
-              </p>
+            <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
+              <div>
+                <h2 className="font-display text-lg font-semibold tracking-tight text-white">
+                  Closed Sales
+                </h2>
+                <p className="mt-1 text-sm text-zinc-500">
+                  {formatPktMonthLabel(closedMonth)} (PKT) · awaiting CST handoff
+                  {viewingArchiveMonth ? ' · archive month' : ' · current month'}
+                </p>
+              </div>
+              <label className="space-y-1 text-xs font-medium text-zinc-400">
+                <span>Month (PKT)</span>
+                <input
+                  type="month"
+                  value={closedMonth}
+                  onChange={(e) => selectClosedMonth(e.target.value)}
+                  max={liveClosedMonth}
+                  className="block rounded-lg border border-white/15 bg-[#111111] px-3 py-2 text-sm text-white outline-none transition [color-scheme:dark] focus:border-[#F25E26]/60 focus:ring-2 focus:ring-[#F25E26]/30"
+                  aria-label="Closed sales month (Asia/Karachi)"
+                />
+              </label>
             </div>
 
             {closedLoading ? (
@@ -514,7 +536,7 @@ export default function AssignedLeadsPage() {
                   <p className="py-12 text-center text-sm text-zinc-500">
                     {hasClosedFilters
                       ? 'No closed sales match these filters.'
-                      : 'No sales awaiting CST handover.'}
+                      : `No sales awaiting CST handover in ${formatPktMonthLabel(closedMonth)}.`}
                   </p>
                 ) : (
                   <div className="overflow-x-auto rounded-xl border border-zinc-800/60">
@@ -671,8 +693,7 @@ export default function AssignedLeadsPage() {
                 Disqualified Leads
               </h2>
               <p className="mt-1 text-sm text-zinc-500">
-                Stay here until you restore to Leads, move to Closed Sales, or
-                delete permanently
+                Stay here until you restore to Leads or move to Closed Sales
               </p>
             </div>
 
@@ -694,7 +715,7 @@ export default function AssignedLeadsPage() {
                     <tr>
                       <th className={thClass}>Business</th>
                       <th className={thClass}>Phone</th>
-                      <th className={thClass}>Created By</th>
+                      <th className={thClass}>Agent Name</th>
                       <th className={thClass}>Reason</th>
                       <th className={thClass}>Updated</th>
                       <th className={thClass}>Actions</th>
@@ -702,9 +723,6 @@ export default function AssignedLeadsPage() {
                   </thead>
                   <tbody>
                     {disqualifiedLeads.map((row) => {
-                      const deleting =
-                        deleteMutation.isPending &&
-                        deleteMutation.variables === row._id;
                       const restoring =
                         restoreMutation.isPending &&
                         restoreMutation.variables === row._id;
@@ -753,7 +771,7 @@ export default function AssignedLeadsPage() {
                               </button>
                               <button
                                 type="button"
-                                disabled={restoring || deleting}
+                                disabled={restoring}
                                 onClick={() => {
                                   setActionError('');
                                   setActionMessage('');
@@ -762,25 +780,6 @@ export default function AssignedLeadsPage() {
                                 className="rounded-lg border border-emerald-500/40 bg-emerald-600/15 px-3 py-1.5 text-xs font-semibold text-emerald-300 hover:bg-emerald-600/25 disabled:opacity-60"
                               >
                                 {restoring ? 'Moving…' : 'Move to Leads'}
-                              </button>
-                              <button
-                                type="button"
-                                disabled={deleting || restoring}
-                                onClick={() => {
-                                  if (
-                                    !window.confirm(
-                                      'Are you sure you want to permanently delete this lead? This cannot be undone.'
-                                    )
-                                  ) {
-                                    return;
-                                  }
-                                  setActionError('');
-                                  setActionMessage('');
-                                  deleteMutation.mutate(row._id);
-                                }}
-                                className="rounded-lg border border-red-500/40 bg-red-600/15 px-3 py-1.5 text-xs font-semibold text-red-300 hover:bg-red-600/25 disabled:opacity-60"
-                              >
-                                {deleting ? 'Deleting…' : 'Delete Permanently'}
                               </button>
                             </div>
                           </td>
@@ -971,7 +970,7 @@ export default function AssignedLeadsPage() {
               String(l._id) === String(updated._id) ? { ...l, ...updated } : l
             );
           });
-          queryClient.setQueryData(['closerClosedSales'], (old) => {
+          queryClient.setQueriesData({ queryKey: ['closerClosedSales'] }, (old) => {
             if (!Array.isArray(old) || !updated?._id) return old;
             return old.map((l) =>
               String(l._id) === String(updated._id) ? { ...l, ...updated } : l

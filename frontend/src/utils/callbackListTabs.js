@@ -1,31 +1,33 @@
 /**
  * Shared tab buckets for Agent + Closer personal callback lists.
- * Upcoming includes due-soon; Completed / Attended covers finished statuses.
+ * Completed and Attended are independent finished statuses.
  */
 
 export const CALLBACK_LIST_TABS = [
   { id: 'all', label: 'All' },
   { id: 'upcoming', label: 'Upcoming' },
   { id: 'overdue', label: 'Overdue' },
-  { id: 'done', label: 'Completed / Attended' },
+  { id: 'completed', label: 'Completed' },
+  { id: 'attended', label: 'Attended' },
 ];
-
-const DONE_STATUSES = new Set([
-  'attended',
-  'completed',
-  'promoted',
-  'cancelled',
-  'transferred',
-]);
 
 /**
  * @param {object} row
  * @param {number} [now]
- * @returns {'upcoming' | 'overdue' | 'done'}
+ * @returns {'upcoming' | 'overdue' | 'completed' | 'attended' | null}
  */
 export function getCallbackListBucket(row, now = Date.now()) {
-  if (DONE_STATUSES.has(row?.status)) {
-    return 'done';
+  const status = row?.status;
+  if (status === 'completed') return 'completed';
+  if (status === 'attended') return 'attended';
+
+  // Other terminal statuses (promoted / cancelled / transferred) are All-only
+  if (
+    status === 'promoted' ||
+    status === 'cancelled' ||
+    status === 'transferred'
+  ) {
+    return null;
   }
 
   const at = new Date(row?.callbackAt).getTime();
@@ -35,10 +37,19 @@ export function getCallbackListBucket(row, now = Date.now()) {
 }
 
 export function countCallbacksByTab(callbacks = [], now = Date.now()) {
-  const counts = { all: 0, upcoming: 0, overdue: 0, done: 0 };
+  const counts = {
+    all: 0,
+    upcoming: 0,
+    overdue: 0,
+    completed: 0,
+    attended: 0,
+  };
   for (const row of callbacks) {
     counts.all += 1;
-    counts[getCallbackListBucket(row, now)] += 1;
+    const bucket = getCallbackListBucket(row, now);
+    if (bucket && counts[bucket] != null) {
+      counts[bucket] += 1;
+    }
   }
   return counts;
 }

@@ -66,3 +66,33 @@ export const isWeekendShiftDate = (shiftDateStr, weekendDays) => {
   const dayOfWeek = dayjs.tz(shiftDateStr, 'YYYY-MM-DD', TZ).day();
   return weekendDays.includes(dayOfWeek);
 };
+
+/** Current calendar month in Asia/Karachi as YYYY-MM. */
+export const currentPktMonth = () => dayjs().tz(TZ).format('YYYY-MM');
+
+/**
+ * Resolve a PKT calendar-month window for closed-sales / report scoping.
+ * @param {string} [monthStr] YYYY-MM; omit / empty / "current" → this month in PKT
+ * @returns {{ month: string, start: Date, end: Date }}
+ */
+export const resolvePktMonthRange = (monthStr) => {
+  const raw =
+    monthStr == null || monthStr === '' || monthStr === 'current'
+      ? currentPktMonth()
+      : String(monthStr).trim();
+
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(raw)) {
+    throw new Error('month must be YYYY-MM');
+  }
+
+  const start = dayjs.tz(`${raw}-01`, 'YYYY-MM-DD', TZ).startOf('day');
+  if (!start.isValid()) {
+    throw new Error('month must be a valid YYYY-MM');
+  }
+
+  return {
+    month: raw,
+    start: start.toDate(),
+    end: start.add(1, 'month').toDate(),
+  };
+};

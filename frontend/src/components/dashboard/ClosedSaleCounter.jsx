@@ -1,15 +1,31 @@
 import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { getMyClosedCount } from '../../services/stats.service.js';
+import {
+  currentPktMonth,
+  formatPktMonthLabel,
+} from '../../utils/pktMonth.util.js';
 
 /**
  * Monthly closed-sale counter for sales_agent / closer dashboards.
- * Renders count only — never lead details (Vanishing Rule).
+ * Scoped to the current Asia/Karachi calendar month; resets automatically
+ * when the month rolls over. Renders count only — never lead details.
  */
 export default function ClosedSaleCounter() {
+  const [month, setMonth] = useState(currentPktMonth);
+
+  // Auto-reset when PKT calendar month changes while the tab stays open
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      const next = currentPktMonth();
+      setMonth((prev) => (prev === next ? prev : next));
+    }, 60_000);
+    return () => window.clearInterval(id);
+  }, []);
+
   const { data: count = 0, isLoading, isError } = useQuery({
-    queryKey: ['myClosedCount'],
-    queryFn: getMyClosedCount,
+    queryKey: ['myClosedCount', month],
+    queryFn: () => getMyClosedCount(month),
     refetchInterval: 60_000,
   });
 
@@ -53,7 +69,9 @@ export default function ClosedSaleCounter() {
       <p className="mt-2 font-display text-4xl font-semibold tabular-nums tracking-tight text-white">
         {isLoading ? '—' : isError ? '!' : display}
       </p>
-      <p className="mt-1 text-xs text-zinc-500">Count only · no lead details</p>
+      <p className="mt-1 text-xs text-zinc-500">
+        {formatPktMonthLabel(month)} · PKT · resets each month
+      </p>
     </div>
   );
 }

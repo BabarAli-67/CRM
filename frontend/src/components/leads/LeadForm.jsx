@@ -113,7 +113,7 @@ const emptyForm = {
   serviceAreas: '',
   servicesOffered: '',
   paymentOffered: '',
-  paymentReceived: '0',
+  paymentReceived: '',
   paymentPending: '',
   notes: '',
   closerId: '',
@@ -127,8 +127,8 @@ const paymentFieldToString = (value, fallback = '') => {
 
 const computePendingDisplay = (offeredRaw, receivedRaw) => {
   const offered = Number(String(offeredRaw ?? '').trim());
-  const received = Number(String(receivedRaw ?? '').trim() || '0');
-  if (Number.isNaN(offered) || Number.isNaN(received)) return '';
+  const received = Number(receivedRaw) || 0;
+  if (Number.isNaN(offered)) return '';
   return String(Math.max(0, offered - received));
 };
 
@@ -141,10 +141,16 @@ const mapInitialToForm = (initialValues) => {
       ? initialValues.paymentOffered
       : initialValues.salesAmount
   );
-  const paymentReceived = paymentFieldToString(
-    initialValues.paymentReceived,
-    '0'
-  );
+  // Empty when nothing received yet so placeholder="0" stays visible
+  const receivedRaw = initialValues.paymentReceived;
+  const receivedNum = Number(receivedRaw);
+  const paymentReceived =
+    receivedRaw != null &&
+    receivedRaw !== '' &&
+    !Number.isNaN(receivedNum) &&
+    receivedNum > 0
+      ? String(receivedRaw)
+      : '';
   return {
     clientName: initialValues.clientName || '',
     businessName: initialValues.businessName || '',
@@ -420,8 +426,7 @@ export default function LeadForm({
       throw new Error('Payment offered must be a valid non-negative number.');
     }
 
-    const receivedRaw = form.paymentReceived.trim() || '0';
-    const paymentReceived = Number(receivedRaw);
+    const paymentReceived = Number(form.paymentReceived) || 0;
     if (Number.isNaN(paymentReceived) || paymentReceived < 0) {
       throw new Error('Payment received must be a valid non-negative number.');
     }
@@ -750,15 +755,12 @@ export default function LeadForm({
                 </div>
               </label>
               <label className={labelClass}>
-                <span>
-                  Payment Received <span className="text-[#F25E26]">*</span>
-                </span>
+                <span>Payment Received</span>
                 <div className="relative">
                   <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-zinc-500">
                     $
                   </span>
                   <input
-                    required
                     type="number"
                     min="0"
                     step="0.01"
@@ -767,7 +769,6 @@ export default function LeadForm({
                     onChange={handleChange('paymentReceived')}
                     className={`${fieldClass} pl-7`}
                     placeholder="0"
-                    aria-required="true"
                   />
                 </div>
               </label>

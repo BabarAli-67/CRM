@@ -1,3 +1,8 @@
+import {
+  formatCardBrandLabel,
+  resolveCardBrandId,
+} from './cardBrand.util.js';
+
 const moneyOrNull = (value) => {
   if (value === null || value === undefined || value === '') return null;
   const n = Number(value);
@@ -44,7 +49,6 @@ export function getUnifiedUpsellLedger(lead) {
   const payMap = {
     old_card: 'old_card',
     new_card: 'new_card',
-    via_link: 'link',
     other: 'others',
   };
 
@@ -88,8 +92,16 @@ export function getClientRevenueTotals(lead) {
     upsellTotal += total;
     upsellPaid += paid;
   }
-  const computedCollected = baseReceived + upsellPaid;
-  const computedContract = baseOffered + upsellTotal;
+  // Recurring retention payments — never mixed into base paymentReceived
+  const retentionHistory = Array.isArray(lead?.handover?.retention?.history)
+    ? lead.handover.retention.history
+    : [];
+  let retentionPaid = 0;
+  for (const row of retentionHistory) {
+    retentionPaid += Math.max(0, Number(row?.amount) || 0);
+  }
+  const computedCollected = baseReceived + upsellPaid + retentionPaid;
+  const computedContract = baseOffered + upsellTotal + retentionPaid;
   const computedPending = Math.max(0, computedContract - computedCollected);
 
   // Prefer live source fields; only use stored rollups when they are real numbers
@@ -116,6 +128,7 @@ export function getClientRevenueTotals(lead) {
     upsellTotal,
     upsellPaid,
     upsellPending: Math.max(0, upsellTotal - upsellPaid),
+    retentionPaid,
     totalCollected,
     totalContractValue,
     totalPending: Math.max(0, totalContractValue - totalCollected) || computedPending,
@@ -134,19 +147,20 @@ export function formatMoneyAmount(value) {
 
 /**
  * Human-readable payment summary — never includes cardReferenceToken / raw PAN.
+ * Card example: Card (Visa •••• 6988)
  */
 export function formatPaymentSummary(payment) {
   if (!payment?.method) return '—';
 
-  if (payment.method === 'via_link') return 'Via link';
-
   if (payment.method === 'via_card') {
-    const brand = payment.cardBrand
-      ? String(payment.cardBrand).charAt(0).toUpperCase() +
-        String(payment.cardBrand).slice(1)
-      : 'Card';
-    const last4 = payment.cardLast4 ? `•••• ${payment.cardLast4}` : '••••';
-    return `${brand} · ${last4}`;
+    const brandLabel = formatCardBrandLabel(resolveCardBrandId(payment));
+    const last4 = payment.cardLast4
+      ? String(payment.cardLast4).replace(/\D/g, '').slice(-4)
+      : '';
+    if (brandLabel && last4) return `Card (${brandLabel} •••• ${last4})`;
+    if (brandLabel) return `Card (${brandLabel})`;
+    if (last4) return `Card (•••• ${last4})`;
+    return 'Card';
   }
 
   if (payment.method === 'other') {
@@ -155,7 +169,8 @@ export function formatPaymentSummary(payment) {
       : 'Other';
   }
 
-  return payment.method;
+  // Legacy via_link / unknown — never surface a Payment Link URL
+  return 'Other';
 }
 
 export const CST_STATUS_LABEL = {

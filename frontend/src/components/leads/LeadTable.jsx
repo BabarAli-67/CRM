@@ -64,11 +64,25 @@ export default function LeadTable({
   const [dateFilter, setDateFilter] = useState('');
 
   const rows = useMemo(() => {
+    const leadSortMs = (lead) => {
+      if (closerView) {
+        // Closer Leads: newest created / assigned first
+        return Math.max(
+          new Date(lead.createdAt || 0).getTime() || 0,
+          new Date(
+            lead.handedOverAt ||
+              lead.handedToCloserAt ||
+              lead.escalatedAt ||
+              0
+          ).getTime() || 0
+        );
+      }
+      return new Date(lead.updatedAt || 0).getTime() || 0;
+    };
+
     const base = [...leads]
       .filter((l) => l.stage !== 'closed_sale' && l.stage !== 'disqualified')
-      .sort(
-        (a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0)
-      );
+      .sort((a, b) => leadSortMs(b) - leadSortMs(a));
 
     if (!closerView) return base;
 

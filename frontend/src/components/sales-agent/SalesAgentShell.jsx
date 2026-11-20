@@ -1,4 +1,4 @@
-import { CalendarCheck, PhoneCall, Users } from 'lucide-react';
+import { CalendarCheck, CircleCheckBig, PhoneCall, Users } from 'lucide-react';
 import { useLocation } from 'react-router-dom';
 import DepartmentShell from '../department/DepartmentShell.jsx';
 
@@ -10,6 +10,11 @@ const NAV_ITEMS = [
     label: 'My Leads',
     end: false,
     icon: Users,
+  },
+  {
+    to: '/dashboard/sales-agent/closed-sales',
+    label: 'Closed Sales',
+    icon: CircleCheckBig,
   },
 ];
 

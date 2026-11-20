@@ -125,7 +125,7 @@ router.patch(
 
 router.delete(
   '/:id',
-  restrictTo('closer', 'super_admin'),
+  restrictTo('super_admin'),
   blockReadOnlyAdmin,
   deleteLeadPermanently
 );

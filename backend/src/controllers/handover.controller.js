@@ -27,7 +27,6 @@ const UPSELL_SERVICES = new Set(['seo', 'web', 'citation_pages', 'other']);
 const UPSELL_PAYMENT_OPTIONS = new Set([
   'new_card',
   'old_card',
-  'link',
   'others',
 ]);
 
@@ -585,6 +584,116 @@ export const markRetentionDone = asyncHandler(async (req, res) => {
     .json(new ApiResponse(200, { lead: updated }, 'Retention marked done'));
 });
 
+const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+
+const formatPktMonthLabel = (date) =>
+  new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Karachi',
+    month: 'long',
+    year: 'numeric',
+  }).format(date);
+
+/**
+ * CST — Mark Retention Paid for the current billing cycle.
+ * Body: { amount, note?, paidAt? }
+ * - Appends retentionHistory entry (monthLabel, amount, paidAt, previousAmount, delta)
+ * - Rolls amount into totalCollected / contract via retention history (base untouched)
+ * - Advances retention.at by +30 days and re-arms the exact-time alert
+ */
+export const markRetentionPaid = asyncHandler(async (req, res) => {
+  const amount = Number(req.body?.amount);
+  if (!Number.isFinite(amount) || amount < 0) {
+    throw new ApiError(400, 'amount must be a non-negative number');
+  }
+
+  const lead = await Lead.findOne({
+    _id: req.params.id,
+    stage: 'closed_sale',
+    'handover.cstStatus': { $in: CST_PIPELINE_STATUSES },
+  });
+
+  if (!lead) {
+    throw new ApiError(404, 'Client not found in CST handover pipeline');
+  }
+
+  if (!lead.handover) lead.handover = {};
+  if (!lead.handover.retention) {
+    lead.handover.retention = {
+      at: null,
+      status: null,
+      alerts: { fiveMinFired: true, exactTimeFired: false },
+      doneAt: null,
+      history: [],
+    };
+  }
+
+  const retention = lead.handover.retention;
+  if (!Array.isArray(retention.history)) retention.history = [];
+
+  let paidAt = req.body?.paidAt ? new Date(req.body.paidAt) : new Date();
+  if (Number.isNaN(paidAt.getTime())) {
+    throw new ApiError(400, 'Invalid paidAt date/time');
+  }
+
+  const history = retention.history;
+  const previousAmount =
+    history.length > 0
+      ? Math.max(0, Number(history[history.length - 1]?.amount) || 0)
+      : Math.max(
+          0,
+          Number(lead.paymentReceived ?? lead.paymentOffered ?? lead.salesAmount) ||
+            0
+        );
+  const delta = amount - previousAmount;
+  const note =
+    typeof req.body?.note === 'string' ? req.body.note.trim() : '';
+
+  const entry = {
+    entryId: randomUUID(),
+    monthLabel: formatPktMonthLabel(paidAt),
+    amount,
+    paidAt,
+    previousAmount,
+    delta,
+    note: note || null,
+    createdBy: req.user._id,
+  };
+  retention.history.push(entry);
+  retention.lastPaidAt = paidAt;
+  retention.lastPaidAmount = amount;
+
+  // Advance next alert by +30 days from the later of schedule / payment
+  // (keeps cadence when paid early; avoids a past next-date when overdue)
+  const atMs = retention.at ? new Date(retention.at).getTime() : NaN;
+  const paidMs = paidAt.getTime();
+  const baseMs =
+    Number.isFinite(atMs) && atMs > paidMs ? atMs : paidMs;
+  const nextAt = new Date(baseMs + THIRTY_DAYS_MS);
+  retention.at = nextAt;
+  retention.status = 'scheduled';
+  retention.doneAt = null;
+  if (!retention.alerts) {
+    retention.alerts = { fiveMinFired: true, exactTimeFired: false };
+  } else {
+    retention.alerts.fiveMinFired = true;
+    retention.alerts.exactTimeFired = false;
+  }
+
+  recomputeClientTotals(lead);
+  lead.markModified('handover');
+  await lead.save();
+
+  const updated = await populateCstLead(Lead.findById(lead._id));
+
+  res.status(200).json(
+    new ApiResponse(
+      200,
+      { lead: updated, entry },
+      'Retention marked paid — next alert scheduled +30 days'
+    )
+  );
+});
+
 const SERVICE_SCOPE_OPTIONS = new Set([
   'seo',
   'web',
@@ -961,20 +1070,20 @@ export const saveClientPortfolio = asyncHandler(async (req, res) => {
         const method = p.method === '' || p.method == null ? null : String(p.method);
         if (
           method != null &&
-          !['via_link', 'via_card', 'other'].includes(method)
+          !['via_card', 'other'].includes(method)
         ) {
           throw new ApiError(400, 'Invalid payment method');
         }
         $set['payment.method'] = method;
+        if (method !== 'via_card') {
+          $set['payment.linkUrl'] = null;
+        }
       }
       if (Object.prototype.hasOwnProperty.call(p, 'cardLast4')) {
         $set['payment.cardLast4'] = strOrNull(p.cardLast4) ?? null;
       }
       if (Object.prototype.hasOwnProperty.call(p, 'cardBrand')) {
         $set['payment.cardBrand'] = strOrNull(p.cardBrand) ?? null;
-      }
-      if (Object.prototype.hasOwnProperty.call(p, 'linkUrl')) {
-        $set['payment.linkUrl'] = strOrNull(p.linkUrl) ?? null;
       }
       if (Object.prototype.hasOwnProperty.call(p, 'otherDetails')) {
         $set['payment.otherDetails'] = strOrNull(p.otherDetails) ?? null;
@@ -1056,6 +1165,384 @@ export const saveClientPortfolio = asyncHandler(async (req, res) => {
   res
     .status(200)
     .json(new ApiResponse(200, { lead: updated }, 'Client details saved'));
+});
+
+const recomputeClientTotals = (lead) => {
+  const baseOffered = Math.max(
+    0,
+    Number(lead.paymentOffered ?? lead.salesAmount) || 0
+  );
+  const baseReceived = Math.max(0, Number(lead.paymentReceived) || 0);
+  lead.paymentOffered = baseOffered;
+  lead.paymentReceived = baseReceived;
+  lead.paymentPending = Math.max(0, baseOffered - baseReceived);
+
+  const ledger = Array.isArray(lead.handover?.upsellLedger)
+    ? lead.handover.upsellLedger
+    : [];
+  let upsellTotal = 0;
+  let upsellPaid = 0;
+  for (const row of ledger) {
+    const total = Math.max(0, Number(row?.totalAmount) || 0);
+    let paid = Math.max(0, Number(row?.paidAmount) || 0);
+    if (paid > total) paid = total;
+    row.totalAmount = total;
+    row.paidAmount = paid;
+    upsellTotal += total;
+    upsellPaid += paid;
+  }
+
+  const upscale = lead.handover?.upscale;
+  if (upscale?.enabled) {
+    const offered = Math.max(0, Number(upscale.offered ?? upscale.price) || 0);
+    let received = Math.max(0, Number(upscale.received) || 0);
+    if (received > offered) received = offered;
+    const pending = Math.max(0, offered - received);
+    upscale.offered = offered;
+    upscale.price = offered;
+    upscale.received = received;
+    upscale.pending = pending;
+
+    const title = String(upscale.itemName || '').trim().toLowerCase();
+    const mirrored = ledger.some((r) => {
+      const sameTitle =
+        String(r.title || '')
+          .trim()
+          .toLowerCase() === title;
+      const sameTotal = Math.abs((Number(r.totalAmount) || 0) - offered) < 0.009;
+      return sameTitle && sameTotal;
+    });
+    if (!mirrored) {
+      upsellTotal += offered;
+      upsellPaid += received;
+    }
+  }
+
+  // Retention recurring payments live in history — never touch paymentReceived
+  let retentionPaid = 0;
+  const history = Array.isArray(lead.handover?.retention?.history)
+    ? lead.handover.retention.history
+    : [];
+  for (const row of history) {
+    retentionPaid += Math.max(0, Number(row?.amount) || 0);
+  }
+
+  if (!lead.handover) lead.handover = {};
+  lead.handover.totalCollectedAmount =
+    baseReceived + upsellPaid + retentionPaid;
+  lead.handover.totalContractValue =
+    baseOffered + upsellTotal + retentionPaid;
+};
+
+/**
+ * CST — update Document Sign Yes/No + optional signed file upload.
+ * multipart: documentSigned (yes|no|true|false), signedDocument (file)
+ */
+export const updateClientSignedDocument = asyncHandler(async (req, res) => {
+  const lead = await Lead.findOne({
+    _id: req.params.id,
+    stage: 'closed_sale',
+    'handover.cstStatus': { $in: CST_PIPELINE_STATUSES },
+  });
+  if (!lead) {
+    throw new ApiError(404, 'Client not found in CST handover pipeline');
+  }
+
+  const raw = String(req.body?.documentSigned ?? '').trim().toLowerCase();
+  let documentSigned = null;
+  if (['yes', 'true', '1'].includes(raw)) documentSigned = true;
+  else if (['no', 'false', '0'].includes(raw)) documentSigned = false;
+  else {
+    throw new ApiError(400, 'documentSigned must be Yes or No');
+  }
+
+  if (!lead.handover) lead.handover = {};
+  lead.handover.documentSigned = documentSigned;
+
+  if (documentSigned) {
+    if (req.file) {
+      lead.handover.signedDocument = {
+        originalName: req.file.originalname,
+        storedFilename: req.file.filename,
+        mimeType: req.file.mimetype,
+        sizeBytes: req.file.size,
+        relativePath: path
+          .join('uploads', 'cst-handover', String(lead._id), req.file.filename)
+          .replace(/\\/g, '/'),
+      };
+    } else if (!lead.handover.signedDocument?.storedFilename) {
+      throw new ApiError(
+        400,
+        'Upload a signed document (.pdf, .docx, .jpg, .png) when Document Sign is Yes'
+      );
+    }
+  } else {
+    lead.handover.signedDocument = undefined;
+  }
+
+  await lead.save();
+  const updated = await populateCstLead(Lead.findById(lead._id));
+  res
+    .status(200)
+    .json(new ApiResponse(200, { lead: updated }, 'Document Sign updated'));
+});
+
+/**
+ * CST / Admin — download the signed handover document.
+ */
+export const serveClientSignedDocument = asyncHandler(async (req, res) => {
+  const lead = await Lead.findById(req.params.id).select(
+    'handover.signedDocument handover.documentSigned'
+  );
+  if (!lead) throw new ApiError(404, 'Client not found');
+
+  const file = lead.handover?.signedDocument;
+  if (!file?.storedFilename) {
+    throw new ApiError(404, 'No signed document on file');
+  }
+
+  const abs = path.join(
+    process.cwd(),
+    'uploads',
+    'cst-handover',
+    String(req.params.id),
+    file.storedFilename
+  );
+  if (!fs.existsSync(abs)) {
+    throw new ApiError(404, 'Signed document file missing on disk');
+  }
+
+  res.setHeader('Content-Type', file.mimeType || 'application/octet-stream');
+  res.setHeader(
+    'Content-Disposition',
+    `inline; filename="${encodeURIComponent(
+      file.originalName || file.storedFilename
+    )}"`
+  );
+  fs.createReadStream(abs).pipe(res);
+});
+
+/**
+ * CST — update Base / Upsell pending balances.
+ * Body: { basePending?: number, upsells?: [{ entryId, pending }], totalPending?: number }
+ * Collected is recalculated as Offered - Pending and persisted.
+ */
+export const updateClientBalances = asyncHandler(async (req, res) => {
+  const lead = await Lead.findOne({
+    _id: req.params.id,
+    stage: 'closed_sale',
+    'handover.cstStatus': { $in: CST_PIPELINE_STATUSES },
+  });
+  if (!lead) {
+    throw new ApiError(404, 'Client not found in CST handover pipeline');
+  }
+  if (!lead.handover) lead.handover = {};
+
+  const body = req.body || {};
+  const hasBase = Object.prototype.hasOwnProperty.call(body, 'basePending');
+  const hasTotal = Object.prototype.hasOwnProperty.call(body, 'totalPending');
+  const upsells = Array.isArray(body.upsells) ? body.upsells : null;
+
+  if (!hasBase && !hasTotal && !upsells) {
+    throw new ApiError(400, 'Provide basePending, totalPending, and/or upsells');
+  }
+
+  const parsePending = (raw, label, max) => {
+    const n = Number(raw);
+    if (!Number.isFinite(n) || n < 0) {
+      throw new ApiError(400, `${label} must be a non-negative number`);
+    }
+    if (n > max + 0.009) {
+      throw new ApiError(400, `${label} cannot exceed ${max}`);
+    }
+    return Math.min(max, Math.max(0, n));
+  };
+
+  const applyBasePending = (pendingRaw) => {
+    const offered = Math.max(
+      0,
+      Number(lead.paymentOffered ?? lead.salesAmount) || 0
+    );
+    const pending = parsePending(pendingRaw, 'Base Pending', offered);
+    lead.paymentOffered = offered;
+    lead.paymentReceived = Math.max(0, offered - pending);
+    lead.paymentPending = pending;
+  };
+
+  const applyUpsellPending = (entryId, pendingRaw) => {
+    const id = String(entryId || '').trim();
+    if (!id) throw new ApiError(400, 'Upsell entryId is required');
+
+    const upscale = lead.handover?.upscale;
+    const isHandoverSynthetic = id === 'handover-upscale';
+    let ledger = Array.isArray(lead.handover.upsellLedger)
+      ? lead.handover.upsellLedger
+      : [];
+
+    if (isHandoverSynthetic || (upscale?.enabled && id === 'handover-upscale')) {
+      if (!upscale?.enabled) {
+        throw new ApiError(404, 'Handover upsell not found');
+      }
+      const offered = Math.max(0, Number(upscale.offered ?? upscale.price) || 0);
+      const pending = parsePending(pendingRaw, 'Upsell Pending', offered);
+      const received = Math.max(0, offered - pending);
+      upscale.offered = offered;
+      upscale.price = offered;
+      upscale.received = received;
+      upscale.pending = pending;
+
+      const title = String(upscale.itemName || '').trim().toLowerCase();
+      const matchIdx = ledger.findIndex((r) => {
+        const sameTitle =
+          String(r.title || '')
+            .trim()
+            .toLowerCase() === title;
+        const sameTotal =
+          Math.abs((Number(r.totalAmount) || 0) - offered) < 0.009;
+        return sameTitle && sameTotal;
+      });
+      if (matchIdx >= 0) {
+        ledger[matchIdx].totalAmount = offered;
+        ledger[matchIdx].paidAmount = received;
+      }
+      lead.handover.upsellLedger = ledger;
+      return;
+    }
+
+    const idx = ledger.findIndex((r) => String(r.entryId) === id);
+    if (idx < 0) throw new ApiError(404, 'Upsell row not found');
+    const total = Math.max(0, Number(ledger[idx].totalAmount) || 0);
+    const pending = parsePending(pendingRaw, 'Upsell Pending', total);
+    ledger[idx].paidAmount = Math.max(0, total - pending);
+    lead.handover.upsellLedger = ledger;
+
+    // Keep mirrored handover upscale in sync when titles/totals match
+    if (upscale?.enabled) {
+      const offered = Math.max(0, Number(upscale.offered ?? upscale.price) || 0);
+      const title = String(upscale.itemName || '').trim().toLowerCase();
+      const rowTitle = String(ledger[idx].title || '')
+        .trim()
+        .toLowerCase();
+      if (
+        title &&
+        title === rowTitle &&
+        Math.abs(offered - total) < 0.009
+      ) {
+        upscale.received = ledger[idx].paidAmount;
+        upscale.pending = pending;
+      }
+    }
+  };
+
+  if (hasBase) {
+    applyBasePending(body.basePending);
+  }
+
+  if (upsells) {
+    for (const row of upsells) {
+      applyUpsellPending(row?.entryId, row?.pending);
+    }
+  }
+
+  if (hasTotal) {
+    // Apply remaining delta after explicit base/upsell updates by redistributing
+    // across unpaid buckets (base first, then ledger / handover upsell).
+    recomputeClientTotals(lead);
+    const contract = Math.max(
+      0,
+      Number(lead.handover?.totalContractValue) || 0
+    );
+    const targetPending = parsePending(body.totalPending, 'Pending Amount', contract);
+    const currentPending = Math.max(
+      0,
+      contract - (Number(lead.handover?.totalCollectedAmount) || 0)
+    );
+
+    const buckets = [];
+    const baseOffered = Math.max(
+      0,
+      Number(lead.paymentOffered ?? lead.salesAmount) || 0
+    );
+    buckets.push({
+      getPending: () => Math.max(0, baseOffered - (Number(lead.paymentReceived) || 0)),
+      getOffered: () => baseOffered,
+      setReceived: (received) => {
+        lead.paymentReceived = received;
+        lead.paymentPending = Math.max(0, baseOffered - received);
+      },
+    });
+
+    const ledger = Array.isArray(lead.handover.upsellLedger)
+      ? lead.handover.upsellLedger
+      : [];
+    for (const row of ledger) {
+      const offered = Math.max(0, Number(row.totalAmount) || 0);
+      buckets.push({
+        getPending: () => Math.max(0, offered - (Number(row.paidAmount) || 0)),
+        getOffered: () => offered,
+        setReceived: (received) => {
+          row.paidAmount = received;
+        },
+      });
+    }
+
+    const upscale = lead.handover?.upscale;
+    if (upscale?.enabled) {
+      const offered = Math.max(0, Number(upscale.offered ?? upscale.price) || 0);
+      const title = String(upscale.itemName || '').trim().toLowerCase();
+      const mirrored = ledger.some((r) => {
+        const sameTitle =
+          String(r.title || '')
+            .trim()
+            .toLowerCase() === title;
+        const sameTotal = Math.abs((Number(r.totalAmount) || 0) - offered) < 0.009;
+        return sameTitle && sameTotal;
+      });
+      if (!mirrored) {
+        buckets.push({
+          getPending: () => Math.max(0, offered - (Number(upscale.received) || 0)),
+          getOffered: () => offered,
+          setReceived: (received) => {
+            upscale.received = received;
+            upscale.pending = Math.max(0, offered - received);
+          },
+        });
+      }
+    }
+
+    let remainingPay = currentPending - targetPending;
+    if (remainingPay > 0) {
+      for (const b of buckets) {
+        if (remainingPay < 0.009) break;
+        const pendingNow = b.getPending();
+        const take = Math.min(pendingNow, remainingPay);
+        const offered = b.getOffered();
+        const receivedNow = offered - pendingNow;
+        b.setReceived(receivedNow + take);
+        remainingPay -= take;
+      }
+    } else if (remainingPay < 0) {
+      let need = -remainingPay;
+      for (let i = buckets.length - 1; i >= 0; i -= 1) {
+        if (need < 0.009) break;
+        const b = buckets[i];
+        const pendingNow = b.getPending();
+        const offered = b.getOffered();
+        const receivedNow = offered - pendingNow;
+        const give = Math.min(receivedNow, need);
+        b.setReceived(receivedNow - give);
+        need -= give;
+      }
+    }
+  }
+
+  recomputeClientTotals(lead);
+  await lead.save();
+
+  const updated = await populateCstLead(Lead.findById(lead._id));
+  res
+    .status(200)
+    .json(new ApiResponse(200, { lead: updated }, 'Balances updated'));
 });
 
 /**
@@ -1152,6 +1639,7 @@ export const addClientUpsell = asyncHandler(async (req, res) => {
 
     const entry = buildSavedCardEntry({
       cardLast4: last4,
+      cardNumber: digits,
       cardBrand: newCard.cardBrand || null,
       expiry,
       nameOnCard,

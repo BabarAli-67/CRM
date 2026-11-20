@@ -165,3 +165,61 @@ export function brandPayloadId(brand) {
   if (!brand?.id) return 'other';
   return brand.id;
 }
+
+const BRAND_LABEL_BY_ID = Object.fromEntries(
+  BRANDS.map((b) => [b.id, b.label])
+);
+
+/**
+ * Human-readable brand for UI (Visa, Mastercard, Amex, …).
+ * Accepts canonical id, detectCardBrand result, or free-form string.
+ */
+export function formatCardBrandLabel(brandOrId) {
+  if (brandOrId == null || brandOrId === '') return '';
+  if (typeof brandOrId === 'object') {
+    if (brandOrId.label) return String(brandOrId.label).trim();
+    return formatCardBrandLabel(brandOrId.id);
+  }
+  const raw = String(brandOrId).trim();
+  if (!raw) return '';
+  const id = raw.toLowerCase();
+  if (id === 'other' || id === 'card' || id === 'unknown') return '';
+  if (BRAND_LABEL_BY_ID[id]) return BRAND_LABEL_BY_ID[id];
+  // Already a display label (e.g. "American Express")
+  if (/[A-Z]/.test(raw) && raw.includes(' ')) return raw;
+  return raw.charAt(0).toUpperCase() + raw.slice(1);
+}
+
+/**
+ * Resolve a canonical brand id for a saved/payment card:
+ * 1) stored cardBrand / brand
+ * 2) detect from cardNumber / pan digits when present
+ * 3) parse opaque token `local_{brand}_{last4}_…`
+ */
+export function resolveCardBrandId(card) {
+  if (!card || typeof card !== 'object') return '';
+
+  const stored = String(card.cardBrand || card.brand || '')
+    .trim()
+    .toLowerCase();
+  if (stored && stored !== 'other' && stored !== 'card' && stored !== 'unknown') {
+    return stored;
+  }
+
+  const digits = cardDigitsOnly(
+    card.cardNumber || card.number || card.pan || ''
+  );
+  if (digits.length >= 4) {
+    const detected = detectCardBrand(digits);
+    if (detected?.id) return detected.id;
+  }
+
+  const token = String(card.cardReferenceToken || '');
+  const fromToken = token.match(/^local_([a-z0-9]+)_/i);
+  if (fromToken?.[1]) {
+    const id = fromToken[1].toLowerCase();
+    if (id && id !== 'card' && id !== 'other' && id !== 'unknown') return id;
+  }
+
+  return stored === 'other' ? 'other' : '';
+}
