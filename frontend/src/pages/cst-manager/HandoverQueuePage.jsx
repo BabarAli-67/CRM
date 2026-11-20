@@ -3,6 +3,8 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import LeadDetailModal from '../../components/leads/LeadDetailModal.jsx';
 import CstManagerShell from '../../components/cst-manager/CstManagerShell.jsx';
+import WelcomeEmailModal from '../../components/cst-manager/WelcomeEmailModal.jsx';
+import CstOnboardFilterBar from '../../components/cst-manager/CstOnboardFilterBar.jsx';
 import {
   getHandoverQueue,
   getTechPipeline,
@@ -14,6 +16,8 @@ import {
   formatPaymentSummary,
   getClientRevenueTotals,
 } from '../../utils/formatPayment.util.js';
+import { retentionAlertAtFromClosedAt } from '../../utils/emailjs.util.js';
+import { pktDateKey } from '../../components/closer/CloserTableFilterBar.jsx';
 
 const formatPkt = (value) => {
   if (!value) return '—';
@@ -22,44 +26,11 @@ const formatPkt = (value) => {
     weekday: 'short',
     day: '2-digit',
     month: 'short',
+    year: 'numeric',
     hour: '2-digit',
     minute: '2-digit',
   });
 };
-
-/** Compact PKT clock for Activation Call Yes badge, e.g. "11:05 PM". */
-const formatPktTime = (value) => {
-  if (!value) return '';
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return '';
-  return d.toLocaleTimeString('en-PK', {
-    timeZone: 'Asia/Karachi',
-    hour: 'numeric',
-    minute: '2-digit',
-    hour12: true,
-  });
-};
-
-/**
- * Activation Call badge — muted No when unset; green Yes + PKT time after Client Detail save.
- */
-function ActivationCallBadge({ handover }) {
-  const done = Boolean(handover?.activationCall?.done);
-  const at = handover?.activationCall?.at;
-  if (!done) {
-    return (
-      <span className="inline-flex rounded-full bg-zinc-500/15 px-2.5 py-0.5 text-xs font-semibold text-zinc-400 ring-1 ring-zinc-600/40">
-        No
-      </span>
-    );
-  }
-  const timeLabel = formatPktTime(at);
-  return (
-    <span className="inline-flex rounded-full bg-emerald-500/15 px-2.5 py-0.5 text-xs font-semibold text-emerald-300 ring-1 ring-emerald-500/35">
-      {timeLabel ? `Yes (${timeLabel} PKT)` : 'Yes'}
-    </span>
-  );
-}
 
 const TABS = [
   { id: 'pending', label: 'Pending Review' },
@@ -97,6 +68,26 @@ function resolveTechStatus(lead) {
   return lead?.handover?.techStatus || cst || 'assigned';
 }
 
+function WelcomeEmailCell({ lead, onOpen }) {
+  const sent = Boolean(lead?.handover?.welcomeEmail?.sent);
+  if (sent) {
+    return (
+      <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2.5 py-1 text-xs font-semibold text-emerald-300 ring-1 ring-emerald-500/35">
+        Sent ✓
+      </span>
+    );
+  }
+  return (
+    <button
+      type="button"
+      onClick={() => onOpen(lead)}
+      className="rounded-lg border border-white/15 bg-zinc-950/60 px-3 py-1.5 text-xs font-semibold text-white transition hover:border-[#F25E26]/50 hover:bg-[#F25E26]/10 hover:text-[#F25E26]"
+    >
+      Send Welcome Email
+    </button>
+  );
+}
+
 export default function HandoverQueuePage() {
   const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -114,8 +105,12 @@ export default function HandoverQueuePage() {
     );
   };
   const [detailLead, setDetailLead] = useState(null);
+  const [welcomeLead, setWelcomeLead] = useState(null);
   const [message, setMessage] = useState('');
   const [actionError, setActionError] = useState('');
+  const [onboardBusinessFilter, setOnboardBusinessFilter] = useState('');
+  const [onboardClientFilter, setOnboardClientFilter] = useState('');
+  const [onboardRetentionDate, setOnboardRetentionDate] = useState('');
 
   useEffect(() => {
     if (!message) return undefined;
@@ -161,6 +156,43 @@ export default function HandoverQueuePage() {
     [queueLeads]
   );
 
+  const filteredOnboardRows = useMemo(() => {
+    const bizQ = onboardBusinessFilter.trim().toLowerCase();
+    const clientQ = onboardClientFilter.trim().toLowerCase();
+    const dateQ = onboardRetentionDate.trim();
+
+    return onboardRows.filter((row) => {
+      if (
+        bizQ &&
+        !String(row.businessName || '')
+          .toLowerCase()
+          .includes(bizQ)
+      ) {
+        return false;
+      }
+      if (
+        clientQ &&
+        !String(row.clientName || '')
+          .toLowerCase()
+          .includes(clientQ)
+      ) {
+        return false;
+      }
+      if (dateQ) {
+        const retentionAt =
+          row.handover?.retention?.at ||
+          retentionAlertAtFromClosedAt(row.closedAt);
+        if (pktDateKey(retentionAt) !== dateQ) return false;
+      }
+      return true;
+    });
+  }, [
+    onboardRows,
+    onboardBusinessFilter,
+    onboardClientFilter,
+    onboardRetentionDate,
+  ]);
+
   const techCounts = useMemo(() => {
     let onboarded = 0;
     let assigned = 0;
@@ -187,7 +219,9 @@ export default function HandoverQueuePage() {
     mutationFn: (id) => markClientOnboarded(id),
     onSuccess: (lead) => {
       setActionError('');
-      setMessage('Client moved to Onboard');
+      setMessage(
+        'Client moved to Onboard — 30-day retention alert locked in'
+      );
       queryClient.setQueryData(['handoverQueue'], (old) => {
         if (!Array.isArray(old) || !lead?._id) return old;
         const exists = old.some((l) => String(l._id) === String(lead._id));
@@ -207,8 +241,35 @@ export default function HandoverQueuePage() {
         if (lead.handover?.cstStatus !== 'onboarded') return without;
         return [lead, ...without];
       });
+      // Arm retention poller immediately for the locked 30-day schedule
+      queryClient.setQueryData(['retentionReminders'], (old) => {
+        const list = Array.isArray(old) ? old : [];
+        const retention = lead?.handover?.retention;
+        const without = list.filter(
+          (row) => String(row._id) !== String(lead._id)
+        );
+        const active =
+          retention?.status === 'scheduled' &&
+          retention?.at &&
+          !Boolean(retention?.alerts?.exactTimeFired);
+        if (!active) return without;
+        return [
+          ...without,
+          {
+            _id: lead._id,
+            clientName: lead.clientName,
+            businessName: lead.businessName,
+            personalPhone: lead.personalPhone,
+            businessPhone: lead.businessPhone,
+            handover: { retention },
+            createdAt: lead.createdAt,
+            updatedAt: lead.updatedAt,
+          },
+        ];
+      });
       queryClient.invalidateQueries({ queryKey: ['handoverQueue'] });
       queryClient.invalidateQueries({ queryKey: ['cstTechPipeline'] });
+      queryClient.invalidateQueries({ queryKey: ['retentionReminders'] });
       queryClient.invalidateQueries({ queryKey: ['pipeline', 'leads'] });
       queryClient.invalidateQueries({ queryKey: ['pipeline', 'handoverQueue'] });
       setTab('onboard');
@@ -306,10 +367,12 @@ export default function HandoverQueuePage() {
               <table className="min-w-full text-left text-sm text-zinc-200">
                 <thead className="border-b border-zinc-800 bg-zinc-950/40 text-xs uppercase tracking-wide text-zinc-500">
                   <tr>
-                    <th className="px-4 py-3.5 font-medium">Business</th>
+                    <th className="px-4 py-3.5 font-medium">Business Name</th>
+                    <th className="px-4 py-3.5 font-medium">Client Name</th>
                     <th className="px-4 py-3.5 font-medium">Payment</th>
-                    <th className="px-4 py-3.5 font-medium">Activation Call</th>
                     <th className="px-4 py-3.5 font-medium">Closed (PKT)</th>
+                    <th className="px-4 py-3.5 font-medium">Welcome Email</th>
+                    <th className="px-4 py-3.5 font-medium">Retention Alert</th>
                     <th className="px-4 py-3.5 font-medium">Actions</th>
                   </tr>
                 </thead>
@@ -318,22 +381,42 @@ export default function HandoverQueuePage() {
                     const busy =
                       onboardMutation.isPending &&
                       onboardMutation.variables === row._id;
+                    const retentionPreview =
+                      retentionAlertAtFromClosedAt(row.closedAt);
                     return (
                       <tr
                         key={row._id}
                         className="border-b border-zinc-800/50 last:border-0 transition-colors hover:bg-zinc-800/25"
                       >
                         <td className="px-4 py-3.5 font-medium text-white">
-                          {row.businessName}
+                          {row.businessName || '—'}
+                        </td>
+                        <td className="px-4 py-3.5 text-zinc-300">
+                          {row.clientName?.trim() || '—'}
                         </td>
                         <td className="px-4 py-3.5 max-w-[14rem] truncate text-zinc-300">
                           {formatPaymentSummary(row.payment)}
                         </td>
-                        <td className="px-4 py-3.5 whitespace-nowrap">
-                          <ActivationCallBadge handover={row.handover} />
-                        </td>
                         <td className="px-4 py-3.5 whitespace-nowrap text-zinc-400">
                           {formatPkt(row.closedAt)}
+                        </td>
+                        <td className="px-4 py-3.5 whitespace-nowrap">
+                          <WelcomeEmailCell
+                            lead={row}
+                            onOpen={setWelcomeLead}
+                          />
+                        </td>
+                        <td className="px-4 py-3.5 whitespace-nowrap text-zinc-300">
+                          {retentionPreview ? (
+                            <span className="inline-flex flex-col gap-0.5">
+                              <span className="text-[11px] font-semibold uppercase tracking-wide text-[#F25E26]/80">
+                                +30 days
+                              </span>
+                              <span>{formatPkt(retentionPreview)}</span>
+                            </span>
+                          ) : (
+                            '—'
+                          )}
                         </td>
                         <td className="px-4 py-3.5">
                           <button
@@ -344,7 +427,7 @@ export default function HandoverQueuePage() {
                               setActionError('');
                               onboardMutation.mutate(row._id);
                             }}
-                            className="rounded-lg bg-orange-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-orange-500 disabled:cursor-not-allowed disabled:opacity-60"
+                            className="rounded-lg bg-[#F25E26] px-3 py-1.5 text-xs font-semibold text-white shadow-md shadow-[#F25E26]/20 transition hover:bg-[#ff6a33] disabled:cursor-not-allowed disabled:opacity-60"
                           >
                             {busy ? 'Moving…' : 'Onboard Client'}
                           </button>
@@ -359,58 +442,123 @@ export default function HandoverQueuePage() {
         ) : null}
 
         {tab === 'onboard' ? (
-          queueLoading ? (
-            <p className="py-12 text-center text-sm text-zinc-500">Loading…</p>
-          ) : queueError ? (
-            <p className="py-12 text-center text-sm text-red-400">
-              {queueErr?.response?.data?.message ||
-                'Failed to load onboarded clients.'}
-            </p>
-          ) : onboardRows.length === 0 ? (
-            <p className="py-12 text-center text-sm text-zinc-500">
-              No onboarded clients yet. Use Onboard Client from Pending Review.
-            </p>
-          ) : (
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {onboardRows.map((row) => {
-                const revenue = getClientRevenueTotals(row);
-                return (
-                  <Link
-                    key={row._id}
-                    to={`/dashboard/cst-manager/client/${row._id}`}
-                    className="block rounded-xl border border-zinc-800/70 bg-zinc-950/50 px-4 py-3.5 transition hover:border-orange-500/40 hover:bg-zinc-950/80 focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-500/40"
-                  >
-                    <div className="flex items-start justify-between gap-2">
+          <div className="space-y-4">
+            <CstOnboardFilterBar
+              businessName={onboardBusinessFilter}
+              onBusinessNameChange={setOnboardBusinessFilter}
+              clientName={onboardClientFilter}
+              onClientNameChange={setOnboardClientFilter}
+              retentionDate={onboardRetentionDate}
+              onRetentionDateChange={setOnboardRetentionDate}
+              onClear={() => {
+                setOnboardBusinessFilter('');
+                setOnboardClientFilter('');
+                setOnboardRetentionDate('');
+              }}
+            />
+
+            {queueLoading ? (
+              <p className="py-12 text-center text-sm text-zinc-500">
+                Loading…
+              </p>
+            ) : queueError ? (
+              <p className="py-12 text-center text-sm text-red-400">
+                {queueErr?.response?.data?.message ||
+                  'Failed to load onboarded clients.'}
+              </p>
+            ) : onboardRows.length === 0 ? (
+              <p className="py-12 text-center text-sm text-zinc-500">
+                No onboarded clients yet. Use Onboard Client from Pending
+                Review.
+              </p>
+            ) : filteredOnboardRows.length === 0 ? (
+              <p className="py-12 text-center text-sm text-zinc-500">
+                No onboarded clients match these filters.
+              </p>
+            ) : (
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                {filteredOnboardRows.map((row) => {
+                  const revenue = getClientRevenueTotals(row);
+                  const base = revenue.totalContractValue;
+                  const collected = revenue.totalCollected;
+                  const pending = Math.max(0, base - collected);
+                  const retentionAt =
+                    row.handover?.retention?.at ||
+                    retentionAlertAtFromClosedAt(row.closedAt);
+
+                  return (
+                    <Link
+                      key={row._id}
+                      to={`/dashboard/cst-manager/client/${row._id}`}
+                      className="block rounded-xl border border-white/10 bg-[#111111] px-4 py-3.5 transition hover:border-[#F25E26]/45 hover:bg-[#161616] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#F25E26]/40"
+                    >
                       <h3 className="truncate font-display text-sm font-bold tracking-tight text-white">
-                        {row.businessName || '—'}
+                        {row.businessName?.trim() || '—'}
                       </h3>
-                      <span className="inline-flex shrink-0 rounded-full bg-orange-500/15 px-2 py-0.5 text-[11px] font-semibold text-orange-300 ring-1 ring-orange-500/40">
-                        Onboarded · Active
-                      </span>
-                    </div>
-                    <div className="mt-1.5 flex flex-wrap items-center gap-2">
-                      <p className="truncate text-xs text-zinc-400">
-                        {row.clientName?.trim() || 'No client name'}
-                      </p>
-                      <ActivationCallBadge handover={row.handover} />
-                    </div>
-                    <p className="mt-2 text-xs text-zinc-500">
-                      Collected{' '}
-                      <span className="font-semibold text-emerald-300">
-                        {formatMoneyAmount(revenue.totalCollected)}
-                      </span>
-                      {revenue.upsellPaid > 0 ? (
-                        <span className="text-zinc-600">
-                          {' '}
-                          · base {formatMoneyAmount(revenue.baseAmount)}
-                        </span>
-                      ) : null}
-                    </p>
-                  </Link>
-                );
-              })}
-            </div>
-          )
+
+                      <dl className="mt-3 space-y-1.5 text-xs">
+                        <div className="flex gap-2">
+                          <dt className="shrink-0 text-zinc-500">
+                            Business Email
+                          </dt>
+                          <dd className="min-w-0 truncate text-zinc-300">
+                            {row.businessEmail?.trim() || '—'}
+                          </dd>
+                        </div>
+                        <div className="flex gap-2">
+                          <dt className="shrink-0 text-zinc-500">
+                            Client Name
+                          </dt>
+                          <dd className="min-w-0 truncate text-zinc-300">
+                            {row.clientName?.trim() || '—'}
+                          </dd>
+                        </div>
+                        <div className="flex gap-2">
+                          <dt className="shrink-0 text-zinc-500">
+                            Retention Date
+                          </dt>
+                          <dd className="min-w-0 text-zinc-200">
+                            {retentionAt ? formatPkt(retentionAt) : '—'}
+                          </dd>
+                        </div>
+                      </dl>
+
+                      <div className="mt-3 grid grid-cols-3 gap-2 rounded-lg border border-white/10 bg-black/30 px-2.5 py-2">
+                        <div>
+                          <p className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
+                            Base
+                          </p>
+                          <p className="mt-0.5 text-xs font-semibold text-white">
+                            {formatMoneyAmount(base)}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
+                            Collected
+                          </p>
+                          <p className="mt-0.5 text-xs font-semibold text-emerald-300">
+                            {formatMoneyAmount(collected)}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
+                            Pending
+                          </p>
+                          <p
+                            className={`mt-0.5 text-xs font-semibold ${
+                              pending > 0 ? 'text-[#F25E26]' : 'text-zinc-300'
+                            }`}
+                          >
+                            {formatMoneyAmount(pending)}
+                          </p>
+                        </div>
+                      </div>
+                    </Link>
+                  );
+                })}
+              </div>
+            )}
+          </div>
         ) : null}
 
         {tab === 'tech' ? (
@@ -477,7 +625,7 @@ export default function HandoverQueuePage() {
                               {row.businessName}
                             </p>
                             <p className="mt-0.5 text-xs text-zinc-500">
-                              {row.phone || '—'}
+                              {row.businessPhone || row.personalPhone || '—'}
                             </p>
                           </td>
                           <td className="px-4 py-3.5 text-zinc-300">
@@ -523,6 +671,15 @@ export default function HandoverQueuePage() {
         open={Boolean(detailLead)}
         lead={detailLead}
         onClose={() => setDetailLead(null)}
+      />
+
+      <WelcomeEmailModal
+        open={Boolean(welcomeLead)}
+        lead={welcomeLead}
+        onClose={({ sent } = {}) => {
+          if (sent) setMessage('Welcome email marked as Sent');
+          setWelcomeLead(null);
+        }}
       />
     </CstManagerShell>
   );

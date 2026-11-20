@@ -9,7 +9,7 @@ const ROLE_FALLBACK = {
 
 /**
  * Clean header identity: "Hi, Full Name" + separate role badge.
- * No @username — keeps the navbar executive and uncluttered.
+ * Black / White palette — orange reserved for primary CTAs elsewhere.
  */
 export default function SessionIdentityBadge({
   user,
@@ -29,12 +29,12 @@ export default function SessionIdentityBadge({
       className={`inline-flex max-w-full flex-wrap items-center gap-2.5 ${className}`}
     >
       {displayName ? (
-        <p className="truncate text-sm font-medium text-zinc-200">
+        <p className="truncate text-sm font-medium text-[#A3A3A3]">
           Hi, <span className="text-white">{displayName}</span>
         </p>
       ) : null}
       {displayRole ? (
-        <span className="inline-flex shrink-0 items-center rounded-full border border-orange-500/30 bg-orange-500/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-wider text-orange-300">
+        <span className="inline-flex shrink-0 items-center rounded-full border border-white/15 bg-white/5 px-3 py-1 text-[11px] font-semibold uppercase tracking-wider text-white">
           {displayRole}
         </span>
       ) : null}

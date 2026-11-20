@@ -15,7 +15,7 @@ export default function DockedChatWindowsHost() {
       <MessageToastBridge />
       {openWindows.length > 0 ? (
         <div
-          className="pointer-events-none fixed bottom-0 right-0 z-50 flex flex-row items-end gap-2 px-2"
+          className="pointer-events-none fixed bottom-20 right-5 z-40 flex flex-row items-end gap-2"
           aria-live="polite"
         >
           {openWindows.map((win) => (

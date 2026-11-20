@@ -4,16 +4,17 @@ export default {
   theme: {
     extend: {
       colors: {
-        obsidian: '#0D0D12',
-        'obsidian-surface': '#16161D',
-        'obsidian-elevated': '#1C1C26',
-        'obsidian-border': '#2A2A36',
-        'flash-primary': '#FF5B4B',
-        'flash-secondary': '#FF8D7F',
-        'flash-tertiary': '#00C592',
-        ink: '#F4EDE8',
-        'ink-muted': '#B8AFA8',
-        'ink-soft': '#8A837C',
+        // Flash CRM — Jet Black / Pure White / Flash Orange
+        obsidian: '#0A0A0A',
+        'obsidian-surface': '#111111',
+        'obsidian-elevated': '#141414',
+        'obsidian-border': '#222222',
+        'flash-primary': '#F25E26',
+        'flash-secondary': '#F25E26',
+        'flash-tertiary': '#F25E26',
+        ink: '#FFFFFF',
+        'ink-muted': '#A3A3A3',
+        'ink-soft': '#A3A3A3',
       },
       fontFamily: {
         display: ['"Space Grotesk"', 'system-ui', 'sans-serif'],

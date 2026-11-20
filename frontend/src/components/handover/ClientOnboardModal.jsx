@@ -12,15 +12,24 @@ const labelClass = 'block space-y-1.5 text-sm text-zinc-400';
 
 const emptyForm = {
   clientName: '',
-  workEmail: '',
+  businessEmail: '',
   personalEmail: '',
-  salesAmount: '',
-  serviceOffered: '',
-  servicesArea: '',
+  paymentOffered: '',
+  paymentReceived: '0',
+  paymentPending: '',
+  servicesOffered: '',
+  serviceAreas: '',
   gmbLink: '',
   yelpLink: '',
   techId: '',
   onboardingNotes: '',
+};
+
+const computePendingDisplay = (offeredRaw, receivedRaw) => {
+  const offered = Number(String(offeredRaw ?? '').trim());
+  const received = Number(String(receivedRaw ?? '').trim() || '0');
+  if (Number.isNaN(offered) || Number.isNaN(received)) return '';
+  return String(Math.max(0, offered - received));
 };
 
 /**
@@ -43,16 +52,25 @@ export default function ClientOnboardModal({ open, lead, onClose, onSuccess }) {
   useEffect(() => {
     if (!open || !lead) return;
     setError('');
+    const paymentOffered =
+      lead.paymentOffered != null && lead.paymentOffered !== ''
+        ? String(lead.paymentOffered)
+        : lead.salesAmount != null && lead.salesAmount !== ''
+          ? String(lead.salesAmount)
+          : '';
+    const paymentReceived =
+      lead.paymentReceived != null && lead.paymentReceived !== ''
+        ? String(lead.paymentReceived)
+        : '0';
     setForm({
       clientName: lead.clientName || '',
-      workEmail: lead.workEmail || '',
+      businessEmail: lead.businessEmail || '',
       personalEmail: lead.personalEmail || '',
-      salesAmount:
-        lead.salesAmount != null && lead.salesAmount !== ''
-          ? String(lead.salesAmount)
-          : '',
-      serviceOffered: lead.serviceOffered || '',
-      servicesArea: lead.servicesArea || '',
+      paymentOffered,
+      paymentReceived,
+      paymentPending: computePendingDisplay(paymentOffered, paymentReceived),
+      servicesOffered: lead.servicesOffered || '',
+      serviceAreas: lead.serviceAreas || '',
       gmbLink: lead.gmbLink || '',
       yelpLink: lead.yelpLink || '',
       techId: '',
@@ -77,7 +95,17 @@ export default function ClientOnboardModal({ open, lead, onClose, onSuccess }) {
   if (!open || !lead) return null;
 
   const setField = (key) => (e) => {
-    setForm((prev) => ({ ...prev, [key]: e.target.value }));
+    const nextValue = e.target.value;
+    setForm((prev) => {
+      const next = { ...prev, [key]: nextValue };
+      if (key === 'paymentOffered' || key === 'paymentReceived') {
+        next.paymentPending = computePendingDisplay(
+          key === 'paymentOffered' ? nextValue : next.paymentOffered,
+          key === 'paymentReceived' ? nextValue : next.paymentReceived
+        );
+      }
+      return next;
+    });
   };
 
   const handleSubmit = (e) => {
@@ -87,16 +115,33 @@ export default function ClientOnboardModal({ open, lead, onClose, onSuccess }) {
       return;
     }
 
+    const offeredRaw = form.paymentOffered.trim();
+    const paymentOffered =
+      offeredRaw === '' ? null : Number(offeredRaw);
+    if (
+      paymentOffered != null &&
+      (Number.isNaN(paymentOffered) || paymentOffered < 0)
+    ) {
+      setError('Payment offered must be a valid non-negative number.');
+      return;
+    }
+    const paymentReceived = Number(form.paymentReceived.trim() || '0');
+    if (Number.isNaN(paymentReceived) || paymentReceived < 0) {
+      setError('Payment received must be a valid non-negative number.');
+      return;
+    }
+
     mutation.mutate({
       id: lead._id,
       payload: {
         techId: form.techId,
         clientName: form.clientName.trim() || null,
-        workEmail: form.workEmail.trim() || null,
+        businessEmail: form.businessEmail.trim() || null,
         personalEmail: form.personalEmail.trim() || null,
-        salesAmount: form.salesAmount.trim() || null,
-        serviceOffered: form.serviceOffered.trim() || null,
-        servicesArea: form.servicesArea.trim() || null,
+        paymentOffered,
+        paymentReceived,
+        servicesOffered: form.servicesOffered.trim() || null,
+        serviceAreas: form.serviceAreas.trim() || null,
         gmbLink: form.gmbLink.trim() || null,
         yelpLink: form.yelpLink.trim() || null,
         onboardingNotes: form.onboardingNotes.trim() || null,
@@ -132,42 +177,68 @@ export default function ClientOnboardModal({ open, lead, onClose, onSuccess }) {
           </h3>
           <p className="mt-0.5 text-sm text-zinc-400">
             {lead.businessName || 'Lead'}
-            {lead.phone ? ` · ${lead.phone}` : ''}
+            {lead.businessPhone || lead.personalPhone
+              ? ` · ${lead.businessPhone || lead.personalPhone}`
+              : ''}
           </p>
         </div>
 
         <div className="space-y-4 overflow-y-auto px-5 py-4">
-          <div className="grid gap-4 sm:grid-cols-2">
+          <label className={labelClass}>
+            <span>Client full name</span>
+            <input
+              value={form.clientName}
+              onChange={setField('clientName')}
+              className={fieldClass}
+              autoComplete="name"
+            />
+          </label>
+
+          <div className="grid gap-4 sm:grid-cols-3">
             <label className={labelClass}>
-              <span>Client full name</span>
-              <input
-                value={form.clientName}
-                onChange={setField('clientName')}
-                className={fieldClass}
-                autoComplete="name"
-              />
-            </label>
-            <label className={labelClass}>
-              <span>Sales amount / package</span>
+              <span>Payment Offered</span>
               <input
                 type="number"
                 min="0"
                 step="0.01"
-                value={form.salesAmount}
-                onChange={setField('salesAmount')}
+                value={form.paymentOffered}
+                onChange={setField('paymentOffered')}
                 className={fieldClass}
                 placeholder="0.00"
+              />
+            </label>
+            <label className={labelClass}>
+              <span>Payment Received</span>
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                value={form.paymentReceived}
+                onChange={setField('paymentReceived')}
+                className={fieldClass}
+                placeholder="0"
+              />
+            </label>
+            <label className={labelClass}>
+              <span>Payment Pending</span>
+              <input
+                readOnly
+                type="number"
+                value={form.paymentPending}
+                className={fieldClass}
+                tabIndex={-1}
+                aria-readonly="true"
               />
             </label>
           </div>
 
           <div className="grid gap-4 sm:grid-cols-2">
             <label className={labelClass}>
-              <span>Business / work email</span>
+              <span>Business email</span>
               <input
                 type="email"
-                value={form.workEmail}
-                onChange={setField('workEmail')}
+                value={form.businessEmail}
+                onChange={setField('businessEmail')}
                 className={fieldClass}
                 autoComplete="email"
               />
@@ -186,18 +257,18 @@ export default function ClientOnboardModal({ open, lead, onClose, onSuccess }) {
           <label className={labelClass}>
             <span>Services offered</span>
             <input
-              value={form.serviceOffered}
-              onChange={setField('serviceOffered')}
+              value={form.servicesOffered}
+              onChange={setField('servicesOffered')}
               className={fieldClass}
               placeholder="e.g. GMB optimization, website"
             />
           </label>
 
           <label className={labelClass}>
-            <span>Service area / location</span>
+            <span>Service areas / location</span>
             <input
-              value={form.servicesArea}
-              onChange={setField('servicesArea')}
+              value={form.serviceAreas}
+              onChange={setField('serviceAreas')}
               className={fieldClass}
             />
           </label>

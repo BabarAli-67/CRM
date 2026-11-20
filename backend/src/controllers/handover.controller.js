@@ -5,13 +5,37 @@ import { ApiError } from '../utils/apiError.util.js';
 import { ApiResponse } from '../utils/apiResponse.util.js';
 import Lead from '../models/lead.model.js';
 import User from '../models/user.model.js';
+import {
+  appendSavedCard,
+  buildSavedCardEntry,
+} from '../utils/savedCard.util.js';
+import { emitToUser } from '../sockets/ioInstance.util.js';
+import { randomUUID } from 'crypto';
 
 const CHANGE_REQUEST_CATEGORIES = new Set([
   'seo',
   'web',
-  'social_media',
+  'citation_pages',
+  'others',
+  // Legacy values still accepted on read/normalize
   'other',
+  'social_media',
 ]);
+
+const UPSELL_SERVICES = new Set(['seo', 'web', 'citation_pages', 'other']);
+const UPSELL_PAYMENT_OPTIONS = new Set([
+  'new_card',
+  'old_card',
+  'link',
+  'others',
+]);
+
+const UPSELL_SERVICE_LABEL = {
+  seo: 'SEO',
+  web: 'Web',
+  citation_pages: 'Citation Pages',
+  other: 'Other',
+};
 const CHANGE_REQUEST_STATUSES = new Set([
   'pending',
   'in_progress',
@@ -102,7 +126,7 @@ export const getHandoverQueue = asyncHandler(async (req, res) => {
     'handover.cstStatus': { $in: ['pending_review', 'onboarded'] },
   })
     .select(
-      'stage status clientName businessName phone workEmail personalEmail yelpLink websiteLink gmbLink servicesArea serviceOffered salesAmount payment handover closedAt closedBy agentId closerId notes createdAt updatedAt'
+      'stage status clientName businessName personalPhone businessPhone businessEmail personalEmail yelpLink websiteLink gmbLink serviceAreas servicesOffered niche locationAddress leadSource paymentOffered paymentReceived paymentPending payment handover closedAt closedBy agentId closerId notes createdAt updatedAt'
     )
     .populate('agentId', 'fullName username role')
     .populate('closerId', 'fullName username role')
@@ -116,15 +140,33 @@ export const getHandoverQueue = asyncHandler(async (req, res) => {
 
 /**
  * CST moves a pending_review client into the Onboard tab (no tech assign yet).
- * Sets cstStatus=onboarded so the client appears on Onboard + Tech Status
- * (Onboarded / Active) until a tech is assigned. Atomic $set only.
+ * Locks the automatic 30-day retention alert at closedAt + 30 days (same PKT clock).
  */
 export const markClientOnboarded = asyncHandler(async (req, res) => {
   const now = new Date();
 
+  const existing = await Lead.findOne({
+    _id: req.params.id,
+    stage: 'closed_sale',
+    'handover.cstStatus': 'pending_review',
+  }).select('_id closedAt');
+
+  if (!existing) {
+    throw new ApiError(
+      409,
+      'This lead is no longer pending review — it may already be onboarded.'
+    );
+  }
+
+  const closed = existing.closedAt ? new Date(existing.closedAt) : now;
+  const closedMs = closed.getTime();
+  const retentionAt = Number.isNaN(closedMs)
+    ? new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000)
+    : new Date(closedMs + 30 * 24 * 60 * 60 * 1000);
+
   const lead = await Lead.findOneAndUpdate(
     {
-      _id: req.params.id,
+      _id: existing._id,
       stage: 'closed_sale',
       'handover.cstStatus': 'pending_review',
     },
@@ -134,6 +176,12 @@ export const markClientOnboarded = asyncHandler(async (req, res) => {
         'handover.onboardedAt': now,
         // Clear tech execution until Assign Tech — keeps Tech board tag as Onboarded
         'handover.techStatus': null,
+        // Auto 30-day retention (exact-time only; skip 5-min early warning)
+        'handover.retention.at': retentionAt,
+        'handover.retention.status': 'scheduled',
+        'handover.retention.alerts.fiveMinFired': true,
+        'handover.retention.alerts.exactTimeFired': false,
+        'handover.retention.doneAt': null,
       },
     },
     {
@@ -156,7 +204,6 @@ export const markClientOnboarded = asyncHandler(async (req, res) => {
     );
   }
 
-  // Full document returned for Client Detail / cache (all Agent + Closer + CST fields)
   res
     .status(200)
     .json(new ApiResponse(200, { lead }, 'Client moved to Onboard'));
@@ -303,6 +350,10 @@ const populateCstLead = (query) =>
     .populate({
       path: 'handover.assignedTechId',
       select: 'fullName username role',
+    })
+    .populate({
+      path: 'handover.comments.createdBy',
+      select: 'fullName username role',
     });
 
 /**
@@ -312,6 +363,10 @@ const populateCstLead = (query) =>
 export const getRetentionReminders = asyncHandler(async (req, res) => {
   const leads = await Lead.find({
     stage: 'closed_sale',
+    // Active onboarded (or further) clients only — not Pending Review
+    'handover.cstStatus': {
+      $in: ['onboarded', 'assigned', 'in_progress', 'completed'],
+    },
     'handover.retention.at': { $ne: null },
     'handover.retention.status': 'scheduled',
     // Still waiting for CST dismiss / mark-done (not yet acknowledged)
@@ -321,7 +376,7 @@ export const getRetentionReminders = asyncHandler(async (req, res) => {
     ],
   })
     .select(
-      'clientName businessName phone handover.retention handover.cstStatus createdAt updatedAt'
+      'clientName businessName personalPhone businessPhone handover.retention handover.cstStatus createdAt updatedAt'
     )
     .sort({ 'handover.retention.at': 1 });
 
@@ -546,6 +601,62 @@ export const setServiceScope = asyncHandler(async (req, res) => {
     );
 });
 
+const normalizeUpsellRow = (row, index) => {
+  if (!row || typeof row !== 'object') return null;
+  const entryId = String(row.entryId || `upsell-${index + 1}`).trim();
+  if (!entryId) return null;
+  const totalAmount = Math.max(0, Number(row.totalAmount) || 0);
+  let paidAmount = Math.max(0, Number(row.paidAmount) || 0);
+  if (paidAmount > totalAmount) paidAmount = totalAmount;
+
+  const serviceRaw = String(row.service || '')
+    .trim()
+    .toLowerCase();
+  const service = UPSELL_SERVICES.has(serviceRaw) ? serviceRaw : null;
+  const serviceOther =
+    service === 'other'
+      ? String(row.serviceOther || row.title || '').trim() || null
+      : null;
+
+  const titleFromService =
+    service === 'other'
+      ? serviceOther || 'Other'
+      : service
+        ? UPSELL_SERVICE_LABEL[service] || service
+        : '';
+
+  const paymentOptionRaw = String(row.paymentOption || '')
+    .trim()
+    .toLowerCase();
+  const paymentOption = UPSELL_PAYMENT_OPTIONS.has(paymentOptionRaw)
+    ? paymentOptionRaw
+    : null;
+
+  return {
+    entryId,
+    title:
+      typeof row.title === 'string' && row.title.trim()
+        ? row.title.trim()
+        : titleFromService,
+    service,
+    serviceOther,
+    totalAmount,
+    paidAmount,
+    paymentOption,
+    selectedCardId: row.selectedCardId
+      ? String(row.selectedCardId).trim()
+      : null,
+    paymentReference:
+      typeof row.paymentReference === 'string' && row.paymentReference.trim()
+        ? row.paymentReference.trim()
+        : null,
+    notes:
+      typeof row.notes === 'string' && row.notes.trim()
+        ? row.notes.trim()
+        : null,
+  };
+};
+
 /**
  * CST Client Detail — unified portfolio save (single request).
  * Accepts any combination of section payloads; unknown future keys can be
@@ -556,7 +667,7 @@ export const setServiceScope = asyncHandler(async (req, res) => {
  *   activationCall?: { done: boolean },
  *   retention?: { at: ISO string | null },  // null clears; omit to leave
  *   serviceScope?: { selected: string[], otherNote?: string },
- *   upsellLedger?: Array<{ entryId, title, totalAmount, paidAmount }>,
+ *   upsellLedger?: Array<{ entryId, title, totalAmount, paidAmount, … }>,
  *   portfolioKeywords?: Array<{ keywordId, text, note? }>,
  *   changeRequests?: Array<{ requestId, category, description, status? }>,
  *   profileContext?: { …agent/closer/CST tier fields… }
@@ -653,23 +764,10 @@ export const saveClientPortfolio = asyncHandler(async (req, res) => {
     $set['handover.serviceScope.otherNote'] = otherNote || null;
   }
 
-  // Section E — Upselling & Split Payment Ledger (never overwrites base salesAmount)
+  // Section E — Upselling & Split Payment Ledger (never overwrites base payment fields)
   if (Array.isArray(upsellLedger)) {
     const normalized = upsellLedger
-      .map((row, index) => {
-        if (!row || typeof row !== 'object') return null;
-        const entryId = String(row.entryId || `upsell-${index + 1}`).trim();
-        if (!entryId) return null;
-        const totalAmount = Math.max(0, Number(row.totalAmount) || 0);
-        let paidAmount = Math.max(0, Number(row.paidAmount) || 0);
-        if (paidAmount > totalAmount) paidAmount = totalAmount;
-        return {
-          entryId,
-          title: typeof row.title === 'string' ? row.title.trim() : '',
-          totalAmount,
-          paidAmount,
-        };
-      })
+      .map((row, index) => normalizeUpsellRow(row, index))
       .filter(Boolean);
     $set['handover.upsellLedger'] = normalized;
   }
@@ -699,14 +797,15 @@ export const saveClientPortfolio = asyncHandler(async (req, res) => {
     const topLevelStrings = [
       'clientName',
       'businessName',
-      'phone',
-      'workEmail',
+      'personalPhone',
+      'businessPhone',
+      'businessEmail',
       'personalEmail',
       'websiteLink',
       'yelpLink',
       'gmbLink',
-      'servicesArea',
-      'serviceOffered',
+      'serviceAreas',
+      'servicesOffered',
       'niche',
       'locationAddress',
       'leadSource',
@@ -716,7 +815,7 @@ export const saveClientPortfolio = asyncHandler(async (req, res) => {
       if (!Object.prototype.hasOwnProperty.call(profileContext, key)) continue;
       const next = strOrNull(profileContext[key]);
       if (next === undefined) continue;
-      if (key === 'businessName' || key === 'phone') {
+      if (key === 'businessName') {
         if (!next) {
           throw new ApiError(400, `${key} cannot be empty`);
         }
@@ -724,17 +823,79 @@ export const saveClientPortfolio = asyncHandler(async (req, res) => {
       $set[key] = next;
     }
 
-    if (Object.prototype.hasOwnProperty.call(profileContext, 'salesAmount')) {
-      const raw = profileContext.salesAmount;
-      if (raw === '' || raw === null) {
-        $set.salesAmount = null;
-      } else {
-        const n = Number(raw);
-        if (Number.isNaN(n) || n < 0) {
-          throw new ApiError(400, 'salesAmount must be a non-negative number');
-        }
-        $set.salesAmount = n;
+    if (
+      Object.prototype.hasOwnProperty.call(profileContext, 'personalPhone') ||
+      Object.prototype.hasOwnProperty.call(profileContext, 'businessPhone')
+    ) {
+      const nextPersonal = Object.prototype.hasOwnProperty.call(
+        $set,
+        'personalPhone'
+      )
+        ? $set.personalPhone
+        : lead.personalPhone;
+      const nextBusiness = Object.prototype.hasOwnProperty.call(
+        $set,
+        'businessPhone'
+      )
+        ? $set.businessPhone
+        : lead.businessPhone;
+      const derived =
+        strOrNull(nextBusiness) || strOrNull(nextPersonal) || null;
+      if (!derived) {
+        throw new ApiError(
+          400,
+          'At least one of businessPhone or personalPhone is required'
+        );
       }
+    }
+
+    const parsePaymentNumber = (raw, fieldName, { allowNull = false } = {}) => {
+      if (raw === '' || raw === null) {
+        if (allowNull) return null;
+        throw new ApiError(400, `${fieldName} is required`);
+      }
+      const n = Number(raw);
+      if (Number.isNaN(n) || n < 0) {
+        throw new ApiError(400, `${fieldName} must be a non-negative number`);
+      }
+      return n;
+    };
+
+    if (Object.prototype.hasOwnProperty.call(profileContext, 'paymentOffered')) {
+      $set.paymentOffered = parsePaymentNumber(
+        profileContext.paymentOffered,
+        'paymentOffered'
+      );
+    }
+    if (Object.prototype.hasOwnProperty.call(profileContext, 'paymentReceived')) {
+      $set.paymentReceived = parsePaymentNumber(
+        profileContext.paymentReceived,
+        'paymentReceived'
+      );
+    }
+    if (
+      Object.prototype.hasOwnProperty.call($set, 'paymentOffered') ||
+      Object.prototype.hasOwnProperty.call($set, 'paymentReceived')
+    ) {
+      const offered = Math.max(
+        0,
+        Number(
+          Object.prototype.hasOwnProperty.call($set, 'paymentOffered')
+            ? $set.paymentOffered
+            : lead.paymentOffered
+        ) || 0
+      );
+      const received = Math.max(
+        0,
+        Number(
+          Object.prototype.hasOwnProperty.call($set, 'paymentReceived')
+            ? $set.paymentReceived
+            : lead.paymentReceived
+        ) || 0
+      );
+      $set.paymentOffered = offered;
+      $set.paymentReceived = received;
+      $set.paymentPending = Math.max(0, offered - received);
     }
 
     if (Object.prototype.hasOwnProperty.call(profileContext, 'closedAt')) {
@@ -797,17 +958,26 @@ export const saveClientPortfolio = asyncHandler(async (req, res) => {
     }
   }
 
-  // Recompute cumulative totals after base sale and/or upsell ledger updates
+  // Recompute cumulative totals after base payment and/or upsell ledger updates
   if (
     Array.isArray(upsellLedger) ||
-    Object.prototype.hasOwnProperty.call($set, 'salesAmount')
+    Object.prototype.hasOwnProperty.call($set, 'paymentOffered') ||
+    Object.prototype.hasOwnProperty.call($set, 'paymentReceived')
   ) {
-    const baseAmount = Math.max(
+    const baseOffered = Math.max(
       0,
       Number(
-        Object.prototype.hasOwnProperty.call($set, 'salesAmount')
-          ? $set.salesAmount
-          : lead.salesAmount
+        Object.prototype.hasOwnProperty.call($set, 'paymentOffered')
+          ? $set.paymentOffered
+          : lead.paymentOffered ?? lead.salesAmount
+      ) || 0
+    );
+    const baseReceived = Math.max(
+      0,
+      Number(
+        Object.prototype.hasOwnProperty.call($set, 'paymentReceived')
+          ? $set.paymentReceived
+          : lead.paymentReceived
       ) || 0
     );
     const ledgerRows = Array.isArray(upsellLedger)
@@ -821,8 +991,8 @@ export const saveClientPortfolio = asyncHandler(async (req, res) => {
       upsellTotal += Math.max(0, Number(row?.totalAmount) || 0);
       upsellPaid += Math.max(0, Number(row?.paidAmount) || 0);
     }
-    $set['handover.totalCollectedAmount'] = baseAmount + upsellPaid;
-    $set['handover.totalContractValue'] = baseAmount + upsellTotal;
+    $set['handover.totalCollectedAmount'] = baseReceived + upsellPaid;
+    $set['handover.totalContractValue'] = baseOffered + upsellTotal;
   }
 
   if (Object.keys($set).length === 0 && Object.keys($unset).length === 0) {
@@ -842,6 +1012,309 @@ export const saveClientPortfolio = asyncHandler(async (req, res) => {
   res
     .status(200)
     .json(new ApiResponse(200, { lead: updated }, 'Client details saved'));
+});
+
+/**
+ * CST — append one upsell ledger row (+ optional new saved card).
+ * Body JSON: service, serviceOther?, totalAmount, paidAmount, paymentOption,
+ * selectedCardId?, paymentReference?, notes?, newCard?
+ */
+export const addClientUpsell = asyncHandler(async (req, res) => {
+  const lead = await Lead.findOne({
+    _id: req.params.id,
+    stage: 'closed_sale',
+    'handover.cstStatus': { $in: CST_PIPELINE_STATUSES },
+  });
+
+  if (!lead) {
+    throw new ApiError(404, 'Client not found in CST handover pipeline');
+  }
+
+  const service = String(req.body?.service || '')
+    .trim()
+    .toLowerCase();
+  if (!UPSELL_SERVICES.has(service)) {
+    throw new ApiError(
+      400,
+      'Services / Product must be SEO, Web, Citation Pages, or Other'
+    );
+  }
+
+  const serviceOther =
+    service === 'other'
+      ? String(req.body?.serviceOther || '').trim()
+      : '';
+  if (service === 'other' && !serviceOther) {
+    throw new ApiError(400, 'Specify the Other service / product');
+  }
+
+  const totalAmount = Number(req.body?.totalAmount);
+  const paidAmountRaw = Number(req.body?.paidAmount);
+  if (!Number.isFinite(totalAmount) || totalAmount < 0) {
+    throw new ApiError(400, 'Total is required and must be a non-negative number');
+  }
+  if (!Number.isFinite(paidAmountRaw) || paidAmountRaw < 0) {
+    throw new ApiError(400, 'Paid is required and must be a non-negative number');
+  }
+  let paidAmount = paidAmountRaw;
+  if (paidAmount > totalAmount) paidAmount = totalAmount;
+
+  const paymentOption = String(req.body?.paymentOption || '')
+    .trim()
+    .toLowerCase();
+  if (!UPSELL_PAYMENT_OPTIONS.has(paymentOption)) {
+    throw new ApiError(
+      400,
+      'Payment Option must be New Card, Old Card, Link, or Others'
+    );
+  }
+
+  let selectedCardId = req.body?.selectedCardId
+    ? String(req.body.selectedCardId).trim()
+    : null;
+  let paymentReference =
+    typeof req.body?.paymentReference === 'string'
+      ? req.body.paymentReference.trim()
+      : '';
+
+  if (paymentOption === 'old_card') {
+    const cards = Array.isArray(lead.savedCards) ? lead.savedCards : [];
+    if (!selectedCardId || !cards.some((c) => String(c.cardId) === selectedCardId)) {
+      throw new ApiError(400, 'Select a saved card for Old Card payment');
+    }
+  } else if (paymentOption === 'new_card') {
+    const newCard = req.body?.newCard || {};
+    const digits = String(newCard.cardNumber || '').replace(/\D/g, '');
+    const last4 = digits.slice(-4);
+    if (digits.length < 13 || last4.length !== 4) {
+      throw new ApiError(400, 'Enter a valid Card Number');
+    }
+    const expiry = String(newCard.expiry || '').trim();
+    if (!/^\d{2}\/\d{2}$/.test(expiry)) {
+      throw new ApiError(400, 'Expiry must be MM/YY');
+    }
+    const cvc = String(newCard.cvc || '').replace(/\D/g, '');
+    if (cvc.length < 3) {
+      throw new ApiError(400, 'CVC is required');
+    }
+    const nameOnCard = String(newCard.nameOnCard || '').trim();
+    const billingZipCode = String(newCard.billingZipCode || '').trim();
+    if (!nameOnCard || !billingZipCode) {
+      throw new ApiError(400, 'Name on Card and Billing Zip Code are required');
+    }
+
+    const entry = buildSavedCardEntry({
+      cardLast4: last4,
+      cardBrand: newCard.cardBrand || null,
+      expiry,
+      nameOnCard,
+      billingZipCode,
+      source: 'cst_upsell',
+      cvcCollected: true,
+    });
+    appendSavedCard(lead, entry);
+    selectedCardId = entry.cardId;
+  } else if (!paymentReference) {
+    throw new ApiError(400, 'Payment reference / details are required');
+  }
+
+  const notes =
+    typeof req.body?.notes === 'string' ? req.body.notes.trim() : '';
+
+  const row = normalizeUpsellRow(
+    {
+      entryId: randomUUID(),
+      service,
+      serviceOther,
+      title:
+        service === 'other'
+          ? serviceOther
+          : UPSELL_SERVICE_LABEL[service] || service,
+      totalAmount,
+      paidAmount,
+      paymentOption,
+      selectedCardId,
+      paymentReference: paymentReference || null,
+      notes: notes || null,
+    },
+    0
+  );
+
+  if (!lead.handover) lead.handover = {};
+  if (!Array.isArray(lead.handover.upsellLedger)) {
+    lead.handover.upsellLedger = [];
+  }
+  lead.handover.upsellLedger.push(row);
+
+  const baseOffered = Math.max(
+    0,
+    Number(lead.paymentOffered ?? lead.salesAmount) || 0
+  );
+  const baseReceived = Math.max(0, Number(lead.paymentReceived) || 0);
+  let upsellTotal = 0;
+  let upsellPaid = 0;
+  for (const r of lead.handover.upsellLedger) {
+    upsellTotal += Math.max(0, Number(r?.totalAmount) || 0);
+    upsellPaid += Math.max(0, Number(r?.paidAmount) || 0);
+  }
+  lead.handover.totalCollectedAmount = baseReceived + upsellPaid;
+  lead.handover.totalContractValue = baseOffered + upsellTotal;
+
+  await lead.save();
+
+  const updated = await populateCstLead(Lead.findById(lead._id));
+
+  res
+    .status(200)
+    .json(new ApiResponse(200, { lead: updated }, 'Upsell added'));
+});
+
+/**
+ * CST — add a client comment with optional @mentions + file attachments.
+ * multipart: body (text), mentions (JSON array of userIds), files[]
+ */
+export const addClientComment = asyncHandler(async (req, res) => {
+  const lead = await Lead.findOne({
+    _id: req.params.id,
+    stage: 'closed_sale',
+    'handover.cstStatus': { $in: CST_PIPELINE_STATUSES },
+  });
+
+  if (!lead) {
+    throw new ApiError(404, 'Client not found in CST handover pipeline');
+  }
+
+  const body = String(req.body?.body || '').trim();
+  if (!body) {
+    throw new ApiError(400, 'Comment text is required');
+  }
+
+  let mentionIds = [];
+  try {
+    const raw = req.body?.mentions;
+    const parsed =
+      typeof raw === 'string' ? JSON.parse(raw || '[]') : raw;
+    if (Array.isArray(parsed)) {
+      mentionIds = [
+        ...new Set(
+          parsed
+            .map((id) => String(id || '').trim())
+            .filter(Boolean)
+        ),
+      ];
+    }
+  } catch {
+    throw new ApiError(400, 'Invalid mentions payload');
+  }
+
+  const mentionUsers =
+    mentionIds.length > 0
+      ? await User.find({ _id: { $in: mentionIds }, status: 'approved' }).select(
+          'fullName username role'
+        )
+      : [];
+
+  const mentions = mentionUsers.map((u) => ({
+    userId: u._id,
+    fullName: u.fullName || null,
+    username: u.username || null,
+    role: u.role || null,
+  }));
+
+  const files = Array.isArray(req.files) ? req.files : [];
+  const attachments = files.map((file) => ({
+    originalName: file.originalname || null,
+    storedFilename: file.filename,
+    mimeType: file.mimetype || null,
+    sizeBytes: file.size || null,
+    relativePath: path
+      .join('uploads', 'client-comments', String(req.params.id), file.filename)
+      .replace(/\\/g, '/'),
+  }));
+
+  const comment = {
+    commentId: randomUUID(),
+    body,
+    mentions,
+    attachments,
+    createdAt: new Date(),
+    createdBy: req.user._id,
+  };
+
+  if (!lead.handover) lead.handover = {};
+  if (!Array.isArray(lead.handover.comments)) {
+    lead.handover.comments = [];
+  }
+  lead.handover.comments.push(comment);
+  await lead.save();
+
+  const businessName = lead.businessName || 'Client';
+  const authorName =
+    req.user.fullName || req.user.username || 'CST Manager';
+
+  for (const m of mentions) {
+    if (String(m.userId) === String(req.user._id)) continue;
+    emitToUser(m.userId, 'client:comment-mention', {
+      leadId: String(lead._id),
+      commentId: comment.commentId,
+      businessName,
+      authorName,
+      bodyPreview: body.slice(0, 140),
+      at: comment.createdAt,
+    });
+  }
+
+  const updated = await populateCstLead(
+    Lead.findById(lead._id).populate({
+      path: 'handover.comments.createdBy',
+      select: 'fullName username role',
+    })
+  );
+
+  res
+    .status(200)
+    .json(new ApiResponse(200, { lead: updated }, 'Comment added'));
+});
+
+/**
+ * Serve a client-comment attachment (CST / mentioned roles / admin).
+ */
+export const serveClientCommentAttachment = asyncHandler(async (req, res) => {
+  const lead = await Lead.findById(req.params.id).select(
+    'handover.comments businessName'
+  );
+  if (!lead) throw new ApiError(404, 'Client not found');
+
+  const comment = (lead.handover?.comments || []).find(
+    (c) => String(c.commentId) === String(req.params.commentId)
+  );
+  if (!comment) throw new ApiError(404, 'Comment not found');
+
+  const file = (comment.attachments || []).find(
+    (a) => String(a.storedFilename) === String(req.params.filename)
+  );
+  if (!file) throw new ApiError(404, 'Attachment not found');
+
+  const abs = path.join(
+    process.cwd(),
+    'uploads',
+    'client-comments',
+    String(req.params.id),
+    file.storedFilename
+  );
+  if (!fs.existsSync(abs)) {
+    throw new ApiError(404, 'Attachment file missing on disk');
+  }
+
+  res.setHeader(
+    'Content-Type',
+    file.mimeType || 'application/octet-stream'
+  );
+  res.setHeader(
+    'Content-Disposition',
+    `inline; filename="${encodeURIComponent(file.originalName || file.storedFilename)}"`
+  );
+  fs.createReadStream(abs).pipe(res);
 });
 
 /**
@@ -1107,7 +1580,7 @@ export const getTechPipeline = asyncHandler(async (req, res) => {
     ],
   })
     .select(
-      'stage status clientName businessName phone workEmail personalEmail yelpLink websiteLink gmbLink servicesArea serviceOffered salesAmount payment handover closedAt closedBy agentId closerId notes createdAt updatedAt'
+      'stage status clientName businessName personalPhone businessPhone businessEmail personalEmail yelpLink websiteLink gmbLink serviceAreas servicesOffered niche locationAddress leadSource paymentOffered paymentReceived paymentPending payment handover closedAt closedBy agentId closerId notes createdAt updatedAt'
     )
     .populate('agentId', 'fullName username role')
     .populate('closerId', 'fullName username role')
@@ -1140,11 +1613,12 @@ export const assignHandover = asyncHandler(async (req, res) => {
   const {
     techId,
     clientName,
-    workEmail,
+    businessEmail,
     personalEmail,
-    salesAmount,
-    serviceOffered,
-    servicesArea,
+    paymentOffered,
+    paymentReceived,
+    servicesOffered,
+    serviceAreas,
     gmbLink,
     yelpLink,
     onboardingNotes,
@@ -1179,23 +1653,36 @@ export const assignHandover = asyncHandler(async (req, res) => {
   };
 
   setIfProvided('clientName', clientName);
-  setIfProvided('workEmail', workEmail);
+  setIfProvided('businessEmail', businessEmail);
   setIfProvided('personalEmail', personalEmail);
-  setIfProvided('serviceOffered', serviceOffered);
-  setIfProvided('servicesArea', servicesArea);
+  setIfProvided('servicesOffered', servicesOffered);
+  setIfProvided('serviceAreas', serviceAreas);
   setIfProvided('gmbLink', gmbLink);
   setIfProvided('yelpLink', yelpLink);
 
-  if (salesAmount !== undefined) {
-    if (salesAmount === '' || salesAmount === null) {
-      lead.salesAmount = null;
-    } else {
-      const n = Number(salesAmount);
-      if (Number.isNaN(n) || n < 0) {
-        throw new ApiError(400, 'salesAmount must be a non-negative number');
-      }
-      lead.salesAmount = n;
+  if (paymentOffered !== undefined && paymentOffered !== '' && paymentOffered !== null) {
+    const n = Number(paymentOffered);
+    if (Number.isNaN(n) || n < 0) {
+      throw new ApiError(400, 'paymentOffered must be a non-negative number');
     }
+    lead.paymentOffered = n;
+  }
+  if (paymentReceived !== undefined) {
+    const n = Number(
+      paymentReceived === '' || paymentReceived === null ? 0 : paymentReceived
+    );
+    if (Number.isNaN(n) || n < 0) {
+      throw new ApiError(400, 'paymentReceived must be a non-negative number');
+    }
+    lead.paymentReceived = n;
+  }
+  // Keep pending in sync whenever either amount is touched
+  if (paymentOffered !== undefined || paymentReceived !== undefined) {
+    const offered = Math.max(0, Number(lead.paymentOffered) || 0);
+    const received = Math.max(0, Number(lead.paymentReceived) || 0);
+    lead.paymentOffered = offered;
+    lead.paymentReceived = received;
+    lead.paymentPending = Math.max(0, offered - received);
   }
 
   if (!lead.handover) {
@@ -1238,7 +1725,7 @@ export const getMyProjects = asyncHandler(async (req, res) => {
     'handover.cstStatus': { $in: ['assigned', 'in_progress', 'completed'] },
   })
     .select(
-      'stage status clientName businessName phone workEmail personalEmail yelpLink websiteLink gmbLink servicesArea serviceOffered salesAmount payment handover closedAt notes createdAt updatedAt'
+      'stage status clientName businessName personalPhone businessPhone businessEmail personalEmail yelpLink websiteLink gmbLink serviceAreas servicesOffered niche locationAddress leadSource paymentOffered paymentReceived paymentPending payment handover closedAt notes createdAt updatedAt'
     )
     .sort({ 'handover.assignedAt': 1 });
 

@@ -5,17 +5,40 @@ import CloserScheduleCallbackModal from './CloserScheduleCallbackModal.jsx';
 
 const DUE_SOON_MS = 15 * 60 * 1000;
 
+/** e.g. Wed, 23 Sept, 07:59 pm PKT */
 const formatPkt = (value) => {
   if (!value) return '—';
-  return new Date(value).toLocaleString('en-PK', {
+  const raw = new Date(value).toLocaleString('en-GB', {
     timeZone: 'Asia/Karachi',
     weekday: 'short',
     day: '2-digit',
     month: 'short',
     hour: '2-digit',
     minute: '2-digit',
+    hour12: true,
   });
+  // en-GB may yield "Wed, 23 Sept, 07:59 pm" or comma variants — normalize + PKT
+  return `${raw.replace(/\s+/g, ' ').trim()} PKT`;
 };
+
+const displayOrDash = (value) => {
+  const s = value == null ? '' : String(value).trim();
+  return s || '—';
+};
+
+/** Prefer callback fields; fall back to populated leadId. */
+const resolveContact = (row) => {
+  const lead =
+    row.leadId && typeof row.leadId === 'object' ? row.leadId : null;
+  return {
+    personalEmail: displayOrDash(row.personalEmail || lead?.personalEmail),
+    businessEmail: displayOrDash(row.businessEmail || lead?.businessEmail),
+    personalPhone: displayOrDash(row.personalPhone || lead?.personalPhone),
+    businessPhone: displayOrDash(row.businessPhone || lead?.businessPhone),
+  };
+};
+
+const isFromAgent = (row) => Boolean(row.agentId);
 
 function statusBucket(row, now = Date.now()) {
   if (row.status === 'attended') return 'attended';
@@ -60,12 +83,23 @@ const BADGE = {
   },
 };
 
+/** Closer-created Direct Contact: owned by closer, no linked lead, not from agent. */
+export function isCloserDirectContactCallback(row) {
+  if (!row) return false;
+  const leadId = row.leadId?._id || row.leadId || null;
+  if (leadId || row.promotedLeadId) return false;
+  if (row.status === 'promoted') return false;
+  if (row.agentId) return false;
+  return Boolean(row.closerId);
+}
+
 /**
  * Closer personal callback agenda — card list with urgency badges.
  */
 export default function CloserCallbackTable({
   callbacks = [],
   onOpenLead = null,
+  onMoveToLeads = null,
   emptyMessage = 'No callbacks scheduled. Use + Add Callback or schedule from Leads.',
 }) {
   const queryClient = useQueryClient();
@@ -119,6 +153,11 @@ export default function CloserCallbackTable({
           const bucket = statusBucket(row, nowTick);
           const badge = BADGE[bucket] || BADGE.pending;
           const leadId = row.leadId?._id || row.leadId || null;
+          const contact = resolveContact(row);
+          const fromAgent = isFromAgent(row);
+          const canMoveToLeads =
+            typeof onMoveToLeads === 'function' &&
+            isCloserDirectContactCallback(row);
           const marking =
             doneMutation.isPending && doneMutation.variables === row._id;
 
@@ -133,36 +172,64 @@ export default function CloserCallbackTable({
               ].join(' ')}
             >
               <div className="flex flex-wrap items-start justify-between gap-3">
-                <div className="min-w-0 flex-1">
+                <div className="min-w-0 flex-1 space-y-1.5">
                   <div className="flex flex-wrap items-center gap-2">
                     <h3 className="font-medium text-white">
-                      {row.businessName}
+                      {row.businessName || '—'}
                     </h3>
                     <span
                       className={`inline-flex rounded-full px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide ${badge.className}`}
                     >
                       {badge.label}
                     </span>
-                    {!leadId ? (
-                      <span className="inline-flex rounded-full bg-zinc-700/40 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-zinc-400">
-                        Direct
+                    {fromAgent ? (
+                      <span className="inline-flex rounded-full bg-orange-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-orange-300 ring-1 ring-orange-500/30">
+                        From Agent
                       </span>
                     ) : null}
                   </div>
-                  <p className="mt-1 text-sm text-zinc-400">
-                    {row.phone || '—'}
-                  </p>
-                  <p className="mt-2 text-sm font-medium text-zinc-200">
-                    {formatPkt(row.callbackAt)}
-                    <span className="ml-1.5 text-xs font-normal text-zinc-500">
-                      PKT
+
+                  <dl className="grid gap-1 text-sm sm:grid-cols-2">
+                    <div className="min-w-0">
+                      <dt className="text-[11px] font-medium uppercase tracking-wide text-zinc-500">
+                        Personal Email
+                      </dt>
+                      <dd className="truncate text-zinc-300">
+                        {contact.personalEmail}
+                      </dd>
+                    </div>
+                    <div className="min-w-0">
+                      <dt className="text-[11px] font-medium uppercase tracking-wide text-zinc-500">
+                        Business Email
+                      </dt>
+                      <dd className="truncate text-zinc-300">
+                        {contact.businessEmail}
+                      </dd>
+                    </div>
+                    <div className="min-w-0">
+                      <dt className="text-[11px] font-medium uppercase tracking-wide text-zinc-500">
+                        Personal Number
+                      </dt>
+                      <dd className="truncate text-zinc-300">
+                        {contact.personalPhone}
+                      </dd>
+                    </div>
+                    <div className="min-w-0">
+                      <dt className="text-[11px] font-medium uppercase tracking-wide text-zinc-500">
+                        Business Number
+                      </dt>
+                      <dd className="truncate text-zinc-300">
+                        {contact.businessPhone}
+                      </dd>
+                    </div>
+                  </dl>
+
+                  <p className="pt-0.5 text-sm font-medium text-zinc-200">
+                    <span className="text-[11px] font-medium uppercase tracking-wide text-zinc-500">
+                      Date &amp; Time (PKT){' '}
                     </span>
+                    {formatPkt(row.callbackAt)}
                   </p>
-                  {row.notes ? (
-                    <p className="mt-2 text-sm text-zinc-500 line-clamp-2">
-                      {row.notes}
-                    </p>
-                  ) : null}
                 </div>
 
                 <div className="flex flex-wrap gap-2">
@@ -196,13 +263,14 @@ export default function CloserCallbackTable({
                     >
                       Open Lead
                     </button>
-                  ) : !leadId && onOpenLead ? (
+                  ) : null}
+                  {canMoveToLeads ? (
                     <button
                       type="button"
-                      onClick={() => onOpenLead(row)}
-                      className="rounded-lg border border-zinc-700 px-2.5 py-1.5 text-xs font-medium text-zinc-300 hover:bg-zinc-800/60"
+                      onClick={() => onMoveToLeads(row)}
+                      className="rounded-lg bg-[#F25E26] px-2.5 py-1.5 text-xs font-semibold text-white shadow-sm shadow-[#F25E26]/25 hover:bg-[#ff6a33]"
                     >
-                      View Contact
+                      Move to Leads
                     </button>
                   ) : null}
                 </div>

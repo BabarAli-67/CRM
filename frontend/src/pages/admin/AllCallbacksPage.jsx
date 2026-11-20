@@ -290,10 +290,12 @@ export default function AllCallbacksPage() {
           className={`${ADMIN_CARD} flex flex-wrap items-center justify-between gap-4`}
         >
           <div>
-            <p className="bg-gradient-to-r from-[#FF4B26] via-[#F23B18] to-[#C92000] bg-clip-text font-display text-sm font-bold italic tracking-wide text-transparent">
-              FLASH TECH
-            </p>
-            <h1 className="mt-1 font-display text-2xl font-semibold tracking-tight text-white sm:text-3xl">
+            <img
+              src="/logo.webp"
+              alt="Flash Tech"
+              className="h-8 w-auto max-w-[160px] object-contain object-left"
+            />
+            <h1 className="mt-2 font-display text-2xl font-semibold tracking-tight text-white sm:text-3xl">
               Callbacks Monitor
             </h1>
             <p className="mt-1 text-sm text-zinc-400">
@@ -454,7 +456,16 @@ export default function AllCallbacksPage() {
                           {row.businessName}
                         </div>
                         <div className="mt-0.5 text-xs text-zinc-500">
-                          {row.phone || '—'}
+                          {[
+                            row.personalPhone
+                              ? `Personal: ${row.personalPhone}`
+                              : null,
+                            row.businessPhone
+                              ? `Business: ${row.businessPhone}`
+                              : null,
+                          ]
+                            .filter(Boolean)
+                            .join(' · ') || '—'}
                         </div>
                       </td>
                       <td className="px-4 py-3 text-sm">

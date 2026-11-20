@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import useAuth from '../../hooks/useAuth.hook.js';
-import { createCallback } from '../../services/callback.service.js';
+import {
+  createCallback,
+  moveCloserCallbackToLead,
+} from '../../services/callback.service.js';
 import {
   createLead,
   getUsers,
-  handLeadToCloser,
   updateLead,
 } from '../../services/lead.service.js';
 
@@ -102,41 +104,69 @@ const labelClass = 'block space-y-1.5 text-sm text-zinc-300';
 const emptyForm = {
   clientName: '',
   businessName: '',
-  phone: '',
-  workEmail: '',
+  personalPhone: '',
+  businessPhone: '',
+  businessEmail: '',
   personalEmail: '',
   websiteLink: '',
   gmbLink: '',
-  servicesArea: '',
-  serviceOffered: '',
-  salesAmount: '',
+  serviceAreas: '',
+  servicesOffered: '',
+  paymentOffered: '',
+  paymentReceived: '0',
+  paymentPending: '',
   notes: '',
   closerId: '',
+  sourceCallbackId: null,
+};
+
+const paymentFieldToString = (value, fallback = '') => {
+  if (value != null && value !== '') return String(value);
+  return fallback;
+};
+
+const computePendingDisplay = (offeredRaw, receivedRaw) => {
+  const offered = Number(String(offeredRaw ?? '').trim());
+  const received = Number(String(receivedRaw ?? '').trim() || '0');
+  if (Number.isNaN(offered) || Number.isNaN(received)) return '';
+  return String(Math.max(0, offered - received));
 };
 
 const mapInitialToForm = (initialValues) => {
   if (!initialValues) return emptyForm;
-  const closerRef = initialValues.closerId;
+  // Promote-from-callback uses closerId already resolved; edits use lead.closerId
+  const closerRef = initialValues.closerId ?? initialValues.assignedCloserId;
+  const paymentOffered = paymentFieldToString(
+    initialValues.paymentOffered != null && initialValues.paymentOffered !== ''
+      ? initialValues.paymentOffered
+      : initialValues.salesAmount
+  );
+  const paymentReceived = paymentFieldToString(
+    initialValues.paymentReceived,
+    '0'
+  );
   return {
     clientName: initialValues.clientName || '',
     businessName: initialValues.businessName || '',
-    phone: initialValues.phone || '',
-    workEmail: initialValues.workEmail || '',
+    personalPhone: initialValues.personalPhone || '',
+    businessPhone: initialValues.businessPhone || '',
+    businessEmail: initialValues.businessEmail || '',
     personalEmail: initialValues.personalEmail || '',
-    websiteLink: initialValues.websiteLink || '',
+    websiteLink:
+      initialValues.websiteLink || initialValues.businessLink || '',
     gmbLink: initialValues.gmbLink || '',
-    servicesArea: initialValues.servicesArea || '',
-    serviceOffered: initialValues.serviceOffered || '',
-    salesAmount:
-      initialValues.salesAmount != null && initialValues.salesAmount !== ''
-        ? String(initialValues.salesAmount)
-        : '',
+    serviceAreas: initialValues.serviceAreas || '',
+    servicesOffered: initialValues.servicesOffered || '',
+    paymentOffered,
+    paymentReceived,
+    paymentPending: computePendingDisplay(paymentOffered, paymentReceived),
     notes: initialValues.notes || '',
     closerId: closerRef?._id
       ? String(closerRef._id)
       : closerRef
         ? String(closerRef)
         : '',
+    sourceCallbackId: initialValues.sourceCallbackId || null,
   };
 };
 
@@ -155,7 +185,10 @@ const normalizeUrl = (raw) => {
 };
 
 /**
- * Comprehensive sales-agent lead intake + optional linked callback scheduler.
+ * Comprehensive lead intake.
+ * mode:
+ *  - 'agent' (default) — sales-agent create/edit + optional callback scheduler
+ *  - 'closerPromote' — closer Direct Contact → Lead (no Assign Closer / scheduler)
  */
 export default function LeadForm({
   initialValues = null,
@@ -163,20 +196,22 @@ export default function LeadForm({
   onSaved,
   onCancel,
   title = 'Lead',
+  mode = 'agent',
 }) {
   const { user } = useAuth();
   const queryClient = useQueryClient();
+  const isCloserPromote = mode === 'closerPromote';
   const leadId = leadIdProp || initialValues?._id || null;
   const pipelineStatus = initialValues?.status || 'with_agent';
-  const agentDisplayName =
-    user?.fullName?.trim() ||
-    user?.username ||
-    initialValues?.agentId?.fullName ||
-    '—';
+  const agentDisplayName = isCloserPromote
+    ? 'Closer-sourced'
+    : user?.fullName?.trim() ||
+      user?.username ||
+      initialValues?.agentId?.fullName ||
+      '—';
 
   const [form, setForm] = useState(() => mapInitialToForm(initialValues));
   const [error, setError] = useState('');
-  const [salesAmountError, setSalesAmountError] = useState('');
   const [toast, setToast] = useState('');
 
   const existingFollowUp = initialValues?.followUp?.callbackAt;
@@ -196,7 +231,6 @@ export default function LeadForm({
   useEffect(() => {
     setForm(mapInitialToForm(initialValues));
     setError('');
-    setSalesAmountError('');
     const parts = splitDateTime(initialValues?.followUp?.callbackAt);
     setScheduleCallback(Boolean(initialValues?.followUp?.callbackAt));
     setCbDate(parts.date);
@@ -241,13 +275,24 @@ export default function LeadForm({
   const { data: closers = [], isLoading: closersLoading } = useQuery({
     queryKey: ['users', 'closer', 'approved'],
     queryFn: () => getUsers({ role: 'closer', status: 'approved' }),
+    enabled: !isCloserPromote,
   });
 
-  const patchMyLeadsCache = (lead, { handedOff }) => {
+  // Closer promote: lock closerId to the logged-in closer
+  useEffect(() => {
+    if (!isCloserPromote || !user?._id) return;
+    setForm((prev) =>
+      String(prev.closerId) === String(user._id)
+        ? prev
+        : { ...prev, closerId: String(user._id) }
+    );
+  }, [isCloserPromote, user?._id]);
+
+  const patchMyLeadsCache = (lead) => {
     queryClient.setQueryData(['myLeads'], (old) => {
       const list = Array.isArray(old) ? old : [];
       if (!lead?._id) return list;
-      if (handedOff || lead.status !== 'with_agent') {
+      if (lead.status && lead.status !== 'with_agent') {
         return list.filter((l) => String(l._id) !== String(lead._id));
       }
       const idx = list.findIndex((l) => String(l._id) === String(lead._id));
@@ -270,50 +315,46 @@ export default function LeadForm({
     queryClient.invalidateQueries({ queryKey: ['assignedLeads'] });
     queryClient.invalidateQueries({ queryKey: ['allLeads'] });
     queryClient.invalidateQueries({ queryKey: ['myCallbacks'] });
+    queryClient.invalidateQueries({ queryKey: ['closerCallbacks'] });
     if (lead?._id) {
       queryClient.invalidateQueries({ queryKey: ['lead', lead._id] });
     }
   };
 
   const saveMutation = useMutation({
-    mutationFn: async ({
-      payload,
-      handOff,
-      callback,
-      clearCallback,
-      priorFollowUpAt,
-    }) => {
+    mutationFn: async ({ payload, callback, clearCallback }) => {
+      if (isCloserPromote) {
+        const sourceId = payload.sourceCallbackId || form.sourceCallbackId;
+        if (!sourceId) {
+          throw new Error('Missing source callback for Move to Leads.');
+        }
+        const { lead } = await moveCloserCallbackToLead(sourceId, payload);
+        return lead;
+      }
+
       let lead;
       if (leadId) {
         lead = await updateLead(leadId, payload);
-        if (handOff) {
-          lead = await handLeadToCloser(leadId);
-        }
       } else {
         lead = await createLead(payload);
-        if (handOff && lead?._id) {
-          lead = await handLeadToCloser(lead._id);
-        }
       }
 
+      // Linked callback stays on the agent agenda until the 24h window expires
       if (callback?.callbackAt && lead?._id && !clearCallback) {
-        const prevAt = priorFollowUpAt
-          ? new Date(priorFollowUpAt).getTime()
-          : null;
-        const nextAt = new Date(callback.callbackAt).getTime();
-        // Avoid duplicate agenda rows when editing without rescheduling
-        if (prevAt === null || nextAt !== prevAt) {
-          await createCallback({
-            leadId: lead._id,
-            callbackAt: callback.callbackAt,
-            notes: callback.notes || undefined,
-            assignedCloserId:
-              payload.closerId ||
-              lead.closerId?._id ||
-              lead.closerId ||
-              undefined,
-          });
-        }
+        await createCallback({
+          leadId: lead._id,
+          businessName: payload.businessName,
+          personalPhone: payload.personalPhone,
+          businessPhone: payload.businessPhone,
+          businessLink: payload.websiteLink,
+          callbackAt: callback.callbackAt,
+          notes: callback.notes || payload.notes || undefined,
+          assignedCloserId:
+            payload.closerId ||
+            lead.closerId?._id ||
+            lead.closerId ||
+            undefined,
+        });
       }
 
       // Normalize cleared follow-up on the returned lead for optimistic UI
@@ -325,11 +366,10 @@ export default function LeadForm({
     },
     onSuccess: (lead, variables) => {
       setError('');
-      const handedOff = Boolean(variables.handOff);
       const cleared = Boolean(variables.clearCallback);
       const scheduled = Boolean(variables.callback?.callbackAt) && !cleared;
-      const base = handedOff
-        ? 'Lead handed to assigned closer.'
+      const base = isCloserPromote
+        ? 'Lead created from callback.'
         : leadId
           ? 'Lead saved.'
           : 'Lead created.';
@@ -339,79 +379,129 @@ export default function LeadForm({
           ? `${base} Callback scheduled.`
           : base;
       setToast(toastMessage);
-      patchMyLeadsCache(lead, { handedOff });
+      patchMyLeadsCache(lead);
       invalidate(lead);
       onSaved?.(lead, {
-        handedOff,
         scheduledCallback: scheduled,
         clearedCallback: cleared,
         toastMessage,
       });
     },
     onError: (err) => {
-      setError(err?.response?.data?.message || 'Failed to save lead.');
+      setError(
+        err?.response?.data?.message ||
+          err?.message ||
+          'Failed to save lead.'
+      );
     },
   });
 
   const handleChange = (field) => (e) => {
-    if (field === 'salesAmount') {
-      setSalesAmountError('');
-    }
-    setForm((prev) => ({ ...prev, [field]: e.target.value }));
+    const nextValue = e.target.value;
+    setForm((prev) => {
+      const next = { ...prev, [field]: nextValue };
+      if (field === 'paymentOffered' || field === 'paymentReceived') {
+        next.paymentPending = computePendingDisplay(
+          field === 'paymentOffered' ? nextValue : next.paymentOffered,
+          field === 'paymentReceived' ? nextValue : next.paymentReceived
+        );
+      }
+      return next;
+    });
   };
 
   const buildPayload = () => {
-    const salesRaw = form.salesAmount.trim();
-    if (salesRaw === '') {
-      throw new Error('Please enter the sales amount.');
+    const offeredRaw = form.paymentOffered.trim();
+    if (offeredRaw === '') {
+      throw new Error('Please enter the payment offered.');
     }
-    const n = Number(salesRaw);
-    if (Number.isNaN(n) || n < 0) {
-      throw new Error('Sales amount must be a valid non-negative number.');
-    }
-    const salesAmount = n;
-
-    if (!form.closerId) {
-      throw new Error('Assign Closer is required.');
+    const paymentOffered = Number(offeredRaw);
+    if (Number.isNaN(paymentOffered) || paymentOffered < 0) {
+      throw new Error('Payment offered must be a valid non-negative number.');
     }
 
-    return {
+    const receivedRaw = form.paymentReceived.trim() || '0';
+    const paymentReceived = Number(receivedRaw);
+    if (Number.isNaN(paymentReceived) || paymentReceived < 0) {
+      throw new Error('Payment received must be a valid non-negative number.');
+    }
+
+    const resolvedCloserId = isCloserPromote
+      ? String(user?._id || form.closerId || '')
+      : form.closerId;
+    if (!resolvedCloserId) {
+      throw new Error(
+        isCloserPromote
+          ? 'Unable to assign the current closer.'
+          : 'Assign Closer is required.'
+      );
+    }
+
+    const personalPhone = form.personalPhone.trim() || null;
+    const businessPhone = form.businessPhone.trim() || null;
+    const websiteLink = normalizeUrl(form.websiteLink);
+    const servicesOffered = form.servicesOffered.trim();
+    if (!websiteLink) {
+      throw new Error('Website Link is required.');
+    }
+    if (!servicesOffered) {
+      throw new Error('Services Offered is required.');
+    }
+
+    const payload = {
       clientName: form.clientName.trim() || null,
       businessName: form.businessName.trim(),
-      phone: form.phone.trim(),
-      workEmail: form.workEmail.trim() || null,
+      personalPhone,
+      businessPhone,
+      businessEmail: form.businessEmail.trim() || null,
       personalEmail: form.personalEmail.trim() || null,
-      websiteLink: normalizeUrl(form.websiteLink),
+      websiteLink,
       gmbLink: normalizeUrl(form.gmbLink),
-      servicesArea: form.servicesArea.trim() || null,
-      serviceOffered: form.serviceOffered.trim() || null,
-      salesAmount,
+      serviceAreas: form.serviceAreas.trim() || null,
+      servicesOffered,
+      paymentOffered,
+      paymentReceived,
       notes: form.notes.trim() || null,
-      closerId: form.closerId,
+      closerId: resolvedCloserId,
     };
+
+    if (form.sourceCallbackId) {
+      payload.sourceCallbackId = form.sourceCallbackId;
+    }
+
+    return payload;
   };
 
-  const submit = (handOff) => {
+  const submit = () => {
     setError('');
-    setSalesAmountError('');
 
-    if (!form.businessName.trim() || !form.phone.trim()) {
-      setError('Business name and phone are required.');
+    if (!form.businessName.trim()) {
+      setError('Business Name is required.');
       return;
     }
 
-    if (!form.salesAmount.trim()) {
-      setSalesAmountError('Please enter the sales amount.');
+    if (!form.websiteLink.trim()) {
+      setError('Website Link is required.');
       return;
     }
 
-    if (!form.closerId) {
+    if (!form.servicesOffered.trim()) {
+      setError('Services Offered is required.');
+      return;
+    }
+
+    if (!form.paymentOffered.trim()) {
+      setError('Payment Offered is required.');
+      return;
+    }
+
+    if (!isCloserPromote && !form.closerId) {
       setError('Assign Closer is required.');
       return;
     }
 
-    if (handOff && leadId && pipelineStatus !== 'with_agent') {
-      setError('This lead is already with the closer.');
+    if (isCloserPromote && !user?._id && !form.closerId) {
+      setError('Unable to assign the current closer.');
       return;
     }
 
@@ -419,19 +509,14 @@ export default function LeadForm({
     try {
       payload = buildPayload();
     } catch (err) {
-      const message = err.message || 'Invalid form values.';
-      if (message === 'Please enter the sales amount.') {
-        setSalesAmountError(message);
-      } else {
-        setError(message);
-      }
+      setError(err.message || 'Invalid form values.');
       return;
     }
 
     let callback = null;
     let clearCallback = false;
 
-    if (scheduleCallback) {
+    if (!isCloserPromote && scheduleCallback) {
       if (!cbDate) {
         setError('Please pick a callback date.');
         return;
@@ -453,9 +538,10 @@ export default function LeadForm({
       }
       callback = {
         callbackAt: iso,
+        // Empty notes fall back to main Lead Notes on save
         notes: cbNotes.trim() || form.notes.trim() || undefined,
       };
-    } else if (leadId) {
+    } else if (!isCloserPromote && leadId) {
       // Unchecked — clear lead follow-up + cancel linked pending/attended callbacks
       clearCallback = true;
       payload.followUp = null;
@@ -463,19 +549,15 @@ export default function LeadForm({
 
     saveMutation.mutate({
       payload,
-      handOff,
       callback,
       clearCallback,
-      priorFollowUpAt: initialValues?.followUp?.callbackAt || null,
     });
   };
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    submit(false);
+    submit();
   };
-
-  const canHandOff = !leadId || pipelineStatus === 'with_agent';
 
   const busy = saveMutation.isPending;
 
@@ -506,7 +588,9 @@ export default function LeadForm({
               </p>
             ) : (
               <p className="mt-1 text-sm text-zinc-400">
-                Full intake · optional follow-up callback
+                {isCloserPromote
+                  ? 'Move Direct Contact into your Leads tab'
+                  : 'Full intake · optional follow-up callback'}
               </p>
             )}
           </div>
@@ -535,7 +619,9 @@ export default function LeadForm({
             </label>
 
             <label className={labelClass}>
-              <span>Business Name *</span>
+              <span>
+                Business Name <span className="text-[#F25E26]">*</span>
+              </span>
               <input
                 required
                 value={form.businessName}
@@ -546,13 +632,39 @@ export default function LeadForm({
             </label>
 
             <label className={labelClass}>
-              <span>Phone Number *</span>
+              <span>Personal Phone No</span>
               <input
-                required
-                value={form.phone}
-                onChange={handleChange('phone')}
+                value={form.personalPhone}
+                onChange={handleChange('personalPhone')}
                 className={fieldClass}
                 autoComplete="tel"
+                placeholder="+92 …"
+              />
+            </label>
+
+            <label className={labelClass}>
+              <span>Business Phone No</span>
+              <input
+                value={form.businessPhone}
+                onChange={handleChange('businessPhone')}
+                className={fieldClass}
+                autoComplete="tel"
+                placeholder="+92 …"
+              />
+            </label>
+
+            <label className={labelClass}>
+              <span>
+                Website Link <span className="text-[#F25E26]">*</span>
+              </span>
+              <input
+                required
+                type="url"
+                placeholder="https://"
+                value={form.websiteLink}
+                onChange={handleChange('websiteLink')}
+                className={fieldClass}
+                aria-required="true"
               />
             </label>
 
@@ -560,8 +672,8 @@ export default function LeadForm({
               <span>Business Email</span>
               <input
                 type="email"
-                value={form.workEmail}
-                onChange={handleChange('workEmail')}
+                value={form.businessEmail}
+                onChange={handleChange('businessEmail')}
                 className={fieldClass}
                 autoComplete="email"
                 placeholder="ops@business.com"
@@ -580,17 +692,6 @@ export default function LeadForm({
             </label>
 
             <label className={labelClass}>
-              <span>Website Link</span>
-              <input
-                type="url"
-                placeholder="https://"
-                value={form.websiteLink}
-                onChange={handleChange('websiteLink')}
-                className={fieldClass}
-              />
-            </label>
-
-            <label className={labelClass}>
               <span>GMB Link</span>
               <input
                 type="url"
@@ -602,86 +703,144 @@ export default function LeadForm({
             </label>
 
             <label className={labelClass}>
-              <span>Service Area</span>
+              <span>Service Areas</span>
               <input
-                value={form.servicesArea}
-                onChange={handleChange('servicesArea')}
+                value={form.serviceAreas}
+                onChange={handleChange('serviceAreas')}
                 className={fieldClass}
                 placeholder="City, State, or Region"
               />
             </label>
 
             <label className={labelClass}>
-              <span>Services Offered</span>
+              <span>
+                Services Offered <span className="text-[#F25E26]">*</span>
+              </span>
               <input
-                value={form.serviceOffered}
-                onChange={handleChange('serviceOffered')}
+                required
+                value={form.servicesOffered}
+                onChange={handleChange('servicesOffered')}
                 className={fieldClass}
                 placeholder="Website, SEO, Yelp"
+                aria-required="true"
               />
             </label>
 
-            <label className={labelClass}>
-              <span>
-                Sales Amount <span className="text-red-500">*</span>
-              </span>
-              <div className="relative">
-                <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-zinc-500">
-                  $
+            <div className="grid grid-cols-1 gap-4 sm:col-span-2 sm:grid-cols-3">
+              <label className={labelClass}>
+                <span>
+                  Payment Offered <span className="text-[#F25E26]">*</span>
                 </span>
-                <input
-                  required
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  inputMode="decimal"
-                  value={form.salesAmount}
-                  onChange={handleChange('salesAmount')}
-                  className={`${fieldClass} pl-7`}
-                  placeholder="0.00"
-                  aria-required="true"
-                  aria-invalid={Boolean(salesAmountError)}
-                />
-              </div>
-              {salesAmountError ? (
-                <p className="text-xs text-red-400" role="alert">
-                  {salesAmountError}
-                </p>
-              ) : null}
-            </label>
+                <div className="relative">
+                  <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-zinc-500">
+                    $
+                  </span>
+                  <input
+                    required
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    inputMode="decimal"
+                    value={form.paymentOffered}
+                    onChange={handleChange('paymentOffered')}
+                    className={`${fieldClass} pl-7`}
+                    placeholder="0.00"
+                    aria-required="true"
+                  />
+                </div>
+              </label>
+              <label className={labelClass}>
+                <span>
+                  Payment Received <span className="text-[#F25E26]">*</span>
+                </span>
+                <div className="relative">
+                  <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-zinc-500">
+                    $
+                  </span>
+                  <input
+                    required
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    inputMode="decimal"
+                    value={form.paymentReceived}
+                    onChange={handleChange('paymentReceived')}
+                    className={`${fieldClass} pl-7`}
+                    placeholder="0"
+                    aria-required="true"
+                  />
+                </div>
+              </label>
+              <label className={labelClass}>
+                <span>Payment Pending</span>
+                <div className="relative">
+                  <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-zinc-500">
+                    $
+                  </span>
+                  <input
+                    readOnly
+                    type="number"
+                    value={form.paymentPending}
+                    className={`${fieldClass} pl-7`}
+                    tabIndex={-1}
+                    aria-readonly="true"
+                  />
+                </div>
+              </label>
+            </div>
 
             <label className={labelClass}>
-              <span>Agent Name</span>
+              <span>{isCloserPromote ? 'Source' : 'Agent Name'}</span>
               <input
                 readOnly
                 value={agentDisplayName}
                 className={fieldClass}
                 tabIndex={-1}
+                aria-readonly="true"
               />
             </label>
 
-            <label className={labelClass}>
-              <span>
-                Assign Closer <span className="text-red-400">*</span>
-              </span>
-              <select
-                required
-                value={form.closerId}
-                onChange={handleChange('closerId')}
-                disabled={busy || closersLoading || pipelineStatus !== 'with_agent'}
-                className="bg-zinc-900 border border-zinc-700 text-white rounded-lg p-2.5 w-full focus:ring-orange-500 focus:outline-none focus:ring-2 appearance-none cursor-pointer disabled:cursor-not-allowed disabled:opacity-70"
-              >
-                <option value="">
-                  {closersLoading ? 'Loading closers…' : 'Select a closer'}
-                </option>
-                {closers.map((c) => (
-                  <option key={c._id} value={c._id}>
-                    {c.fullName || c.username}
-                    {c.fullName && c.username ? ` (@${c.username})` : ''}
+            {isCloserPromote ? (
+              <label className={labelClass}>
+                <span>Assigned Closer</span>
+                <input
+                  readOnly
+                  value={
+                    user?.fullName?.trim() ||
+                    user?.username ||
+                    'Current closer'
+                  }
+                  className={fieldClass}
+                  tabIndex={-1}
+                  aria-readonly="true"
+                />
+              </label>
+            ) : (
+              <label className={labelClass}>
+                <span>
+                  Assign Closer <span className="text-[#F25E26]">*</span>
+                </span>
+                <select
+                  required
+                  value={form.closerId}
+                  onChange={handleChange('closerId')}
+                  disabled={
+                    busy || closersLoading || pipelineStatus !== 'with_agent'
+                  }
+                  className="bg-zinc-900 border border-zinc-700 text-white rounded-lg p-2.5 w-full focus:ring-orange-500 focus:outline-none focus:ring-2 appearance-none cursor-pointer disabled:cursor-not-allowed disabled:opacity-70"
+                >
+                  <option value="">
+                    {closersLoading ? 'Loading closers…' : 'Select a closer'}
                   </option>
-                ))}
-              </select>
-            </label>
+                  {closers.map((c) => (
+                    <option key={c._id} value={c._id}>
+                      {c.fullName || c.username}
+                      {c.fullName && c.username ? ` (@${c.username})` : ''}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
 
             <label className={`${labelClass} sm:col-span-2`}>
               <span>Notes</span>
@@ -695,143 +854,154 @@ export default function LeadForm({
             </label>
           </div>
 
-          {/* Optional callback scheduler */}
-          <div className="rounded-xl border border-zinc-800 bg-zinc-950/40">
-            <label className="flex cursor-pointer items-start gap-3 px-4 py-3.5">
-              <input
-                type="checkbox"
-                checked={scheduleCallback}
-                onChange={(e) => {
-                  const on = e.target.checked;
-                  setScheduleCallback(on);
-                  if (on && !cbNotes.trim() && form.notes.trim()) {
-                    setCbNotes(form.notes);
-                  }
-                }}
-                className="mt-1 h-4 w-4 rounded border-zinc-600 bg-zinc-900 text-orange-600 focus:ring-orange-500/40"
-              />
-              <span>
-                <span className="block text-sm font-semibold text-zinc-100">
-                  Schedule a Callback
+          {/* Optional callback scheduler — agent intake only */}
+          {!isCloserPromote ? (
+            <div className="rounded-xl border border-zinc-800 bg-zinc-950/40">
+              <label className="flex cursor-pointer items-start gap-3 px-4 py-3.5">
+                <input
+                  type="checkbox"
+                  checked={scheduleCallback}
+                  onChange={(e) => {
+                    const on = e.target.checked;
+                    setScheduleCallback(on);
+                    if (on && !cbNotes.trim() && form.notes.trim()) {
+                      setCbNotes(form.notes);
+                    }
+                  }}
+                  className="mt-1 h-4 w-4 rounded border-zinc-600 bg-zinc-900 text-[#F25E26] focus:ring-[#F25E26]/40"
+                />
+                <span>
+                  <span className="block text-sm font-semibold text-zinc-100">
+                    Schedule a Callback
+                  </span>
+                  <span className="mt-0.5 block text-xs text-zinc-500">
+                    Syncs to My Callbacks, My Leads Follow-up, and the assigned
+                    Closer&apos;s agenda
+                  </span>
                 </span>
-                <span className="mt-0.5 block text-xs text-zinc-500">
-                  Set a follow-up callback for this lead — syncs to My Callbacks
-                </span>
-              </span>
-            </label>
+              </label>
 
-            {scheduleCallback ? (
-              <div className="space-y-4 border-t border-zinc-800 px-4 py-4">
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                  <label className={labelClass}>
-                    <span>Callback Date</span>
-                    <input
-                      required={scheduleCallback}
-                      type="date"
-                      value={cbDate}
-                      onChange={(e) => setCbDate(e.target.value)}
-                      className={fieldClass}
-                    />
-                  </label>
+              {scheduleCallback ? (
+                <div className="space-y-4 border-t border-zinc-800 px-4 py-4">
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                    <label className={labelClass}>
+                      <span>
+                        Callback Date{' '}
+                        <span className="text-[#F25E26]">*</span>
+                      </span>
+                      <input
+                        required={scheduleCallback}
+                        type="date"
+                        value={cbDate}
+                        onChange={(e) => setCbDate(e.target.value)}
+                        className={fieldClass}
+                        aria-required="true"
+                      />
+                    </label>
 
-                  <div className="space-y-1.5">
-                    <p className="text-sm font-medium text-zinc-300">
-                      Callback Time (PKT)
-                    </p>
-                    <div className="grid grid-cols-3 gap-2">
-                      <label className="block space-y-1">
-                        <span className="text-[11px] uppercase tracking-wide text-zinc-500">
-                          Hour
-                        </span>
-                        <input
-                          type="number"
-                          inputMode="numeric"
-                          min={1}
-                          max={12}
-                          placeholder="HH"
-                          value={cbHour}
-                          onChange={(e) =>
-                            setCbHour(digitsOnly(e.target.value, 2))
-                          }
-                          onBlur={() =>
-                            setCbHour(
-                              clampOnBlur(cbHour, 1, 12, { padTo: 2 })
-                            )
-                          }
-                          className={numInputClass}
-                        />
-                      </label>
-                      <label className="block space-y-1">
-                        <span className="text-[11px] uppercase tracking-wide text-zinc-500">
-                          Minute
-                        </span>
-                        <input
-                          type="number"
-                          inputMode="numeric"
-                          min={0}
-                          max={59}
-                          placeholder="MM"
-                          value={cbMinute}
-                          onChange={(e) =>
-                            setCbMinute(digitsOnly(e.target.value, 2))
-                          }
-                          onBlur={() =>
-                            setCbMinute(
-                              clampOnBlur(cbMinute, 0, 59, { padTo: 2 })
-                            )
-                          }
-                          className={numInputClass}
-                        />
-                      </label>
-                      <div className="space-y-1">
-                        <span className="text-[11px] uppercase tracking-wide text-zinc-500">
-                          Period
-                        </span>
-                        <div className="flex h-[42px] overflow-hidden rounded-lg border border-zinc-700/80 bg-zinc-950 p-0.5">
-                          {['AM', 'PM'].map((p) => {
-                            const active = cbPeriod === p;
-                            return (
-                              <button
-                                key={p}
-                                type="button"
-                                onClick={() => setCbPeriod(p)}
-                                className={`flex-1 rounded-md text-xs font-semibold transition ${
-                                  active
-                                    ? 'bg-orange-600 text-white shadow-sm'
-                                    : 'text-zinc-400 hover:text-zinc-200'
-                                }`}
-                              >
-                                {p}
-                              </button>
-                            );
-                          })}
+                    <div className="space-y-1.5">
+                      <p className="text-sm font-medium text-zinc-300">
+                        Callback Time (PKT){' '}
+                        <span className="text-[#F25E26]">*</span>
+                      </p>
+                      <div className="grid grid-cols-3 gap-2">
+                        <label className="block space-y-1">
+                          <span className="text-[11px] uppercase tracking-wide text-zinc-500">
+                            Hour
+                          </span>
+                          <input
+                            type="number"
+                            inputMode="numeric"
+                            min={1}
+                            max={12}
+                            placeholder="HH"
+                            value={cbHour}
+                            onChange={(e) =>
+                              setCbHour(digitsOnly(e.target.value, 2))
+                            }
+                            onBlur={() =>
+                              setCbHour(
+                                clampOnBlur(cbHour, 1, 12, { padTo: 2 })
+                              )
+                            }
+                            className={numInputClass}
+                            required={scheduleCallback}
+                          />
+                        </label>
+                        <label className="block space-y-1">
+                          <span className="text-[11px] uppercase tracking-wide text-zinc-500">
+                            Minute
+                          </span>
+                          <input
+                            type="number"
+                            inputMode="numeric"
+                            min={0}
+                            max={59}
+                            placeholder="MM"
+                            value={cbMinute}
+                            onChange={(e) =>
+                              setCbMinute(digitsOnly(e.target.value, 2))
+                            }
+                            onBlur={() =>
+                              setCbMinute(
+                                clampOnBlur(cbMinute, 0, 59, { padTo: 2 })
+                              )
+                            }
+                            className={numInputClass}
+                            required={scheduleCallback}
+                          />
+                        </label>
+                        <div className="space-y-1">
+                          <span className="text-[11px] uppercase tracking-wide text-zinc-500">
+                            Period
+                          </span>
+                          <div className="flex h-[42px] overflow-hidden rounded-lg border border-zinc-700/80 bg-zinc-950 p-0.5">
+                            {['AM', 'PM'].map((p) => {
+                              const active = cbPeriod === p;
+                              return (
+                                <button
+                                  key={p}
+                                  type="button"
+                                  onClick={() => setCbPeriod(p)}
+                                  className={`flex-1 rounded-md text-xs font-semibold transition ${
+                                    active
+                                      ? 'bg-[#F25E26] text-white shadow-sm'
+                                      : 'text-zinc-400 hover:text-zinc-200'
+                                  }`}
+                                >
+                                  {p}
+                                </button>
+                              );
+                            })}
+                          </div>
                         </div>
                       </div>
+                      {previewLabel ? (
+                        <p className="pt-1 text-xs text-zinc-500">
+                          Scheduled for{' '}
+                          <span className="font-medium text-zinc-300">
+                            {previewLabel}
+                          </span>{' '}
+                          (PKT)
+                        </p>
+                      ) : null}
                     </div>
-                    {previewLabel ? (
-                      <p className="pt-1 text-xs text-zinc-500">
-                        Scheduled for{' '}
-                        <span className="font-medium text-zinc-300">
-                          {previewLabel}
-                        </span>
-                      </p>
-                    ) : null}
-                  </div>
 
-                  <label className={`${labelClass} sm:col-span-2`}>
-                    <span>Callback Notes</span>
-                    <textarea
-                      rows={2}
-                      value={cbNotes}
-                      onChange={(e) => setCbNotes(e.target.value)}
-                      placeholder="Follow-up reason (defaults from lead notes)"
-                      className={`${fieldClass} resize-y`}
-                    />
-                  </label>
+                    <label className={`${labelClass} sm:col-span-2`}>
+                      <span>Callback Notes</span>
+                      <textarea
+                        rows={2}
+                        value={cbNotes}
+                        onChange={(e) => setCbNotes(e.target.value)}
+                        placeholder="Optional — defaults to the Lead Notes above"
+                        className={`${fieldClass} resize-y`}
+                      />
+                    </label>
+                  </div>
                 </div>
-              </div>
-            ) : null}
-          </div>
+              ) : null}
+            </div>
+          ) : null}
 
           {error ? (
             <p role="alert" className="text-sm text-red-300">
@@ -840,22 +1010,12 @@ export default function LeadForm({
           ) : null}
 
           <div className="flex flex-wrap justify-end gap-2 border-t border-zinc-800 pt-4">
-            {canHandOff ? (
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => submit(true)}
-                className="rounded-xl border border-orange-500/40 bg-orange-600/20 px-4 py-2 text-sm font-semibold text-orange-200 hover:bg-orange-600/35 disabled:opacity-60"
-              >
-                {busy ? 'Sending…' : 'Hand to Closer'}
-              </button>
-            ) : null}
             <button
               type="submit"
               disabled={busy}
-              className="rounded-xl bg-orange-600 px-4 py-2 text-sm font-semibold text-white shadow-lg shadow-orange-950/30 hover:bg-orange-500 disabled:opacity-60"
+              className="rounded-xl bg-flash-primary px-5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-flash-primary/25 transition hover:brightness-110 disabled:opacity-60"
             >
-              {busy ? 'Saving…' : leadId ? 'Save Lead' : 'Create Lead'}
+              {busy ? 'Saving…' : 'Save Lead'}
             </button>
           </div>
         </form>

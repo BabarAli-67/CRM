@@ -66,8 +66,8 @@ export const requestExtend = asyncHandler(async (req, res) => {
 });
 
 export const getHistory = asyncHandler(async (req, res) => {
-  const { month } = req.query;
-  const records = await getMyHistory(req.user._id, { month });
+  const { month, from, to } = req.query;
+  const records = await getMyHistory(req.user._id, { month, from, to });
 
   res
     .status(200)

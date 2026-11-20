@@ -26,7 +26,6 @@ const daysInMonth = (year, month) => {
   return new Date(y, m, 0).getDate();
 };
 
-/** Digits only; empty string allowed while typing. */
 const digitsOnly = (raw, maxLen) => {
   const d = String(raw || '').replace(/\D/g, '');
   return maxLen ? d.slice(0, maxLen) : d;
@@ -108,7 +107,6 @@ const toIsoTimestamp = ({ day, month, year, hour, minute, period }) => {
 
   const local = new Date(y, Number(month) - 1, d, h, mi, 0, 0);
   if (Number.isNaN(local.getTime())) return null;
-  // Reject overflow (e.g. Feb 31 → Mar 3)
   if (
     local.getFullYear() !== y ||
     local.getMonth() !== Number(month) - 1 ||
@@ -127,19 +125,20 @@ const resolveCloserId = (ref) => {
 };
 
 const fieldClass =
-  'w-full rounded-lg border border-zinc-700/80 bg-zinc-950 px-3 py-2.5 text-sm text-zinc-100 outline-none transition focus:border-orange-500/50 focus:ring-2 focus:ring-orange-500/20';
+  'w-full rounded-lg border border-white/15 bg-[#0A0A0A] px-3 py-2.5 text-sm text-white outline-none transition focus:border-[#F25E26]/50 focus:ring-2 focus:ring-[#F25E26]/20';
 
 const closerSelectClass =
-  'bg-zinc-900 border border-zinc-700 text-white rounded-lg p-2.5 w-full focus:ring-orange-500 focus:outline-none focus:ring-2 appearance-none cursor-pointer';
+  'w-full cursor-pointer appearance-none rounded-lg border border-white/15 bg-[#0A0A0A] p-2.5 text-white outline-none focus:ring-2 focus:ring-[#F25E26]';
 
 const selectClass = `${fieldClass} appearance-none cursor-pointer`;
 
 const numInputClass =
-  'w-full rounded-lg border border-zinc-700 bg-zinc-900 py-2 text-center text-sm text-white outline-none transition focus:border-orange-500/50 focus:ring-2 focus:ring-orange-500/20 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none';
+  'w-full rounded-lg border border-white/15 bg-[#0A0A0A] py-2 text-center text-sm text-white outline-none transition focus:border-[#F25E26]/50 focus:ring-2 focus:ring-[#F25E26]/20 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none';
 
 /**
- * Sales-agent add / edit callback modal (standalone contact + PKT date/time).
- * Does not use closer callback APIs.
+ * Sales-agent add / edit callback modal.
+ * Fields: Business Name*, Personal Phone, Business Phone, Website*,
+ * Assign Closer*, Date*, Time* (PKT), Notes.
  */
 export default function CallbackForm({
   open,
@@ -147,10 +146,11 @@ export default function CallbackForm({
   onSubmit,
   isSubmitting = false,
   initialValues = null,
-  title = 'Schedule Callback',
+  title = 'Schedule a Callback',
 }) {
   const [businessName, setBusinessName] = useState('');
-  const [phone, setPhone] = useState('');
+  const [personalPhone, setPersonalPhone] = useState('');
+  const [businessPhone, setBusinessPhone] = useState('');
   const [businessLink, setBusinessLink] = useState('');
   const [notes, setNotes] = useState('');
   const [assignedCloserId, setAssignedCloserId] = useState('');
@@ -174,7 +174,8 @@ export default function CallbackForm({
     setError('');
     const parts = splitDateTime(initialValues?.callbackAt);
     setBusinessName(initialValues?.businessName || '');
-    setPhone(initialValues?.phone || '');
+    setPersonalPhone(initialValues?.personalPhone || '');
+    setBusinessPhone(initialValues?.businessPhone || '');
     setBusinessLink(
       initialValues?.businessLink || initialValues?.websiteLink || ''
     );
@@ -194,7 +195,6 @@ export default function CallbackForm({
     setPeriod(parts.period);
   }, [open, initialValues]);
 
-  // Clamp day when month/year shrinks the calendar
   useEffect(() => {
     const max = daysInMonth(year, month);
     if (day !== '' && Number(day) > max) {
@@ -227,10 +227,9 @@ export default function CallbackForm({
     setError('');
 
     const name = businessName.trim();
-    const phoneVal = phone.trim();
     let link = businessLink.trim();
-    if (!name || !phoneVal || !link) {
-      setError('Please fill all required fields.');
+    if (!name || !link) {
+      setError('Business Name and Website Link are required.');
       return;
     }
     if (!assignedCloserId) {
@@ -264,7 +263,8 @@ export default function CallbackForm({
     try {
       await onSubmit({
         businessName: name,
-        phone: phoneVal,
+        personalPhone: personalPhone.trim() || null,
+        businessPhone: businessPhone.trim() || null,
         businessLink: link,
         callbackAt: iso,
         notes: notes.trim() || undefined,
@@ -280,7 +280,7 @@ export default function CallbackForm({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/75 p-4 backdrop-blur-sm sm:p-6">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm sm:p-6">
       <button
         type="button"
         aria-label="Close form backdrop"
@@ -291,10 +291,9 @@ export default function CallbackForm({
         role="dialog"
         aria-modal="true"
         aria-labelledby="callback-form-title"
-        className="relative z-10 flex max-h-[85vh] w-full max-w-md flex-col overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900 shadow-2xl shadow-black/50 my-8 sm:my-12"
+        className="relative z-10 my-8 flex max-h-[85vh] w-full max-w-md flex-col overflow-hidden rounded-2xl border border-[#222222] bg-[#111111] shadow-2xl shadow-black/50 sm:my-12"
       >
-        {/* Sticky header */}
-        <div className="flex shrink-0 items-center justify-between border-b border-zinc-800 px-5 py-4">
+        <div className="flex shrink-0 items-center justify-between border-b border-[#222222] px-5 py-4">
           <h2
             id="callback-form-title"
             className="font-display text-lg font-semibold text-white"
@@ -305,7 +304,7 @@ export default function CallbackForm({
             type="button"
             onClick={onClose}
             aria-label="Close"
-            className="rounded-lg px-2 py-1 text-sm text-zinc-400 transition hover:bg-zinc-800 hover:text-white"
+            className="rounded-lg px-2 py-1 text-sm text-[#A3A3A3] transition hover:bg-white/5 hover:text-white"
           >
             ✕
           </button>
@@ -316,11 +315,10 @@ export default function CallbackForm({
           className="flex min-h-0 flex-1 flex-col"
           noValidate
         >
-          {/* Scrollable body */}
           <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain px-5 py-5 pr-3">
-            <label className="block space-y-1.5 text-sm text-zinc-300">
-              <span className="font-medium">
-                Business Name <span className="text-red-400">*</span>
+            <label className="block space-y-1.5 text-sm text-[#A3A3A3]">
+              <span className="font-medium text-white">
+                Business Name <span className="text-[#F25E26]">*</span>
               </span>
               <input
                 required
@@ -332,23 +330,29 @@ export default function CallbackForm({
               />
             </label>
 
-            <label className="block space-y-1.5 text-sm text-zinc-300">
-              <span className="font-medium">
-                Phone Number <span className="text-red-400">*</span>
-              </span>
+            <label className="block space-y-1.5 text-sm text-[#A3A3A3]">
+              <span className="font-medium text-white">Personal Phone No</span>
               <input
-                required
-                value={phone}
-                onChange={(e) => setPhone(e.target.value)}
+                value={personalPhone}
+                onChange={(e) => setPersonalPhone(e.target.value)}
                 className={fieldClass}
                 placeholder="+92 …"
-                aria-required="true"
               />
             </label>
 
-            <label className="block space-y-1.5 text-sm text-zinc-300">
-              <span className="font-medium">
-                Website Link <span className="text-red-400">*</span>
+            <label className="block space-y-1.5 text-sm text-[#A3A3A3]">
+              <span className="font-medium text-white">Business Phone No</span>
+              <input
+                value={businessPhone}
+                onChange={(e) => setBusinessPhone(e.target.value)}
+                className={fieldClass}
+                placeholder="+92 …"
+              />
+            </label>
+
+            <label className="block space-y-1.5 text-sm text-[#A3A3A3]">
+              <span className="font-medium text-white">
+                Website Link <span className="text-[#F25E26]">*</span>
               </span>
               <input
                 required
@@ -361,9 +365,9 @@ export default function CallbackForm({
               />
             </label>
 
-            <label className="block space-y-1.5 text-sm text-zinc-300">
-              <span className="font-medium">
-                Assign Closer <span className="text-red-400">*</span>
+            <label className="block space-y-1.5 text-sm text-[#A3A3A3]">
+              <span className="font-medium text-white">
+                Assign Closer <span className="text-[#F25E26]">*</span>
               </span>
               <select
                 required
@@ -386,10 +390,12 @@ export default function CallbackForm({
             </label>
 
             <div className="space-y-1.5">
-              <p className="text-sm font-medium text-zinc-300">Date</p>
+              <p className="text-sm font-medium text-white">
+                Date <span className="text-[#F25E26]">*</span>
+              </p>
               <div className="grid grid-cols-3 gap-2">
                 <label className="block space-y-1">
-                  <span className="text-[11px] uppercase tracking-wide text-zinc-500">
+                  <span className="text-[11px] uppercase tracking-wide text-[#A3A3A3]">
                     Day
                   </span>
                   <input
@@ -411,7 +417,7 @@ export default function CallbackForm({
                   />
                 </label>
                 <label className="block space-y-1">
-                  <span className="text-[11px] uppercase tracking-wide text-zinc-500">
+                  <span className="text-[11px] uppercase tracking-wide text-[#A3A3A3]">
                     Month
                   </span>
                   <select
@@ -427,7 +433,7 @@ export default function CallbackForm({
                   </select>
                 </label>
                 <label className="block space-y-1">
-                  <span className="text-[11px] uppercase tracking-wide text-zinc-500">
+                  <span className="text-[11px] uppercase tracking-wide text-[#A3A3A3]">
                     Year
                   </span>
                   <input
@@ -448,10 +454,15 @@ export default function CallbackForm({
             </div>
 
             <div className="space-y-1.5">
-              <p className="text-sm font-medium text-zinc-300">Time</p>
+              <p className="text-sm font-medium text-white">
+                Time <span className="text-[#F25E26]">*</span>
+                <span className="ml-1 text-xs font-normal text-[#A3A3A3]">
+                  (PKT)
+                </span>
+              </p>
               <div className="grid grid-cols-3 gap-2">
                 <label className="block space-y-1">
-                  <span className="text-[11px] uppercase tracking-wide text-zinc-500">
+                  <span className="text-[11px] uppercase tracking-wide text-[#A3A3A3]">
                     Hour
                   </span>
                   <input
@@ -469,7 +480,7 @@ export default function CallbackForm({
                   />
                 </label>
                 <label className="block space-y-1">
-                  <span className="text-[11px] uppercase tracking-wide text-zinc-500">
+                  <span className="text-[11px] uppercase tracking-wide text-[#A3A3A3]">
                     Minute
                   </span>
                   <input
@@ -487,10 +498,10 @@ export default function CallbackForm({
                   />
                 </label>
                 <div className="space-y-1">
-                  <span className="text-[11px] uppercase tracking-wide text-zinc-500">
+                  <span className="text-[11px] uppercase tracking-wide text-[#A3A3A3]">
                     Period
                   </span>
-                  <div className="flex h-[42px] overflow-hidden rounded-lg border border-zinc-700/80 bg-zinc-950 p-0.5">
+                  <div className="flex h-[42px] overflow-hidden rounded-lg border border-white/15 bg-[#0A0A0A] p-0.5">
                     {['AM', 'PM'].map((p) => {
                       const active = period === p;
                       return (
@@ -500,8 +511,8 @@ export default function CallbackForm({
                           onClick={() => setPeriod(p)}
                           className={`flex-1 rounded-md text-xs font-semibold transition ${
                             active
-                              ? 'bg-orange-600 text-white shadow-sm'
-                              : 'text-zinc-400 hover:text-zinc-200'
+                              ? 'bg-[#F25E26] text-white shadow-sm'
+                              : 'text-[#A3A3A3] hover:text-white'
                           }`}
                         >
                           {p}
@@ -512,18 +523,16 @@ export default function CallbackForm({
                 </div>
               </div>
               {previewLabel ? (
-                <p className="pt-1 text-xs text-zinc-500">
+                <p className="pt-1 text-xs text-[#A3A3A3]">
                   Scheduled for{' '}
-                  <span className="font-medium text-zinc-300">
-                    {previewLabel}
-                  </span>{' '}
+                  <span className="font-medium text-white">{previewLabel}</span>{' '}
                   (PKT)
                 </p>
               ) : null}
             </div>
 
-            <label className="block space-y-1.5 text-sm text-zinc-300">
-              <span className="font-medium">Notes</span>
+            <label className="block space-y-1.5 text-sm text-[#A3A3A3]">
+              <span className="font-medium text-white">Notes</span>
               <textarea
                 rows={3}
                 value={notes}
@@ -534,28 +543,27 @@ export default function CallbackForm({
             </label>
 
             {error ? (
-              <p role="alert" className="text-sm text-red-300">
+              <p role="alert" className="text-sm text-[#F25E26]">
                 {error}
               </p>
             ) : null}
           </div>
 
-          {/* Pinned footer */}
-          <div className="flex shrink-0 flex-wrap justify-end gap-2 border-t border-zinc-800 bg-zinc-900 px-5 py-4">
+          <div className="flex shrink-0 flex-wrap justify-end gap-2 border-t border-[#222222] bg-[#111111] px-5 py-4">
             <button
               type="button"
               onClick={onClose}
               disabled={isSubmitting}
-              className="rounded-xl border border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-300 transition hover:bg-zinc-800 disabled:opacity-60"
+              className="rounded-xl border border-white/15 px-4 py-2 text-sm font-medium text-white transition hover:bg-white/5 disabled:opacity-60"
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={isSubmitting}
-              className="rounded-xl bg-orange-600 px-4 py-2 text-sm font-semibold text-white shadow-lg shadow-orange-950/30 transition hover:bg-orange-500 disabled:cursor-not-allowed disabled:opacity-60"
+              className="rounded-xl bg-[#F25E26] px-4 py-2 text-sm font-semibold text-white shadow-lg shadow-[#F25E26]/25 transition hover:bg-[#ff6a33] disabled:cursor-not-allowed disabled:opacity-60"
             >
-              {isSubmitting ? 'Saving…' : 'Save Callback'}
+              {isSubmitting ? 'Scheduling…' : 'Schedule a Callback'}
             </button>
           </div>
         </form>

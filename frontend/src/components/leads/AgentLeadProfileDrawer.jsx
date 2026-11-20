@@ -82,10 +82,12 @@ export default function AgentLeadProfileDrawer({
 
   const businessName = valueOrEmpty(lead?.businessName);
   const clientName = valueOrEmpty(lead?.clientName);
-  const phone = valueOrEmpty(lead?.phone);
-  const email = valueOrEmpty(lead?.workEmail);
-  const serviceArea = valueOrEmpty(lead?.servicesArea);
-  const services = valueOrEmpty(lead?.serviceOffered);
+  const phone = valueOrEmpty(
+    lead?.businessPhone || lead?.personalPhone
+  );
+  const email = valueOrEmpty(lead?.businessEmail);
+  const serviceArea = valueOrEmpty(lead?.serviceAreas);
+  const services = valueOrEmpty(lead?.servicesOffered);
   const website = externalHref(lead?.websiteLink);
   const gmb = externalHref(lead?.gmbLink);
   const notes = lead?.notes?.trim();
@@ -165,7 +167,7 @@ export default function AgentLeadProfileDrawer({
                     <FieldLabel>Phone</FieldLabel>
                     {phone ? (
                       <a
-                        href={`tel:${String(lead.phone).replace(/\s+/g, '')}`}
+                        href={`tel:${String(phone).replace(/\s+/g, '')}`}
                         className="mt-1 inline-flex items-center gap-1.5 text-sm font-medium text-orange-300 transition hover:text-orange-200"
                       >
                         <Phone className="h-3.5 w-3.5 shrink-0" aria-hidden />
@@ -185,7 +187,7 @@ export default function AgentLeadProfileDrawer({
                   <FieldLabel>Business Email</FieldLabel>
                   {email ? (
                     <a
-                      href={`mailto:${lead.workEmail}`}
+                      href={`mailto:${lead.businessEmail}`}
                       className="mt-1 inline-flex max-w-full items-center gap-1.5 text-sm font-medium text-orange-300 transition hover:text-orange-200"
                     >
                       <Mail className="h-3.5 w-3.5 shrink-0" aria-hidden />

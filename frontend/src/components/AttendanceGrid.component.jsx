@@ -38,12 +38,12 @@ const STATUS_OPTIONS = [
 ];
 
 const STATUS_BADGE = {
-  present: 'bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-500/30',
-  late: 'bg-amber-500/15 text-amber-300 ring-1 ring-amber-500/30',
-  pending_approval: 'bg-[#FF4B26]/15 text-[#FF8A6A] ring-1 ring-[#FF4B26]/40',
-  absent: 'bg-red-500/15 text-red-300 ring-1 ring-red-500/30',
-  auto_absent: 'bg-red-500/15 text-red-300 ring-1 ring-red-500/30',
-  weekend_off: 'bg-zinc-500/15 text-zinc-300 ring-1 ring-zinc-500/30',
+  present: 'bg-[#F25E26]/15 text-white ring-1 ring-[#F25E26]/40',
+  late: 'bg-white/5 text-white ring-1 ring-white/20',
+  pending_approval: 'bg-transparent text-[#F25E26] ring-1 ring-[#F25E26]/50',
+  absent: 'bg-white/5 text-[#A3A3A3] ring-1 ring-white/15',
+  auto_absent: 'bg-white/5 text-[#A3A3A3] ring-1 ring-white/15',
+  weekend_off: 'bg-white/5 text-[#A3A3A3] ring-1 ring-white/10',
 };
 
 const STATUS_LABEL = {
@@ -305,11 +305,11 @@ export default function AttendanceGrid({ readOnly = false }) {
                     </td>
                     <td className="px-3 py-3 whitespace-nowrap">
                       {lateLabel ? (
-                        <span className="inline-flex rounded-full bg-amber-500/15 px-2.5 py-0.5 text-xs font-semibold text-amber-300 ring-1 ring-amber-500/30">
+                        <span className="inline-flex rounded-full border border-white/15 bg-white/5 px-2.5 py-0.5 text-xs font-semibold text-white">
                           {lateLabel}
                         </span>
                       ) : (
-                        <span className="text-zinc-500">—</span>
+                        <span className="text-[#A3A3A3]">—</span>
                       )}
                     </td>
                     {!readOnly ? (

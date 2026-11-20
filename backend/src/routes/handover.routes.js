@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { protect, restrictTo } from '../middlewares/auth.middleware.js';
 import { blockReadOnlyAdmin } from '../middlewares/permission.middleware.js';
 import monthlyReportUpload from '../middlewares/monthlyReportUpload.middleware.js';
+import clientCommentUpload from '../middlewares/clientCommentUpload.middleware.js';
 import {
   getHandoverQueue,
   getTechPipeline,
@@ -15,6 +16,9 @@ import {
   markRetentionDone,
   setServiceScope,
   saveClientPortfolio,
+  addClientUpsell,
+  addClientComment,
+  serveClientCommentAttachment,
   saveLivePortfolio,
   uploadMonthlyReport,
   serveMonthlyReport,
@@ -94,6 +98,42 @@ router.patch(
   '/:id/portfolio',
   restrictTo('cst_manager'),
   saveClientPortfolio
+);
+
+router.post(
+  '/:id/upsell',
+  restrictTo('cst_manager'),
+  addClientUpsell
+);
+
+router.post(
+  '/:id/comments',
+  restrictTo('cst_manager', 'super_admin'),
+  (req, res, next) => {
+    clientCommentUpload.array('files', 5)(req, res, (err) => {
+      if (err) {
+        return res.status(400).json({
+          success: false,
+          message: err.message || 'Failed to upload attachment',
+        });
+      }
+      return next();
+    });
+  },
+  addClientComment
+);
+
+router.get(
+  '/:id/comments/:commentId/files/:filename',
+  restrictTo(
+    'cst_manager',
+    'tech_team',
+    'closer',
+    'sales_agent',
+    'super_admin',
+    'admin'
+  ),
+  serveClientCommentAttachment
 );
 
 router.patch(

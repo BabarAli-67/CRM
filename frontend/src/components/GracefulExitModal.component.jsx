@@ -137,33 +137,33 @@ export default function GracefulExitModal() {
     '';
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
       <div
         role="dialog"
         aria-modal="true"
         aria-labelledby="graceful-exit-title"
-        className="w-full max-w-md rounded-lg bg-white p-6 shadow-xl"
+        className="w-full max-w-md rounded-2xl border border-white/15 border-l-4 border-l-[#F25E26] bg-[#111111] p-6 shadow-2xl"
       >
         <h2
           id="graceful-exit-title"
-          className="text-lg font-semibold text-slate-900"
+          className="text-lg font-semibold text-white"
         >
           Shift ending
         </h2>
-        <p className="mt-2 text-sm text-slate-600">
+        <p className="mt-2 text-sm text-[#A3A3A3]">
           Your shift window is closing. Log out now, or extend once by 30
           minutes. Auto checkout runs when the timer hits zero.
         </p>
 
-        <p className="mt-6 text-center font-mono text-4xl font-semibold tracking-widest text-slate-900">
+        <p className="mt-6 text-center font-mono text-4xl font-semibold tracking-widest text-white">
           {formatCountdown(remainingMs)}
         </p>
-        <p className="mt-1 text-center text-xs text-slate-500">
+        <p className="mt-1 text-center text-xs text-[#A3A3A3]">
           Time remaining until forced checkout
         </p>
 
         {actionError ? (
-          <p className="mt-3 text-sm text-red-600">{actionError}</p>
+          <p className="mt-3 text-sm text-[#F25E26]">{actionError}</p>
         ) : null}
 
         <div className="mt-6 flex flex-col gap-2 sm:flex-row sm:justify-end">
@@ -172,7 +172,7 @@ export default function GracefulExitModal() {
               type="button"
               onClick={() => extendMutation.mutate()}
               disabled={extendMutation.isPending || logOutNowMutation.isPending}
-              className="rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-800 hover:bg-slate-50 disabled:opacity-60"
+              className="rounded-xl border border-white/15 px-4 py-2 text-sm font-semibold text-white hover:bg-white/5 disabled:opacity-60"
             >
               {extendMutation.isPending ? 'Extending…' : 'Extend 30 Minutes'}
             </button>
@@ -181,7 +181,7 @@ export default function GracefulExitModal() {
             type="button"
             onClick={() => logOutNowMutation.mutate()}
             disabled={logOutNowMutation.isPending}
-            className="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-60"
+            className="rounded-xl bg-[#F25E26] px-4 py-2 text-sm font-semibold text-white hover:bg-[#ff6a36] disabled:opacity-60"
           >
             {logOutNowMutation.isPending ? 'Logging out…' : 'Log Out Now'}
           </button>

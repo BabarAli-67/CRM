@@ -40,11 +40,7 @@ export default function LeadEditPage() {
               navigate('/dashboard/sales-agent/leads', {
                 replace: true,
                 state: {
-                  toast:
-                    meta?.toastMessage ||
-                    (meta?.handedOff
-                      ? 'Lead handed to assigned closer.'
-                      : 'Lead saved.'),
+                  toast: meta?.toastMessage || 'Lead saved.',
                 },
               });
             }}

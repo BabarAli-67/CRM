@@ -1,11 +1,15 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useState } from 'react';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import LeadDetailModal from '../../components/leads/LeadDetailModal.jsx';
 import LeadTable from '../../components/leads/LeadTable.jsx';
 import CloseSaleModal from '../../components/leads/CloseSaleModal.jsx';
 import MoveToCstModal from '../../components/leads/MoveToCstModal.jsx';
 import CloserScheduleCallbackModal from '../../components/callbacks/CloserScheduleCallbackModal.jsx';
 import CloserShell from '../../components/closer/CloserShell.jsx';
+import CloserTableFilterBar, {
+  pktDateKey,
+} from '../../components/closer/CloserTableFilterBar.jsx';
 import { getCloserTeamAgentCallbacks } from '../../services/callback.service.js';
 import {
   deleteLeadPermanently,
@@ -53,12 +57,16 @@ const isCloserActiveLead = (lead) =>
 const isAwaitingCstHandover = (lead) =>
   !lead?.handover?.cstStatus || lead.handover.cstStatus === 'awaiting_handover';
 
-const TABS = [
-  { id: 'leads', label: 'Leads' },
-  { id: 'closed', label: 'Closed Sales' },
-  { id: 'disqualified', label: 'Disqualified Leads' },
-  { id: 'team', label: 'My Team' },
-];
+const TAB_IDS = new Set(['leads', 'closed', 'disqualified', 'team']);
+
+const resolveTab = (value) => (TAB_IDS.has(value) ? value : 'leads');
+
+const PAGE_TITLE = {
+  leads: 'Leads',
+  closed: 'Closed Sales',
+  disqualified: 'Disqualified Leads',
+  team: 'My Team',
+};
 
 const thClass =
   'px-4 py-3.5 text-left text-xs font-medium uppercase tracking-wide text-zinc-500';
@@ -68,7 +76,22 @@ const rowClass =
 
 export default function AssignedLeadsPage() {
   const queryClient = useQueryClient();
-  const [tab, setTab] = useState('leads');
+  const location = useLocation();
+  const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tab = resolveTab(searchParams.get('tab'));
+  const setTab = (next) => {
+    const id = resolveTab(next);
+    setSearchParams(
+      (prev) => {
+        const nextParams = new URLSearchParams(prev);
+        if (id === 'leads') nextParams.delete('tab');
+        else nextParams.set('tab', id);
+        return nextParams;
+      },
+      { replace: true }
+    );
+  };
   const [detailLead, setDetailLead] = useState(null);
   const [scheduleLead, setScheduleLead] = useState(null);
   const [moveToCstLead, setMoveToCstLead] = useState(null);
@@ -78,6 +101,12 @@ export default function AssignedLeadsPage() {
   const [actionMessage, setActionMessage] = useState('');
   const [toast, setToast] = useState(false);
   const [selectedAgentId, setSelectedAgentId] = useState(null);
+  const [closedBusinessFilter, setClosedBusinessFilter] = useState('');
+  const [closedEmailFilter, setClosedEmailFilter] = useState('');
+  const [closedDateFilter, setClosedDateFilter] = useState('');
+  const [teamBusinessFilter, setTeamBusinessFilter] = useState('');
+  const [teamEmailFilter, setTeamEmailFilter] = useState('');
+  const [teamDateFilter, setTeamDateFilter] = useState('');
 
   const {
     data: leads = [],
@@ -145,6 +174,13 @@ export default function AssignedLeadsPage() {
     }
   }, [tab, teamAgents, selectedAgentId]);
 
+  // Fresh filter state when switching agent chips
+  useEffect(() => {
+    setTeamBusinessFilter('');
+    setTeamEmailFilter('');
+    setTeamDateFilter('');
+  }, [selectedAgentId]);
+
   const {
     data: teamCallbacks = [],
     isLoading: teamCbLoading,
@@ -156,6 +192,19 @@ export default function AssignedLeadsPage() {
     enabled: tab === 'team' && Boolean(selectedAgentId),
     refetchInterval: 30_000,
   });
+
+  const openMoveToCst = async (row) => {
+    setActionError('');
+    setActionMessage('');
+    try {
+      const id = row?._id || row?.id;
+      if (!id) throw new Error('Missing lead id');
+      const full = await getLeadById(id);
+      setMoveToCstLead(full || row);
+    } catch {
+      setMoveToCstLead(row);
+    }
+  };
 
   const openDetail = async (row) => {
     setActionError('');
@@ -218,6 +267,17 @@ export default function AssignedLeadsPage() {
     return () => window.clearTimeout(t);
   }, [toast]);
 
+  // Toast / message from Move to Leads (Direct Contact promote)
+  useEffect(() => {
+    const msg = location.state?.toast;
+    if (!msg) return;
+    setActionMessage(String(msg));
+    navigate(location.pathname + location.search, {
+      replace: true,
+      state: {},
+    });
+  }, [location.state, location.pathname, location.search, navigate]);
+
   const deleteMutation = useMutation({
     mutationFn: (id) => deleteLeadPermanently(id),
     onSuccess: (_data, id) => {
@@ -269,28 +329,104 @@ export default function AssignedLeadsPage() {
   });
 
   // Closed Sales tab: only sales still awaiting CST handoff
-  const awaitingHandover = useMemo(
-    () =>
-      [...closedSales.filter(isAwaitingCstHandover)].sort(
-        (a, b) => new Date(b.closedAt || 0) - new Date(a.closedAt || 0)
-      ),
-    [closedSales]
-  );
+  const awaitingHandover = useMemo(() => {
+    const base = [...closedSales.filter(isAwaitingCstHandover)].sort(
+      (a, b) => new Date(b.closedAt || 0) - new Date(a.closedAt || 0)
+    );
+    const nameQ = closedBusinessFilter.trim().toLowerCase();
+    const emailQ = closedEmailFilter.trim().toLowerCase();
+    const dateQ = closedDateFilter.trim();
+    if (!nameQ && !emailQ && !dateQ) return base;
 
-  const tabCount = (id) => {
-    if (id === 'leads') return leads.length;
-    if (id === 'closed') return awaitingHandover.length;
-    if (id === 'disqualified') return disqualifiedLeads.length;
-    if (id === 'team') return teamAgents.length;
-    return 0;
+    return base.filter((lead) => {
+      if (nameQ) {
+        const name = String(lead.businessName || '').toLowerCase();
+        if (!name.includes(nameQ)) return false;
+      }
+      if (emailQ) {
+        const personal = String(lead.personalEmail || '').toLowerCase();
+        const business = String(lead.businessEmail || '').toLowerCase();
+        if (!personal.includes(emailQ) && !business.includes(emailQ)) {
+          return false;
+        }
+      }
+      if (dateQ && pktDateKey(lead.closedAt) !== dateQ) {
+        return false;
+      }
+      return true;
+    });
+  }, [
+    closedSales,
+    closedBusinessFilter,
+    closedEmailFilter,
+    closedDateFilter,
+  ]);
+
+  const hasClosedFilters =
+    closedBusinessFilter.trim() !== '' ||
+    closedEmailFilter.trim() !== '' ||
+    closedDateFilter.trim() !== '';
+
+  const clearClosedFilters = () => {
+    setClosedBusinessFilter('');
+    setClosedEmailFilter('');
+    setClosedDateFilter('');
   };
 
   const selectedAgent = teamAgents.find(
     (a) => String(a._id) === String(selectedAgentId)
   );
 
+  const filteredTeamCallbacks = useMemo(() => {
+    const nameQ = teamBusinessFilter.trim().toLowerCase();
+    const emailQ = teamEmailFilter.trim().toLowerCase();
+    const dateQ = teamDateFilter.trim();
+    if (!nameQ && !emailQ && !dateQ) return teamCallbacks;
+
+    return teamCallbacks.filter((row) => {
+      if (nameQ) {
+        const name = String(row.businessName || '').toLowerCase();
+        if (!name.includes(nameQ)) return false;
+      }
+      if (emailQ) {
+        const personal = String(row.personalEmail || '').toLowerCase();
+        const business = String(row.businessEmail || '').toLowerCase();
+        const combined = String(row.email || '').toLowerCase();
+        if (
+          !personal.includes(emailQ) &&
+          !business.includes(emailQ) &&
+          !combined.includes(emailQ)
+        ) {
+          return false;
+        }
+      }
+      if (dateQ) {
+        const cbKey = pktDateKey(row.callbackAt);
+        const createdKey = pktDateKey(row.createdAt);
+        if (cbKey !== dateQ && createdKey !== dateQ) return false;
+      }
+      return true;
+    });
+  }, [
+    teamCallbacks,
+    teamBusinessFilter,
+    teamEmailFilter,
+    teamDateFilter,
+  ]);
+
+  const hasTeamFilters =
+    teamBusinessFilter.trim() !== '' ||
+    teamEmailFilter.trim() !== '' ||
+    teamDateFilter.trim() !== '';
+
+  const clearTeamFilters = () => {
+    setTeamBusinessFilter('');
+    setTeamEmailFilter('');
+    setTeamDateFilter('');
+  };
+
   return (
-    <CloserShell title="Leads">
+    <CloserShell title={PAGE_TITLE[tab] || 'Leads'}>
       {toast ? (
         <div
           role="status"
@@ -314,47 +450,6 @@ export default function AssignedLeadsPage() {
       ) : null}
 
       <section className="w-full rounded-2xl border border-zinc-800/80 bg-zinc-900/50 p-6 shadow-xl sm:p-8">
-        <nav
-          className="mb-8 flex flex-wrap gap-2 rounded-2xl border border-zinc-800/80 bg-zinc-950/50 p-1.5"
-          aria-label="Closer lead sections"
-        >
-          {TABS.map((item) => {
-            const active = tab === item.id;
-            const count = tabCount(item.id);
-            return (
-              <button
-                key={item.id}
-                type="button"
-                onClick={() => {
-                  setActionError('');
-                  setActionMessage('');
-                  setTab(item.id);
-                }}
-                className={`relative flex-1 rounded-full px-4 py-2.5 font-display text-sm font-semibold transition sm:flex-none ${
-                  active
-                    ? 'bg-orange-600 text-white shadow-lg shadow-orange-600/25'
-                    : 'text-zinc-400 hover:bg-zinc-800/60 hover:text-white'
-                }`}
-              >
-                <span className="inline-flex items-center justify-center gap-2">
-                  {item.label}
-                  <span
-                    className={`inline-flex min-w-[1.25rem] items-center justify-center rounded-full px-1.5 py-0.5 text-[11px] font-bold tabular-nums ${
-                      active
-                        ? 'bg-white/20 text-white'
-                        : count > 0
-                          ? 'bg-orange-600/20 text-orange-300'
-                          : 'bg-zinc-800 text-zinc-500'
-                    }`}
-                  >
-                    {count}
-                  </span>
-                </span>
-              </button>
-            );
-          })}
-        </nav>
-
         {tab === 'leads' ? (
           <>
             <div className="mb-6">
@@ -403,78 +498,167 @@ export default function AssignedLeadsPage() {
                 {closedErr?.response?.data?.message ||
                   'Failed to load closed sales.'}
               </p>
-            ) : awaitingHandover.length === 0 ? (
-              <p className="py-12 text-center text-sm text-zinc-500">
-                No sales awaiting CST handover.
-              </p>
             ) : (
-              <div className="overflow-x-auto rounded-xl border border-zinc-800/60">
-                <table className="min-w-full text-sm text-zinc-200">
-                  <thead className="border-b border-zinc-800 bg-zinc-950/40">
-                    <tr>
-                      <th className={thClass}>Business</th>
-                      <th className={thClass}>Created By</th>
-                      <th className={thClass}>Payment</th>
-                      <th className={thClass}>Closed</th>
-                      <th className={thClass}>Status</th>
-                      <th className={thClass}>Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {awaitingHandover.map((row) => (
-                        <tr key={row._id} className={rowClass}>
-                          <td className={`${tdClass} font-medium text-white`}>
-                            <span className="inline-flex flex-wrap items-center gap-2">
-                              {row.businessName}
-                              {!row.closerId ? (
-                                <span className="rounded-md bg-zinc-800 px-1.5 py-0.5 text-[10px] font-medium text-zinc-400">
-                                  Agent
-                                </span>
-                              ) : null}
-                            </span>
-                          </td>
-                          <td className={`${tdClass} text-zinc-400`}>
-                            {formatUserRef(row.agentId) || '—'}
-                          </td>
-                          <td className={tdClass}>
-                            {formatPaymentSummary(row.payment)}
-                          </td>
-                          <td
-                            className={`${tdClass} whitespace-nowrap text-zinc-400`}
+              <div className="space-y-3">
+                <CloserTableFilterBar
+                  businessName={closedBusinessFilter}
+                  onBusinessNameChange={setClosedBusinessFilter}
+                  email={closedEmailFilter}
+                  onEmailChange={setClosedEmailFilter}
+                  date={closedDateFilter}
+                  onDateChange={setClosedDateFilter}
+                  onClear={clearClosedFilters}
+                  dateLabel="Date"
+                />
+                {awaitingHandover.length === 0 ? (
+                  <p className="py-12 text-center text-sm text-zinc-500">
+                    {hasClosedFilters
+                      ? 'No closed sales match these filters.'
+                      : 'No sales awaiting CST handover.'}
+                  </p>
+                ) : (
+                  <div className="overflow-x-auto rounded-xl border border-zinc-800/60">
+                    <table className="min-w-full text-sm text-zinc-200">
+                      <thead className="border-b border-zinc-800 bg-zinc-950/40">
+                        <tr>
+                          <th className={`${thClass} whitespace-nowrap`}>
+                            Business Name
+                          </th>
+                          <th className={`${thClass} whitespace-nowrap`}>
+                            Personal Email
+                          </th>
+                          <th className={`${thClass} whitespace-nowrap`}>
+                            Business Email
+                          </th>
+                          <th className={`${thClass} whitespace-nowrap`}>
+                            Created By
+                          </th>
+                          <th className={`${thClass} whitespace-nowrap`}>
+                            Payment
+                          </th>
+                          <th className={`${thClass} whitespace-nowrap`}>
+                            Personal Phone
+                          </th>
+                          <th className={`${thClass} whitespace-nowrap`}>
+                            Business Phone
+                          </th>
+                          <th className={`${thClass} whitespace-nowrap`}>
+                            Closed / Closed Timings
+                          </th>
+                          <th
+                            className={`${thClass} min-w-[12rem] whitespace-nowrap`}
                           >
-                            {formatPkt(row.closedAt)}
-                          </td>
-                          <td className={tdClass}>
-                            <span className="inline-flex rounded-full bg-orange-500/15 px-2.5 py-0.5 text-xs font-medium text-orange-300 ring-1 ring-orange-500/30">
-                              Ready for CST
-                            </span>
-                          </td>
-                          <td className={tdClass}>
-                            <div className="flex flex-wrap gap-2">
-                              <button
-                                type="button"
-                                onClick={() => openDetail(row)}
-                                className="rounded-lg border border-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-300 hover:bg-zinc-800/60"
-                              >
-                                Details
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setActionError('');
-                                  setActionMessage('');
-                                  setMoveToCstLead(row);
-                                }}
-                                className="rounded-lg bg-orange-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-orange-500"
-                              >
-                                Move to CST
-                              </button>
-                            </div>
-                          </td>
+                            Actions
+                          </th>
                         </tr>
-                      ))}
-                  </tbody>
-                </table>
+                      </thead>
+                      <tbody>
+                        {awaitingHandover.map((row) => {
+                          const offered =
+                            row.paymentOffered != null
+                              ? `$${Number(row.paymentOffered).toLocaleString()}`
+                              : null;
+                          const received =
+                            row.paymentReceived != null
+                              ? `$${Number(row.paymentReceived).toLocaleString()}`
+                              : null;
+                          return (
+                            <tr key={row._id} className={rowClass}>
+                              <td
+                                className={`${tdClass} font-medium text-white`}
+                              >
+                                {row.businessName || '—'}
+                              </td>
+                              <td
+                                className={`${tdClass} whitespace-nowrap text-zinc-400`}
+                              >
+                                {row.personalEmail || '—'}
+                              </td>
+                              <td
+                                className={`${tdClass} whitespace-nowrap text-zinc-400`}
+                              >
+                                {row.businessEmail || '—'}
+                              </td>
+                              <td className={`${tdClass} whitespace-nowrap`}>
+                                {formatUserRef(row.agentId) ? (
+                                  <span className="inline-flex max-w-[14rem] flex-col gap-0.5">
+                                    <span className="truncate font-medium text-zinc-200">
+                                      {row.agentId?.fullName ||
+                                        row.agentId?.username ||
+                                        '—'}
+                                    </span>
+                                    {row.agentId?.fullName &&
+                                    row.agentId?.username ? (
+                                      <span className="truncate text-xs text-zinc-500">
+                                        @{row.agentId.username}
+                                      </span>
+                                    ) : null}
+                                  </span>
+                                ) : (
+                                  <span className="text-zinc-500">—</span>
+                                )}
+                              </td>
+                              <td className={tdClass}>
+                                <span className="inline-flex flex-col gap-0.5">
+                                  <span className="text-zinc-200">
+                                    {formatPaymentSummary(row.payment)}
+                                  </span>
+                                  {offered || received ? (
+                                    <span className="text-xs text-zinc-500">
+                                      {[
+                                        offered ? `Offered ${offered}` : null,
+                                        received
+                                          ? `Received ${received}`
+                                          : null,
+                                      ]
+                                        .filter(Boolean)
+                                        .join(' · ')}
+                                    </span>
+                                  ) : null}
+                                </span>
+                              </td>
+                              <td
+                                className={`${tdClass} whitespace-nowrap text-zinc-300`}
+                              >
+                                {row.personalPhone || '—'}
+                              </td>
+                              <td
+                                className={`${tdClass} whitespace-nowrap text-zinc-300`}
+                              >
+                                {row.businessPhone || '—'}
+                              </td>
+                              <td
+                                className={`${tdClass} whitespace-nowrap text-zinc-400`}
+                              >
+                                {formatPktFull(row.closedAt)}
+                              </td>
+                              <td
+                                className={`${tdClass} min-w-[12rem] whitespace-nowrap`}
+                              >
+                                <div className="flex flex-nowrap items-center justify-end gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => openDetail(row)}
+                                    className="whitespace-nowrap rounded-lg border border-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-300 hover:bg-zinc-800/60"
+                                  >
+                                    Details
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => openMoveToCst(row)}
+                                    className="whitespace-nowrap rounded-lg bg-[#F25E26] px-3 py-1.5 text-xs font-semibold text-white hover:brightness-110"
+                                  >
+                                    Move to CST
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </div>
             )}
           </>
@@ -532,7 +716,7 @@ export default function AssignedLeadsPage() {
                           <td
                             className={`${tdClass} whitespace-nowrap text-zinc-400`}
                           >
-                            {row.phone || '—'}
+                            {row.businessPhone || row.personalPhone || '—'}
                           </td>
                           <td className={`${tdClass} text-zinc-400`}>
                             {formatUserRef(row.agentId) || '—'}
@@ -675,6 +859,17 @@ export default function AssignedLeadsPage() {
                   </p>
                 ) : null}
 
+                <CloserTableFilterBar
+                  businessName={teamBusinessFilter}
+                  onBusinessNameChange={setTeamBusinessFilter}
+                  email={teamEmailFilter}
+                  onEmailChange={setTeamEmailFilter}
+                  date={teamDateFilter}
+                  onDateChange={setTeamDateFilter}
+                  onClear={clearTeamFilters}
+                  dateLabel="Date"
+                />
+
                 {teamCbLoading ? (
                   <p className="py-8 text-center text-sm text-zinc-500">
                     Loading callbacks…
@@ -688,6 +883,12 @@ export default function AssignedLeadsPage() {
                   <p className="py-8 text-center text-sm text-zinc-500">
                     No scheduled callbacks for this agent.
                   </p>
+                ) : filteredTeamCallbacks.length === 0 ? (
+                  <p className="py-8 text-center text-sm text-zinc-500">
+                    {hasTeamFilters
+                      ? 'No callbacks match these filters.'
+                      : 'No scheduled callbacks for this agent.'}
+                  </p>
                 ) : (
                   <div className="overflow-x-auto rounded-xl border border-zinc-800/60">
                     <table className="min-w-full text-sm text-zinc-200">
@@ -700,7 +901,7 @@ export default function AssignedLeadsPage() {
                         </tr>
                       </thead>
                       <tbody>
-                        {teamCallbacks.map((row) => (
+                        {filteredTeamCallbacks.map((row) => (
                           <tr key={row._id} className={rowClass}>
                             <td className={`${tdClass} font-medium text-white`}>
                               {row.businessName || '—'}
@@ -724,7 +925,10 @@ export default function AssignedLeadsPage() {
                               )}
                             </td>
                             <td className={`${tdClass} text-zinc-400`}>
-                              {row.email || '—'}
+                              {row.email ||
+                                row.businessEmail ||
+                                row.personalEmail ||
+                                '—'}
                             </td>
                             <td
                               className={`${tdClass} whitespace-nowrap text-zinc-300`}
@@ -749,13 +953,24 @@ export default function AssignedLeadsPage() {
         onClose={() => setDetailLead(null)}
         canEdit={
           Boolean(detailLead) &&
-          detailLead.stage === 'closed_sale' &&
-          (!detailLead.handover?.cstStatus ||
-            detailLead.handover.cstStatus === 'awaiting_handover')
+          (isCloserActiveLead(detailLead) ||
+            (detailLead.stage === 'closed_sale' &&
+              isAwaitingCstHandover(detailLead)))
+        }
+        initialEditing={
+          isCloserActiveLead(detailLead) ||
+          (detailLead?.stage === 'closed_sale' &&
+            isAwaitingCstHandover(detailLead))
         }
         onLeadUpdated={(updated) => {
           setDetailLead(updated);
           setActionError('');
+          queryClient.setQueryData(['assignedLeads'], (old) => {
+            if (!Array.isArray(old) || !updated?._id) return old;
+            return old.map((l) =>
+              String(l._id) === String(updated._id) ? { ...l, ...updated } : l
+            );
+          });
           queryClient.setQueryData(['closerClosedSales'], (old) => {
             if (!Array.isArray(old) || !updated?._id) return old;
             return old.map((l) =>

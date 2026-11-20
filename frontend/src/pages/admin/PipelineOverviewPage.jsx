@@ -133,10 +133,12 @@ export default function PipelineOverviewPage() {
               <ArrowLeft className="h-4 w-4" aria-hidden />
               Back
             </Link>
-            <p className="bg-gradient-to-r from-[#FF4B26] via-[#F23B18] to-[#C92000] bg-clip-text font-display text-sm font-bold italic tracking-wide text-transparent">
-              FLASH TECH
-            </p>
-            <h1 className="mt-1 font-display text-2xl font-semibold tracking-tight text-white sm:text-3xl">
+            <img
+              src="/logo.webp"
+              alt="Flash Tech"
+              className="h-8 w-auto max-w-[160px] object-contain object-left"
+            />
+            <h1 className="mt-2 font-display text-2xl font-semibold tracking-tight text-white sm:text-3xl">
               Pipeline Overview
             </h1>
             <p className="mt-1 text-sm text-zinc-400">
@@ -308,7 +310,9 @@ function CallbacksPanel({ query }) {
                   {row.businessName}
                 </td>
                 <td className="px-4 py-3">{personLabel(row.agentId)}</td>
-                <td className="px-4 py-3 whitespace-nowrap">{row.phone}</td>
+                <td className="px-4 py-3 whitespace-nowrap">
+                  {row.businessPhone || row.personalPhone || '—'}
+                </td>
                 <td className="px-4 py-3 whitespace-nowrap">
                   {formatPkt(row.callbackAt)}
                 </td>
@@ -360,7 +364,9 @@ function ActiveLeadsPanel({ leads, isLoading, isError, error, onViewDetails }) {
                 <td className="px-4 py-3">{personLabel(row.agentId)}</td>
                 <td className="px-4 py-3">{personLabel(row.closerId)}</td>
                 <td className="px-4 py-3">{statusLabel(row.status)}</td>
-                <td className="px-4 py-3 whitespace-nowrap">{row.phone}</td>
+                <td className="px-4 py-3 whitespace-nowrap">
+                  {row.businessPhone || row.personalPhone || '—'}
+                </td>
                 <td className="px-4 py-3">
                   <button
                     type="button"

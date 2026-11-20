@@ -158,10 +158,12 @@ export default function MonthlyReportPage() {
               <ArrowLeft className="h-4 w-4" aria-hidden />
               Back
             </Link>
-            <p className="bg-gradient-to-r from-[#FF4B26] via-[#F23B18] to-[#C92000] bg-clip-text font-display text-sm font-bold italic tracking-wide text-transparent">
-              FLASH TECH
-            </p>
-            <h1 className="mt-1 font-display text-2xl font-semibold tracking-tight text-white sm:text-3xl">
+            <img
+              src="/logo.webp"
+              alt="Flash Tech"
+              className="h-8 w-auto max-w-[160px] object-contain object-left"
+            />
+            <h1 className="mt-2 font-display text-2xl font-semibold tracking-tight text-white sm:text-3xl">
               Month-End Report
             </h1>
             <p className="mt-1 text-sm text-zinc-400">

@@ -233,7 +233,9 @@ export default function ScheduleCallbackModal({
               Lead
             </p>
             <p className="mt-1 font-medium text-white">{lead.businessName}</p>
-            <p className="mt-0.5 text-sm text-zinc-400">{lead.phone}</p>
+            <p className="mt-0.5 text-sm text-zinc-400">
+              {lead.businessPhone || lead.personalPhone || '—'}
+            </p>
           </div>
 
           <label className="block space-y-1.5 text-sm text-zinc-300">

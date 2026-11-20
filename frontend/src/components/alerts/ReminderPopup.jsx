@@ -6,12 +6,19 @@ import {
   updateCallback,
   updateCloserCallback,
 } from '../../services/callback.service.js';
-import { markRetentionAlert } from '../../services/handover.service.js';
+import {
+  markRetentionAlert,
+  markRetentionDone,
+} from '../../services/handover.service.js';
 import {
   markLeadFollowUpAlert,
   setLeadFollowUp,
 } from '../../services/lead.service.js';
-import { startAlarmLoop, stopChime } from '../../utils/audioAlert.js';
+import {
+  startAlarmLoop,
+  stopChime,
+  unlockAudioPlayback,
+} from '../../utils/audioAlert.js';
 import { showBrowserNotification } from '../../utils/browserNotification.util.js';
 
 /** Auto-stop alarm + dismiss if the agent never interacts */
@@ -57,7 +64,12 @@ export function enqueueReminderPopup(payload) {
       payload.clientName ||
       payload.item?.clientName ||
       '',
-    phone: payload.phone || payload.item?.phone || '—',
+    phone:
+      payload.phone ||
+      payload.item?.businessPhone ||
+      payload.item?.personalPhone ||
+      payload.item?.phone ||
+      '—',
     item: payload.item,
   };
 
@@ -117,7 +129,7 @@ const formatPkt = (value) => {
 
 const kindLabel = (kind) => {
   if (kind === 'followup') return 'Lead Follow-up';
-  if (kind === 'retention') return 'Retention Callback';
+  if (kind === 'retention') return 'Retention Alert';
   return 'Callback';
 };
 
@@ -203,9 +215,24 @@ async function persistPhaseAck(reminder, queryClient) {
     : { exactTimeFired: true };
 
   if (reminder.kind === 'retention') {
-    patchRetentionAlert(queryClient, reminder.id, { exactTimeFired: true });
-    await markRetentionAlert(reminder.id, { exactTimeFired: true });
+    // Acknowledge / Mark Reviewed → status done + stop future rings
+    patchRetentionAlert(
+      queryClient,
+      reminder.id,
+      { exactTimeFired: true },
+      { status: 'done', doneAt: new Date().toISOString() }
+    );
+    try {
+      await markRetentionDone(reminder.id);
+    } catch {
+      await markRetentionAlert(reminder.id, { exactTimeFired: true });
+    }
+    queryClient.setQueryData(['retentionReminders'], (old) => {
+      if (!Array.isArray(old)) return old;
+      return old.filter((lead) => String(lead._id) !== String(reminder.id));
+    });
     queryClient.invalidateQueries({ queryKey: ['retentionReminders'] });
+    queryClient.invalidateQueries({ queryKey: ['handoverQueue'] });
     queryClient.invalidateQueries({ queryKey: ['lead', reminder.id] });
     queryClient.invalidateQueries({
       queryKey: ['lead', reminder.id, 'portfolio'],
@@ -268,7 +295,7 @@ async function persistPhaseAck(reminder, queryClient) {
 
 /**
  * Single toast card — phase-specific alert with OK.
- * Retention: Business + Client + OK only.
+ * Retention: prominent centered modal + Acknowledge / Mark Reviewed.
  */
 function ReminderPopup({ reminder, onOk, acknowledging = false }) {
   if (!reminder) return null;
@@ -282,35 +309,48 @@ function ReminderPopup({ reminder, onOk, acknowledging = false }) {
         role="alertdialog"
         aria-modal="true"
         aria-live="assertive"
-        className="pointer-events-auto w-full max-w-md overflow-hidden rounded-xl border border-orange-400/40 bg-zinc-950 shadow-2xl shadow-black/50"
+        className="pointer-events-auto w-full max-w-lg overflow-hidden rounded-2xl border border-[#F25E26]/50 bg-[#111111] shadow-2xl shadow-black/60 ring-1 ring-[#F25E26]/30"
       >
-        <div className="border-b border-orange-500/30 bg-orange-600/20 px-4 py-3">
-          <p className="text-xs font-semibold uppercase tracking-wide text-orange-300/90">
-            Retention Callback · Due now
+        <div className="border-b border-[#F25E26]/30 bg-[#F25E26]/10 px-5 py-4">
+          <p className="text-xs font-semibold uppercase tracking-wide text-[#F25E26]">
+            Retention Alert · Due now
+          </p>
+          <p className="mt-1 font-display text-lg font-semibold text-white">
+            30-day retention check-in
           </p>
         </div>
 
-        <div className="space-y-2 px-4 py-3 text-zinc-100">
+        <div className="space-y-3 px-5 py-4 text-white">
+          <p className="text-sm text-[#A3A3A3]">
+            This client&apos;s automatic 30-day retention window has been
+            reached. Review the account and mark it as reviewed.
+          </p>
           <p className="text-sm">
-            <span className="font-medium text-zinc-400">Business Name:</span>{' '}
+            <span className="font-medium text-[#A3A3A3]">Business Name:</span>{' '}
             {reminder.businessName}
           </p>
           <p className="text-sm">
-            <span className="font-medium text-zinc-400">Client Name:</span>{' '}
+            <span className="font-medium text-[#A3A3A3]">Client Name:</span>{' '}
             {reminder.clientName?.trim() || '—'}
           </p>
+          <p className="text-sm">
+            <span className="font-medium text-[#A3A3A3]">Due (PKT):</span>{' '}
+            {formatPkt(reminder.triggerAt)}
+          </p>
 
-          <div className="flex flex-wrap items-center gap-2 pt-2">
+          <div className="flex flex-wrap items-center gap-2 border-t border-[#222222] pt-4">
             <button
               type="button"
               disabled={acknowledging}
               onClick={onOk}
-              className="rounded-md bg-orange-600 px-4 py-2 text-sm font-semibold text-white hover:bg-orange-500 disabled:opacity-60"
+              className="rounded-xl bg-[#F25E26] px-5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-[#F25E26]/25 transition hover:bg-[#ff6a36] disabled:opacity-60"
             >
-              {acknowledging ? 'OK…' : 'OK'}
+              {acknowledging
+                ? 'Marking…'
+                : 'Acknowledge / Mark Reviewed'}
             </button>
             {queue.length > 1 ? (
-              <span className="ml-auto text-xs text-zinc-500">
+              <span className="ml-auto text-xs text-[#A3A3A3]">
                 +{queue.length - 1} more
               </span>
             ) : null}
@@ -338,28 +378,30 @@ function ReminderPopup({ reminder, onOk, acknowledging = false }) {
       role="alertdialog"
       aria-modal="true"
       aria-live="assertive"
-      className="pointer-events-auto w-full max-w-md overflow-hidden rounded-xl border border-amber-400/40 bg-amber-50 shadow-2xl shadow-slate-900/30"
+      className="pointer-events-auto w-full max-w-md overflow-hidden rounded-xl border border-white/15 border-l-4 border-l-[#F25E26] bg-[#111111] shadow-2xl shadow-black/50"
     >
-      <div className="border-b border-amber-200/80 bg-amber-100/80 px-4 py-3">
-        <p className="text-xs font-semibold uppercase tracking-wide text-amber-800/80">
+      <div className="border-b border-[#222222] px-4 py-3">
+        <p className="text-xs font-semibold uppercase tracking-wide text-[#F25E26]">
           {kindLabel(reminder.kind)}
           {isExact ? ' · Due now' : ' · In 5 minutes'}
         </p>
-        <p className="mt-1 text-sm font-semibold leading-snug text-amber-950">
+        <p className="mt-1 text-sm font-semibold leading-snug text-white">
           {title}
         </p>
       </div>
 
-      <div className="space-y-2 px-4 py-3 text-amber-950">
-        <p className="text-sm text-amber-900/90">{message}</p>
+      <div className="space-y-2 px-4 py-3 text-white">
+        <p className="text-sm text-[#A3A3A3]">{message}</p>
         <p className="text-sm">
-          <span className="font-medium">Business:</span> {reminder.businessName}
+          <span className="font-medium text-[#A3A3A3]">Business:</span>{' '}
+          {reminder.businessName}
         </p>
         <p className="text-sm">
-          <span className="font-medium">Phone:</span> {reminder.phone}
+          <span className="font-medium text-[#A3A3A3]">Phone:</span>{' '}
+          {reminder.phone}
         </p>
         <p className="text-sm">
-          <span className="font-medium">Scheduled (PKT):</span>{' '}
+          <span className="font-medium text-[#A3A3A3]">Scheduled (PKT):</span>{' '}
           {formatPkt(reminder.triggerAt)}
         </p>
 
@@ -368,12 +410,12 @@ function ReminderPopup({ reminder, onOk, acknowledging = false }) {
             type="button"
             disabled={acknowledging}
             onClick={onOk}
-            className="rounded-md bg-amber-700 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-800 disabled:opacity-60"
+            className="rounded-xl bg-[#F25E26] px-4 py-2 text-sm font-semibold text-white hover:bg-[#ff6a36] disabled:opacity-60"
           >
             {acknowledging ? 'OK…' : 'OK'}
           </button>
           {queue.length > 1 ? (
-            <span className="ml-auto text-xs text-amber-800/70">
+            <span className="ml-auto text-xs text-[#A3A3A3]">
               +{queue.length - 1} more
             </span>
           ) : null}
@@ -450,10 +492,22 @@ export function ReminderPopupHost() {
     });
 
     let cancelled = false;
-    startAlarmLoop().then(() => {
-      // If this popup was already closed while audio was loading, stay silent
-      if (cancelled) stopChime();
-    });
+    // Resume AudioContext in case autoplay was still locked
+    unlockAudioPlayback()
+      .then(() => startAlarmLoop())
+      .then(() => {
+        // If this popup was already closed while audio was loading, stay silent
+        if (cancelled) stopChime();
+      })
+      .catch((err) => {
+        // Surface NotAllowedError / decode failures on the debug banner
+        try {
+          // dynamic import avoided — report via console; bridge also watches audio util
+          console.error('[ReminderPopup] alarm start failed', err);
+        } catch {
+          // ignore
+        }
+      });
 
     // Retention: stay until OK. Other kinds: 60s auto-ack.
     if (isRetention) {
@@ -488,8 +542,16 @@ export function ReminderPopupHost() {
 
   if (!active) return null;
 
+  const isRetention = active.kind === 'retention';
+
   return (
-    <div className="pointer-events-none fixed inset-x-0 bottom-0 z-[60] flex justify-center p-4 sm:inset-x-auto sm:bottom-6 sm:right-6 sm:justify-end">
+    <div
+      className={
+        isRetention
+          ? 'pointer-events-none fixed inset-0 z-[70] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm'
+          : 'pointer-events-none fixed inset-x-0 bottom-0 z-[60] flex justify-center p-4 sm:inset-x-auto sm:bottom-6 sm:right-6 sm:justify-end'
+      }
+    >
       <ReminderPopup
         reminder={active}
         onOk={handleOk}

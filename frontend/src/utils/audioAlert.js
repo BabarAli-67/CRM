@@ -261,7 +261,15 @@ export async function startAlarmLoop() {
       htmlAlarm.loop = true;
       htmlAlarm.volume = 1.0;
       htmlAlarm.currentTime = 0;
-      await htmlAlarm.play();
+      try {
+        await htmlAlarm.play();
+      } catch {
+        const ctx = ensureContext();
+        if (!ctx) return;
+        await resumeContext(ctx);
+        if (!alarmPlaying || generation !== alarmGeneration) return;
+        startWebAudioPulseLoop(generation);
+      }
       return;
     }
 

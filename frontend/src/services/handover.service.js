@@ -85,6 +85,31 @@ export const saveClientPortfolio = async (leadId, payload) => {
   return response.data.data.lead;
 };
 
+/** CST Client Detail — append one upsell (+ optional new saved card). */
+export const addClientUpsell = async (leadId, payload) => {
+  const response = await api.post(`/handover/${leadId}/upsell`, payload);
+  return response.data.data.lead;
+};
+
+/** CST Client Detail — post a comment with optional mentions + files. */
+export const addClientComment = async (leadId, { body, mentionIds, files }) => {
+  const formData = new FormData();
+  formData.append('body', body || '');
+  formData.append('mentions', JSON.stringify(mentionIds || []));
+  for (const file of files || []) {
+    formData.append('files', file);
+  }
+  const response = await api.post(`/handover/${leadId}/comments`, formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  });
+  return response.data.data.lead;
+};
+
+export const clientCommentAttachmentUrl = (leadId, commentId, filename) =>
+  `/handover/${leadId}/comments/${commentId}/files/${encodeURIComponent(
+    filename
+  )}`;
+
 /** CST / Tech — save keywords + change requests (live portfolio). */
 export const saveLivePortfolio = async (leadId, payload) => {
   const response = await api.patch(`/handover/${leadId}/live-portfolio`, payload);

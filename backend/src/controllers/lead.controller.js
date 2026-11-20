@@ -5,8 +5,20 @@ import path from 'path';
 import Lead from '../models/lead.model.js';
 import User from '../models/user.model.js';
 import Callback from '../models/callback.model.js';
-import { resolveCallbacksForLead } from '../utils/callbackResolve.util.js';
+import {
+  resolveCallbacksForLead,
+  transferPendingCallbacksToCloser,
+} from '../utils/callbackResolve.util.js';
 import { escalateStaleAgentLeads, AGENT_HOLD_MS } from '../utils/leadEscalation.util.js';
+import {
+  parseLeadPaymentFields,
+  parseNonNegativeAmount,
+  computePaymentPending,
+} from '../utils/leadPayment.util.js';
+import {
+  appendSavedCard,
+  buildSavedCardEntry,
+} from '../utils/savedCard.util.js';
 import { buildAlertFlagsForSchedule } from '../utils/alertTiming.util.js';
 
 const refId = (ref) => {
@@ -79,17 +91,30 @@ const closerClosedSalesFilter = (closerId) => ({
 const UPDATABLE_FIELDS = [
   'clientName',
   'businessName',
-  'phone',
-  'workEmail',
+  'personalPhone',
+  'businessPhone',
+  'businessEmail',
   'personalEmail',
   'yelpLink',
   'websiteLink',
   'gmbLink',
-  'servicesArea',
-  'serviceOffered',
-  'salesAmount',
+  'serviceAreas',
+  'servicesOffered',
+  'paymentOffered',
+  'paymentReceived',
   'notes',
+  'niche',
+  'locationAddress',
+  'leadSource',
 ];
+
+const PAYMENT_SKIP_FIELDS = new Set(['paymentOffered', 'paymentReceived']);
+
+const trimOrNull = (value) => {
+  if (value === undefined || value === null) return null;
+  const s = String(value).trim();
+  return s || null;
+};
 
 /** Validate closerId is an approved closer user. */
 const resolveApprovedCloser = async (closerId) => {
@@ -107,53 +132,82 @@ const resolveApprovedCloser = async (closerId) => {
   return closer;
 };
 
-const parseRequiredSalesAmount = (value) => {
-  if (value === undefined || value === '' || value === null) {
-    throw new ApiError(400, 'Sales amount is required');
+const applyPaymentFieldsToLead = (lead, body, { requireOffered = false } = {}) => {
+  const hasOffered = body.paymentOffered !== undefined;
+  const hasReceived = body.paymentReceived !== undefined;
+  if (!hasOffered && !hasReceived) {
+    if (requireOffered) {
+      throw new ApiError(400, 'Payment Offered is required');
+    }
+    return;
   }
-  const n = Number(value);
-  if (Number.isNaN(n) || n < 0) {
-    throw new ApiError(400, 'salesAmount must be a non-negative number');
-  }
-  return n;
+
+  const offered = hasOffered
+    ? parseNonNegativeAmount(body.paymentOffered, 'Payment Offered')
+    : Math.max(0, Number(lead.paymentOffered) || 0);
+  const received = hasReceived
+    ? body.paymentReceived === '' || body.paymentReceived === null
+      ? 0
+      : parseNonNegativeAmount(body.paymentReceived, 'Payment Received')
+    : Math.max(0, Number(lead.paymentReceived) || 0);
+
+  lead.paymentOffered = offered;
+  lead.paymentReceived = received;
+  lead.paymentPending = computePaymentPending(offered, received);
 };
 
 export const createLead = asyncHandler(async (req, res) => {
-  const { businessName, phone, closerId } = req.body;
+  const { businessName, closerId } = req.body;
 
-  if (!businessName || !phone) {
-    throw new ApiError(400, 'businessName and phone are required');
+  if (!businessName || !String(businessName).trim()) {
+    throw new ApiError(400, 'Business Name is required');
+  }
+
+  const websiteLink = trimOrNull(req.body.websiteLink);
+  if (!websiteLink) {
+    throw new ApiError(400, 'Website Link is required');
+  }
+
+  const servicesOffered = trimOrNull(req.body.servicesOffered);
+  if (!servicesOffered) {
+    throw new ApiError(400, 'Services Offered is required');
   }
 
   const closer = await resolveApprovedCloser(closerId);
-  const salesAmount = parseRequiredSalesAmount(req.body.salesAmount);
+  const payment = parseLeadPaymentFields(req.body, { requireOffered: true });
+
+  const personalPhone = trimOrNull(req.body.personalPhone);
+  const businessPhone = trimOrNull(req.body.businessPhone);
 
   const payload = {
     businessName: String(businessName).trim(),
-    phone: String(phone).trim(),
+    personalPhone,
+    businessPhone,
+    websiteLink,
+    servicesOffered,
     agentId: req.user._id,
     closerId: closer._id,
-    salesAmount,
+    paymentOffered: payment.paymentOffered,
+    paymentReceived: payment.paymentReceived,
+    paymentPending: payment.paymentPending,
     status: 'with_agent',
     stage: 'active',
   };
 
-  if (req.body.websiteLink !== undefined) {
-    payload.websiteLink =
-      req.body.websiteLink === '' ? null : req.body.websiteLink;
-  }
   if (req.body.notes !== undefined) {
-    payload.notes = req.body.notes === '' ? null : req.body.notes;
+    payload.notes = trimOrNull(req.body.notes);
   }
 
   // Allow optional intake fields if posted (edit paths / promote / full form)
   for (const field of UPDATABLE_FIELDS) {
     if (
       field === 'businessName' ||
-      field === 'phone' ||
+      field === 'personalPhone' ||
+      field === 'businessPhone' ||
       field === 'websiteLink' ||
+      field === 'servicesOffered' ||
       field === 'notes' ||
-      field === 'salesAmount'
+      PAYMENT_SKIP_FIELDS.has(field)
     ) {
       continue;
     }
@@ -166,7 +220,30 @@ export const createLead = asyncHandler(async (req, res) => {
     payload.followUp = req.body.followUp;
   }
 
+  // Promote-from-callback: link + mark the source callback promoted after review
+  const sourceCallbackId = req.body.sourceCallbackId;
+  if (sourceCallbackId) {
+    payload.sourceCallbackId = sourceCallbackId;
+  }
+
   const lead = await Lead.create(payload);
+
+  if (sourceCallbackId) {
+    const callback = await Callback.findOne({
+      _id: sourceCallbackId,
+      agentId: req.user._id,
+    });
+    if (callback && callback.status !== 'promoted') {
+      callback.status = 'promoted';
+      callback.promotedLeadId = lead._id;
+      if (!callback.alerts) {
+        callback.alerts = { fiveMinFired: false, exactTimeFired: false };
+      }
+      callback.alerts.fiveMinFired = true;
+      callback.alerts.exactTimeFired = true;
+      await callback.save();
+    }
+  }
 
   await lead.populate([
     { path: 'agentId', select: 'fullName username role' },
@@ -448,9 +525,9 @@ export const moveLeadToCst = asyncHandler(async (req, res) => {
     throw new ApiError(400, 'Document Sign selection (Yes/No) is required');
   }
 
-  const upscaleEnabled = parseBool(body.upscale);
+  const upscaleEnabled = parseBool(body.upscale ?? body.upsell);
   if (upscaleEnabled === null) {
-    throw new ApiError(400, 'Upscale selection (Yes/No) is required');
+    throw new ApiError(400, 'Upsell selection (Yes/No) is required');
   }
 
   if (documentSigned && !req.file) {
@@ -462,20 +539,90 @@ export const moveLeadToCst = asyncHandler(async (req, res) => {
 
   let upscaleItemName = null;
   let upscalePrice = null;
+  let upsellPaymentMethod = null;
+  let selectedCardId = null;
+  let paymentReference = null;
+
   if (upscaleEnabled) {
-    upscaleItemName = String(body.upscaleItemName || '').trim();
+    upscaleItemName = String(
+      body.upscaleItemName || body.upsellServiceName || ''
+    ).trim();
     if (!upscaleItemName) {
-      throw new ApiError(400, 'Upscale Item Name is required when Upscale is Yes');
+      throw new ApiError(400, 'Service Name is required when Upsell is Yes');
     }
-    const priceRaw = body.upscalePrice;
+    const priceRaw = body.upscalePrice ?? body.upsellPrice;
     const price = Number(priceRaw);
     if (priceRaw === '' || priceRaw == null || Number.isNaN(price) || price < 0) {
-      throw new ApiError(400, 'Upscale Price must be a valid non-negative number');
+      throw new ApiError(400, 'Upsell Price must be a valid non-negative number');
     }
     upscalePrice = price;
+
+    upsellPaymentMethod = String(body.upsellPaymentMethod || '').trim();
+    const allowedPay = new Set(['old_card', 'new_card', 'via_link', 'other']);
+    if (!allowedPay.has(upsellPaymentMethod)) {
+      throw new ApiError(
+        400,
+        'Upsell Payment Method must be Old Card, New Card, Link, or Others'
+      );
+    }
+
+    if (upsellPaymentMethod === 'old_card') {
+      selectedCardId = String(body.selectedCardId || '').trim();
+      const cards = Array.isArray(lead.savedCards) ? lead.savedCards : [];
+      const found = cards.find((c) => String(c.cardId) === selectedCardId);
+      if (!found) {
+        throw new ApiError(
+          400,
+          'Select a previously saved card for Old Card payment'
+        );
+      }
+    } else if (upsellPaymentMethod === 'new_card') {
+      const last4 = String(body.newCardLast4 || '').replace(/\D/g, '').slice(-4);
+      const brand = String(body.newCardBrand || '').trim() || 'other';
+      const token = String(body.newCardReferenceToken || '').trim();
+      const expiry = String(body.newCardExpiry || '').trim();
+      const nameOnCard = String(body.newCardHolderName || '').trim();
+      const billingZip = String(body.newCardBillingZip || '').trim();
+      if (last4.length !== 4 || !token) {
+        throw new ApiError(400, 'New Card details are incomplete');
+      }
+      if (!/^\d{2}\/\d{2}$/.test(expiry)) {
+        throw new ApiError(400, 'New Card expiry must be MM/YY');
+      }
+      if (!nameOnCard) {
+        throw new ApiError(400, 'Name on Card is required for New Card');
+      }
+      if (!billingZip) {
+        throw new ApiError(400, 'Billing Zip Code is required for New Card');
+      }
+      const entry = buildSavedCardEntry({
+        cardLast4: last4,
+        cardBrand: brand,
+        cardReferenceToken: token,
+        expiry,
+        nameOnCard,
+        billingZipCode: billingZip,
+        source: 'move_to_cst',
+        cvcCollected: true,
+      });
+      appendSavedCard(lead, entry);
+      selectedCardId = entry.cardId;
+    } else {
+      paymentReference = String(
+        body.upsellPaymentReference || body.paymentReference || ''
+      ).trim();
+      if (!paymentReference) {
+        throw new ApiError(
+          400,
+          'Payment reference / details are required for Link or Others'
+        );
+      }
+    }
   }
 
-  const upscaleNotes = String(body.upscaleNotes || '').trim() || null;
+  const upscaleNotes = String(body.upscaleNotes || body.upsellNotes || '').trim() || null;
+  const handoverNotes =
+    String(body.handoverNotes || '').trim() || null;
 
   if (!lead.handover) {
     lead.handover = {};
@@ -506,13 +653,20 @@ export const moveLeadToCst = asyncHandler(async (req, res) => {
         enabled: true,
         itemName: upscaleItemName,
         price: upscalePrice,
+        paymentMethod: upsellPaymentMethod,
+        selectedCardId,
+        paymentReference,
       }
     : {
         enabled: false,
         itemName: null,
         price: null,
+        paymentMethod: undefined,
+        selectedCardId: null,
+        paymentReference: null,
       };
   lead.handover.upscaleNotes = upscaleNotes;
+  lead.handover.handoverNotes = handoverNotes;
 
   lead.handover.cstStatus = 'pending_review';
   lead.handover.handedOverAt = new Date();
@@ -562,15 +716,16 @@ export const handLeadToCloser = asyncHandler(async (req, res) => {
   lead.handedOverAt = now;
   lead.escalationType = 'forced';
   lead.escalatedReason = 'Forced Moved';
-  if (!lead.followUp) lead.followUp = {};
-  if (!lead.followUp.alerts) {
-    lead.followUp.alerts = { fiveMinFired: false, exactTimeFired: false };
+
+  // Keep Follow-up (PKT) on closer Leads; re-arm alerts for upcoming times
+  if (lead.followUp?.callbackAt) {
+    lead.followUp.acknowledged = false;
+    lead.followUp.alerts = buildAlertFlagsForSchedule(lead.followUp.callbackAt);
   }
-  lead.followUp.alerts.fiveMinFired = true;
-  lead.followUp.alerts.exactTimeFired = true;
+
   await lead.save();
 
-  await resolveCallbacksForLead(lead._id, 'transferred');
+  await transferPendingCallbacksToCloser(lead._id, lead.closerId);
   await lead.populate([
     { path: 'agentId', select: 'fullName username role' },
     { path: 'closerId', select: 'fullName username role' },
@@ -607,7 +762,7 @@ export const getLeadById = asyncHandler(async (req, res) => {
     })
     .populate({
       path: 'sourceCallbackId',
-      select: 'businessName phone callbackAt notes status',
+      select: 'businessName personalPhone businessPhone callbackAt notes status',
     });
 
   if (!lead) {
@@ -685,34 +840,22 @@ export const updateLead = asyncHandler(async (req, res) => {
   }
 
   for (const field of UPDATABLE_FIELDS) {
-    if (req.body[field] !== undefined) {
-      if (field === 'salesAmount') {
-        if (req.user.role === 'sales_agent') {
-          lead[field] = parseRequiredSalesAmount(req.body[field]);
-        } else if (req.body[field] === '' || req.body[field] === null) {
-          lead[field] = null;
-        } else {
-          const n = Number(req.body[field]);
-          if (Number.isNaN(n) || n < 0) {
-            throw new ApiError(400, 'salesAmount must be a non-negative number');
-          }
-          lead[field] = n;
-        }
-      } else {
-        lead[field] =
-          req.body[field] === '' || req.body[field] === null
-            ? null
-            : req.body[field];
-      }
-    }
+    if (req.body[field] === undefined) continue;
+    if (PAYMENT_SKIP_FIELDS.has(field)) continue;
+    lead[field] =
+      req.body[field] === '' || req.body[field] === null
+        ? null
+        : req.body[field];
   }
 
-  // Agents must always leave a sales amount on save (even if omitted from PATCH)
+  applyPaymentFieldsToLead(lead, req.body, { requireOffered: false });
+
+  // Agents must always leave payment offered on save
   if (
     req.user.role === 'sales_agent' &&
-    (lead.salesAmount === null || lead.salesAmount === undefined)
+    (lead.paymentOffered === null || lead.paymentOffered === undefined)
   ) {
-    throw new ApiError(400, 'Sales amount is required');
+    throw new ApiError(400, 'Payment Offered is required');
   }
 
   // Agents may reassign closer while the lead is still on their desk
@@ -803,10 +946,16 @@ export const updateLead = asyncHandler(async (req, res) => {
       cardLast4: null,
       cardBrand: null,
       cardReferenceToken: null,
+      cardHolderName: null,
+      billingZip: null,
       otherDetails: null,
     };
     if (payment.method === 'via_link') {
-      paymentDoc.linkUrl = null;
+      const url = String(payment.linkUrl || '').trim();
+      if (!url) {
+        throw new ApiError(400, 'payment.linkUrl is required for Payment Link');
+      }
+      paymentDoc.linkUrl = url;
     } else if (payment.method === 'via_card') {
       if (!payment.cardLast4 || !payment.cardReferenceToken || !payment.cardBrand) {
         throw new ApiError(
@@ -817,6 +966,9 @@ export const updateLead = asyncHandler(async (req, res) => {
       paymentDoc.cardLast4 = payment.cardLast4;
       paymentDoc.cardBrand = payment.cardBrand;
       paymentDoc.cardReferenceToken = payment.cardReferenceToken;
+      paymentDoc.cardHolderName =
+        String(payment.cardHolderName || '').trim() || null;
+      paymentDoc.billingZip = String(payment.billingZip || '').trim() || null;
     } else if (payment.method === 'other') {
       const details = String(payment.otherDetails || '').trim();
       if (!details) {
@@ -1047,16 +1199,26 @@ export const closeLead = asyncHandler(async (req, res) => {
     cardLast4: null,
     cardBrand: null,
     cardReferenceToken: null,
+    cardHolderName: null,
+    billingZip: null,
+    cardExpiry: null,
     otherDetails: null,
   };
 
   if (payment.method === 'via_link') {
-    // Selection alone records the method — no URL / reference required
-    paymentDoc.linkUrl = null;
+    const url = String(payment.linkUrl || '').trim();
+    if (!url) {
+      throw new ApiError(400, 'payment.linkUrl is required when method is via_link');
+    }
+    paymentDoc.linkUrl = url;
   } else if (payment.method === 'via_card') {
     paymentDoc.cardLast4 = payment.cardLast4;
     paymentDoc.cardBrand = payment.cardBrand || null;
     paymentDoc.cardReferenceToken = payment.cardReferenceToken;
+    paymentDoc.cardHolderName =
+      String(payment.cardHolderName || '').trim() || null;
+    paymentDoc.billingZip = String(payment.billingZip || '').trim() || null;
+    paymentDoc.cardExpiry = String(payment.cardExpiry || '').trim() || null;
   } else if (payment.method === 'other') {
     paymentDoc.otherDetails = String(payment.otherDetails || '').trim() || null;
   }
@@ -1105,37 +1267,17 @@ export const closeLead = asyncHandler(async (req, res) => {
     assignedCloserId = closer._id;
   }
 
-  // Sales amount is required when closing
-  if (req.body.salesAmount === undefined || req.body.salesAmount === '' || req.body.salesAmount === null) {
-    throw new ApiError(400, 'Sales Amount is required');
-  }
-  {
-    const n = Number(req.body.salesAmount);
-    if (Number.isNaN(n) || n < 0) {
-      throw new ApiError(400, 'salesAmount must be a non-negative number');
-    }
-  }
+  // Payment Offered is required when closing
+  applyPaymentFieldsToLead(lead, req.body, { requireOffered: true });
 
   // Optional last-pass intake corrections before lock
   for (const field of UPDATABLE_FIELDS) {
-    if (req.body[field] !== undefined) {
-      if (field === 'salesAmount') {
-        if (req.body[field] === '' || req.body[field] === null) {
-          lead[field] = null;
-        } else {
-          const n = Number(req.body[field]);
-          if (Number.isNaN(n) || n < 0) {
-            throw new ApiError(400, 'salesAmount must be a non-negative number');
-          }
-          lead[field] = n;
-        }
-      } else {
-        lead[field] =
-          req.body[field] === '' || req.body[field] === null
-            ? null
-            : req.body[field];
-      }
-    }
+    if (req.body[field] === undefined) continue;
+    if (PAYMENT_SKIP_FIELDS.has(field)) continue;
+    lead[field] =
+      req.body[field] === '' || req.body[field] === null
+        ? null
+        : req.body[field];
   }
 
   lead.stage = 'closed_sale';
@@ -1150,6 +1292,27 @@ export const closeLead = asyncHandler(async (req, res) => {
     lead.handover = {};
   }
   lead.handover.cstStatus = 'awaiting_handover';
+
+  // Append card to vault (never overwrite prior cards)
+  if (payment.method === 'via_card' && paymentDoc.cardLast4) {
+    try {
+      appendSavedCard(
+        lead,
+        buildSavedCardEntry({
+          cardLast4: paymentDoc.cardLast4,
+          cardBrand: paymentDoc.cardBrand,
+          cardReferenceToken: paymentDoc.cardReferenceToken,
+          expiry: paymentDoc.cardExpiry,
+          nameOnCard: paymentDoc.cardHolderName,
+          billingZipCode: paymentDoc.billingZip,
+          source: 'close_sale',
+          cvcCollected: true,
+        })
+      );
+    } catch {
+      /* ignore vault append failures — sale still closes */
+    }
+  }
 
   // Silence follow-up chimes on the lead itself
   if (lead.followUp) {

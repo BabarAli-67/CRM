@@ -1,5 +1,9 @@
 import mongoose from 'mongoose';
 
+/**
+ * Locked Callback schema — agent + closer agenda rows only.
+ * No legacy `phone` or duplicate contact fields.
+ */
 const callbackSchema = new mongoose.Schema(
   {
     businessName: {
@@ -7,14 +11,19 @@ const callbackSchema = new mongoose.Schema(
       required: true,
       trim: true,
     },
-    phone: {
+    personalPhone: {
       type: String,
-      required: true,
+      default: null,
+      trim: true,
+    },
+    businessPhone: {
+      type: String,
+      default: null,
       trim: true,
     },
     businessLink: {
       type: String,
-      default: null,
+      required: true,
       trim: true,
     },
     callbackAt: {
@@ -26,36 +35,35 @@ const callbackSchema = new mongoose.Schema(
       default: null,
       trim: true,
     },
-    /** Sales-agent owner (agent-created callbacks). Optional when closerId is set. */
     agentId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
       default: null,
       index: true,
     },
-    /** Closer owner (closer-scheduled callbacks). */
     closerId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
       default: null,
       index: true,
     },
-    /**
-     * Pre-assigned closer for agent-owned callbacks (who receives the lead on promote).
-     * Distinct from closerId, which marks closer ownership of the callback row.
-     */
+    /** Required for agent-owned callbacks (who receives promote + closer agenda). */
     assignedCloserId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
       default: null,
       index: true,
     },
-    /** When set, callback is scheduled against an existing lead (no re-entry of lead fields). */
     leadId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Lead',
       default: null,
       index: true,
+    },
+    promotedLeadId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Lead',
+      default: null,
     },
     status: {
       type: String,
@@ -68,11 +76,6 @@ const callbackSchema = new mongoose.Schema(
         'cancelled',
       ],
       default: 'pending',
-    },
-    promotedLeadId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'Lead',
-      default: null,
     },
     alerts: {
       fiveMinFired: {
@@ -88,15 +91,22 @@ const callbackSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-callbackSchema.pre('validate', function ensureOwner() {
-  // Mongoose 9+: sync middleware — do not use next(); throw instead.
+callbackSchema.pre('validate', function ensureOwnerAndCloser() {
   if (!this.agentId && !this.closerId) {
     throw new Error('agentId or closerId is required');
+  }
+  // Agent-owned rows must name an assigned closer
+  if (this.agentId && !this.assignedCloserId) {
+    throw new Error('assignedCloserId is required for agent callbacks');
+  }
+  if (!this.businessLink || !String(this.businessLink).trim()) {
+    throw new Error('businessLink is required');
   }
 });
 
 callbackSchema.index({ agentId: 1, callbackAt: 1 });
 callbackSchema.index({ closerId: 1, callbackAt: 1 });
+callbackSchema.index({ assignedCloserId: 1, callbackAt: 1 });
 callbackSchema.index({ callbackAt: 1, status: 1 });
 
 export default mongoose.model('Callback', callbackSchema);

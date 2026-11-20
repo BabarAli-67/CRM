@@ -70,3 +70,9 @@ export const markCloserCallbackAlert = async (id, flags) => {
   const response = await api.patch(`/callbacks/closer/${id}/mark-alert`, flags);
   return response.data.data.callback;
 };
+
+/** Closer Direct Contact → create lead + promote/link callback. */
+export const moveCloserCallbackToLead = async (id, payload = {}) => {
+  const response = await api.post(`/callbacks/closer/${id}/move-to-lead`, payload);
+  return response.data.data;
+};

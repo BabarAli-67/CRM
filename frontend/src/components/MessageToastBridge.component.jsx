@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import useAuth from '../hooks/useAuth.hook.js';
 import useChatSocket from '../hooks/useChatSocket.hook.js';
@@ -13,6 +14,7 @@ import {
   requestNotificationPermission,
   showBrowserNotification,
 } from '../utils/browserNotification.util.js';
+import { getSocket } from '../utils/socketClient.util.js';
 
 const TOAST_TTL_MS = 7000;
 
@@ -22,6 +24,7 @@ const TOAST_TTL_MS = 7000;
  */
 export default function MessageToastBridge() {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { openWindows, openChatWindow } = useChatWidget();
   const { onMessageNew } = useChatSocket();
@@ -100,12 +103,58 @@ export default function MessageToastBridge() {
     return off;
   }, [onMessageNew, queryClient, user?._id]);
 
+  // CST Client Detail comment @mentions → live toast + browser notification
+  useEffect(() => {
+    const socket = getSocket();
+    const onMention = (payload) => {
+      if (!payload?.leadId) return;
+      playMessageChime();
+      const toastId = `mention-${payload.leadId}-${payload.commentId || Date.now()}`;
+      const senderName = payload.authorName || 'Team mention';
+      const preview =
+        payload.bodyPreview ||
+        `Mentioned you on ${payload.businessName || 'a client'}`;
+
+      setToasts((prev) => [
+        ...prev.filter((t) => t.id !== toastId),
+        {
+          id: toastId,
+          kind: 'client_mention',
+          leadId: payload.leadId,
+          senderName,
+          preview,
+        },
+      ]);
+
+      showBrowserNotification({
+        title: `Mention · ${payload.businessName || 'Client'}`,
+        body: `${senderName}: ${preview}`,
+        tag: toastId,
+      });
+
+      window.setTimeout(() => {
+        setToasts((prev) => prev.filter((t) => t.id !== toastId));
+      }, TOAST_TTL_MS);
+
+      queryClient.invalidateQueries({
+        queryKey: ['lead', payload.leadId, 'portfolio'],
+      });
+    };
+
+    socket.on('client:comment-mention', onMention);
+    return () => socket.off('client:comment-mention', onMention);
+  }, [queryClient]);
+
   const dismiss = (id) => {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   };
 
   const openFromToast = (toast) => {
     dismiss(toast.id);
+    if (toast.kind === 'client_mention' && toast.leadId) {
+      navigate(`/dashboard/cst-manager/client/${toast.leadId}`);
+      return;
+    }
     openChatWindow(toast.conversationId, toast.contact);
   };
 
@@ -128,7 +177,7 @@ export default function MessageToastBridge() {
             {toast.preview}
           </p>
           <p className="mt-1.5 text-[10px] font-medium uppercase tracking-wide text-orange-400/90">
-            Open chat
+            {toast.kind === 'client_mention' ? 'Open client' : 'Open chat'}
           </p>
         </button>
       ))}

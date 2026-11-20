@@ -112,7 +112,9 @@ export default function MyProjectsPage() {
                       </h3>
                       <p className="mt-0.5 text-sm text-zinc-500">
                         Assigned {formatPkt(project.handover?.assignedAt)}
-                        {project.phone ? ` · ${project.phone}` : ''}
+                        {project.businessPhone || project.personalPhone
+                          ? ` · ${project.businessPhone || project.personalPhone}`
+                          : ''}
                       </p>
                       <Link
                         to={`/dashboard/tech-team/client/${project._id}`}
@@ -130,18 +132,25 @@ export default function MyProjectsPage() {
 
                   <dl className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                     <Detail label="Client">{project.clientName}</Detail>
-                    <Detail label="Work email">{project.workEmail}</Detail>
+                    <Detail label="Business email">
+                      {project.businessEmail}
+                    </Detail>
                     <Detail label="Personal email">
                       {project.personalEmail}
                     </Detail>
                     <Detail label="Package / amount">
-                      {project.salesAmount != null
-                        ? `$${Number(project.salesAmount).toLocaleString()}`
+                      {project.paymentOffered != null ||
+                      project.salesAmount != null
+                        ? `$${Number(
+                            project.paymentOffered ?? project.salesAmount
+                          ).toLocaleString()}`
                         : null}
                     </Detail>
-                    <Detail label="Services">{project.serviceOffered}</Detail>
-                    <Detail label="Service area">
-                      {project.servicesArea}
+                    <Detail label="Services">
+                      {project.servicesOffered}
+                    </Detail>
+                    <Detail label="Service areas">
+                      {project.serviceAreas}
                     </Detail>
                     <Detail label="Payment">
                       {formatPaymentSummary(project.payment)}

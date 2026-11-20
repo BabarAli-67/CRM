@@ -132,6 +132,13 @@ export const closeLeadValidator = [
   body('payment.method')
     .isIn(['via_link', 'via_card', 'other'])
     .withMessage("payment.method must be 'via_link', 'via_card', or 'other'"),
+  body('payment.linkUrl')
+    .if(body('payment.method').equals('via_link'))
+    .notEmpty()
+    .withMessage('payment.linkUrl is required when method is via_link')
+    .trim()
+    .isLength({ max: 500 })
+    .withMessage('payment.linkUrl must be at most 500 characters'),
   body('payment.cardLast4')
     .if(body('payment.method').equals('via_card'))
     .notEmpty()
@@ -151,6 +158,20 @@ export const closeLeadValidator = [
     .notEmpty()
     .withMessage('payment.cardBrand is required when method is via_card')
     .trim(),
+  body('payment.cardHolderName')
+    .if(body('payment.method').equals('via_card'))
+    .notEmpty()
+    .withMessage('payment.cardHolderName is required when method is via_card')
+    .trim()
+    .isLength({ max: 120 })
+    .withMessage('payment.cardHolderName must be at most 120 characters'),
+  body('payment.billingZip')
+    .if(body('payment.method').equals('via_card'))
+    .notEmpty()
+    .withMessage('payment.billingZip is required when method is via_card')
+    .trim()
+    .isLength({ max: 20 })
+    .withMessage('payment.billingZip must be at most 20 characters'),
   body('payment.otherDetails')
     .if(body('payment.method').equals('other'))
     .notEmpty()

@@ -1,23 +1,52 @@
 import mongoose from 'mongoose';
 
+/**
+ * Locked Lead schema — Agent intake + Closer/CST/Tech pipeline.
+ * Legacy `phone`, `workEmail`, `servicesArea`, `serviceOffered`,
+ * and `lastAgentActivityAt` are removed (see purgeLegacyLeadCallbackFields).
+ */
 const leadSchema = new mongoose.Schema(
   {
-    clientName: {
-      type: String,
-      default: null,
-      trim: true,
-    },
+    // ── Agent intake ──────────────────────────────────────────────
     businessName: {
       type: String,
       required: true,
       trim: true,
     },
-    phone: {
+    personalPhone: {
+      type: String,
+      default: null,
+      trim: true,
+    },
+    businessPhone: {
+      type: String,
+      default: null,
+      trim: true,
+    },
+    websiteLink: {
       type: String,
       required: true,
       trim: true,
     },
-    workEmail: {
+    closerId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      required: true,
+      index: true,
+    },
+    /** Null for closer-sourced Direct Contact → Lead promotions. */
+    agentId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      default: null,
+      index: true,
+    },
+    clientName: {
+      type: String,
+      default: null,
+      trim: true,
+    },
+    businessEmail: {
       type: String,
       default: null,
       trim: true,
@@ -29,115 +58,70 @@ const leadSchema = new mongoose.Schema(
       trim: true,
       lowercase: true,
     },
-    yelpLink: {
-      type: String,
-      default: null,
-      trim: true,
-    },
-    websiteLink: {
-      type: String,
-      default: null,
-      trim: true,
-    },
     gmbLink: {
       type: String,
       default: null,
       trim: true,
     },
-    servicesArea: {
+    serviceAreas: {
       type: String,
       default: null,
       trim: true,
     },
-    serviceOffered: {
+    servicesOffered: {
       type: String,
-      default: null,
-      trim: true,
-    },
-    /** Optional niche / industry (CST profile context; may be blank). */
-    niche: {
-      type: String,
-      default: null,
-      trim: true,
-    },
-    /** Optional street / mailing address (CST profile context; may be blank). */
-    locationAddress: {
-      type: String,
-      default: null,
-      trim: true,
-    },
-    /** Lead source label (CST profile context; may be blank). */
-    leadSource: {
-      type: String,
-      default: null,
-      trim: true,
-    },
-    salesAmount: {
-      type: Number,
-      default: null,
-    },
-    agentId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'User',
       required: true,
-      index: true,
+      trim: true,
     },
-    closerId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'User',
-      default: null,
-      index: true,
+    /** Deal value offered to the client (agent intake). */
+    paymentOffered: {
+      type: Number,
+      required: true,
+      min: 0,
+    },
+    /** Amount collected so far (agent intake; defaults to 0). */
+    paymentReceived: {
+      type: Number,
+      required: true,
+      min: 0,
+      default: 0,
+    },
+    /** Auto: max(0, paymentOffered - paymentReceived). Persisted for queries/UI. */
+    paymentPending: {
+      type: Number,
+      required: true,
+      min: 0,
+      default: 0,
     },
     notes: {
       type: String,
       default: null,
       trim: true,
     },
-    /**
-     * Active pipeline (stage stays `active` until closed/disqualified).
-     * with_agent → agent working (closer pre-assigned via closerId);
-     * with_closer → handed/escalated to the assigned closer.
-     * Legacy: pending_closer_claim / in_progress kept for older documents.
-     */
-    status: {
-      type: String,
-      enum: [
-        'with_agent',
-        'with_closer',
-        'pending_closer_claim',
-        'in_progress',
-      ],
-      default: 'with_agent',
-      index: true,
-    },
-    /**
-     * @deprecated 24h escalation uses immutable `createdAt` only.
-     * Kept nullable so Mongoose never injects Date.now on find/read.
-     */
-    lastAgentActivityAt: {
-      type: Date,
-      default: null,
-    },
-    escalatedAt: {
-      type: Date,
-      default: null,
-    },
-    /** When agent/closer handoff completed (manual force or auto escalate). */
-    handedOverAt: {
-      type: Date,
-      default: null,
-    },
-    /** 'auto' = 24h timeout; 'forced' = agent Hand to Closer */
-    escalationType: {
-      type: String,
-      enum: ['auto', 'forced', 'manual'],
-      default: null,
-    },
-    escalatedReason: {
+
+    // ── CST profile context (optional; used on Client Detail) ─────
+    yelpLink: {
       type: String,
       default: null,
       trim: true,
     },
+    niche: {
+      type: String,
+      default: null,
+      trim: true,
+    },
+    locationAddress: {
+      type: String,
+      default: null,
+      trim: true,
+    },
+    leadSource: {
+      type: String,
+      default: null,
+      trim: true,
+    },
+
+    // ── System & pipeline ─────────────────────────────────────────
     sourceCallbackId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Callback',
@@ -171,6 +155,43 @@ const leadSchema = new mongoose.Schema(
         },
       },
       default: undefined,
+    },
+    /**
+     * Active pipeline (stage stays `active` until closed/disqualified).
+     * with_agent → agent working (closer pre-assigned via closerId);
+     * with_closer → handed/escalated to the assigned closer.
+     * Legacy: pending_closer_claim / in_progress kept for older documents.
+     */
+    status: {
+      type: String,
+      enum: [
+        'with_agent',
+        'with_closer',
+        'pending_closer_claim',
+        'in_progress',
+      ],
+      default: 'with_agent',
+      index: true,
+    },
+    escalatedAt: {
+      type: Date,
+      default: null,
+    },
+    /** When agent/closer handoff completed (manual force or auto escalate). */
+    handedOverAt: {
+      type: Date,
+      default: null,
+    },
+    /** 'auto' = 24h timeout; 'forced' = agent Hand to Closer */
+    escalationType: {
+      type: String,
+      enum: ['auto', 'forced', 'manual'],
+      default: null,
+    },
+    escalatedReason: {
+      type: String,
+      default: null,
+      trim: true,
     },
     stage: {
       type: String,
@@ -213,6 +234,24 @@ const leadSchema = new mongoose.Schema(
           default: null,
           trim: true,
         },
+        /** Cardholder name — safe to store; never store PAN / CVV / expiry. */
+        cardHolderName: {
+          type: String,
+          default: null,
+          trim: true,
+        },
+        /** Billing ZIP / postal code — safe to store with card metadata. */
+        billingZip: {
+          type: String,
+          default: null,
+          trim: true,
+        },
+        /** Card expiry MM/YY — stored for vault display; never store CVC. */
+        cardExpiry: {
+          type: String,
+          default: null,
+          trim: true,
+        },
         /** Free-text payment source when method is `other` (cash, bank transfer, …). */
         otherDetails: {
           type: String,
@@ -221,6 +260,32 @@ const leadSchema = new mongoose.Schema(
         },
       },
       default: undefined,
+    },
+    /**
+     * Accumulating card vault for this business/lead.
+     * SECURITY: Never store raw PAN or CVC. Display uses masked last4 + expiry;
+     * cvcOnFile indicates CVC was collected at capture time.
+     */
+    savedCards: {
+      type: [
+        {
+          cardId: { type: String, required: true, trim: true },
+          cardLast4: { type: String, required: true, trim: true },
+          cardBrand: { type: String, default: null, trim: true },
+          cardReferenceToken: { type: String, default: null, trim: true },
+          expiry: { type: String, default: null, trim: true },
+          nameOnCard: { type: String, default: null, trim: true },
+          billingZipCode: { type: String, default: null, trim: true },
+          cvcOnFile: { type: Boolean, default: true },
+          addedAt: { type: Date, default: Date.now },
+          source: {
+            type: String,
+            enum: ['close_sale', 'move_to_cst', 'cst_upsell'],
+            default: 'close_sale',
+          },
+        },
+      ],
+      default: [],
     },
     closedAt: {
       type: Date,
@@ -289,17 +354,30 @@ const leadSchema = new mongoose.Schema(
           },
           default: undefined,
         },
-        /** Upsell / upscale captured at CST handoff. */
+        /** Upsell captured at CST handoff (legacy field name `upscale` kept). */
         upscale: {
           type: {
             enabled: { type: Boolean, default: false },
             itemName: { type: String, default: null, trim: true },
             price: { type: Number, default: null },
+            paymentMethod: {
+              type: String,
+              enum: ['old_card', 'new_card', 'via_link', 'other'],
+              default: undefined,
+            },
+            selectedCardId: { type: String, default: null, trim: true },
+            paymentReference: { type: String, default: null, trim: true },
           },
           default: undefined,
         },
-        /** Free-text context for CST (visible for both upscale yes/no). */
+        /** Free-text context for upsell (visible for both yes/no). */
         upscaleNotes: {
+          type: String,
+          default: null,
+          trim: true,
+        },
+        /** Closer → CST handover instructions. */
+        handoverNotes: {
           type: String,
           default: null,
           trim: true,
@@ -401,7 +479,7 @@ const leadSchema = new mongoose.Schema(
         },
         /**
          * Upselling & Split Payment Ledger (Client Detail Section E).
-         * Separate from base sale payment / salesAmount — never mixed.
+         * Separate from base paymentOffered / paymentReceived — never mixed.
          * Pending = max(0, totalAmount - paidAmount); computed on the client.
          */
         upsellLedger: {
@@ -417,6 +495,16 @@ const leadSchema = new mongoose.Schema(
                 default: '',
                 trim: true,
               },
+              service: {
+                type: String,
+                enum: ['seo', 'web', 'citation_pages', 'other'],
+                default: null,
+              },
+              serviceOther: {
+                type: String,
+                default: null,
+                trim: true,
+              },
               totalAmount: {
                 type: Number,
                 default: 0,
@@ -427,13 +515,33 @@ const leadSchema = new mongoose.Schema(
                 default: 0,
                 min: 0,
               },
+              paymentOption: {
+                type: String,
+                enum: ['new_card', 'old_card', 'link', 'others'],
+                default: null,
+              },
+              selectedCardId: {
+                type: String,
+                default: null,
+                trim: true,
+              },
+              paymentReference: {
+                type: String,
+                default: null,
+                trim: true,
+              },
+              notes: {
+                type: String,
+                default: null,
+                trim: true,
+              },
             },
           ],
           default: undefined,
         },
         /**
-         * Cumulative paid total = salesAmount (base) + sum(upsell paid).
-         * Never overwrites salesAmount — recomputed on portfolio save.
+         * Cumulative paid = paymentReceived (base) + sum(upsell paid).
+         * Never overwrites paymentReceived — recomputed on portfolio save.
          */
         totalCollectedAmount: {
           type: Number,
@@ -441,7 +549,7 @@ const leadSchema = new mongoose.Schema(
           min: 0,
         },
         /**
-         * Contract value = salesAmount (base) + sum(upsell totals).
+         * Contract value = paymentOffered (base) + sum(upsell totals).
          * Recomputed on portfolio save alongside totalCollectedAmount.
          */
         totalContractValue: {
@@ -498,7 +606,15 @@ const leadSchema = new mongoose.Schema(
               requestId: { type: String, required: true, trim: true },
               category: {
                 type: String,
-                enum: ['seo', 'web', 'social_media', 'other'],
+                // Legacy social_media / other kept so existing rows still validate
+                enum: [
+                  'seo',
+                  'web',
+                  'citation_pages',
+                  'others',
+                  'other',
+                  'social_media',
+                ],
                 required: true,
               },
               description: { type: String, required: true, trim: true },
@@ -515,6 +631,51 @@ const leadSchema = new mongoose.Schema(
               },
               statusUpdatedAt: { type: Date, default: null },
               statusUpdatedBy: {
+                type: mongoose.Schema.Types.ObjectId,
+                ref: 'User',
+                default: null,
+              },
+            },
+          ],
+          default: undefined,
+        },
+        /**
+         * Client Detail → Comments tab (@mentions + file attachments).
+         */
+        comments: {
+          type: [
+            {
+              commentId: { type: String, required: true, trim: true },
+              body: { type: String, required: true, trim: true },
+              mentions: {
+                type: [
+                  {
+                    userId: {
+                      type: mongoose.Schema.Types.ObjectId,
+                      ref: 'User',
+                      required: true,
+                    },
+                    fullName: { type: String, default: null, trim: true },
+                    username: { type: String, default: null, trim: true },
+                    role: { type: String, default: null, trim: true },
+                  },
+                ],
+                default: [],
+              },
+              attachments: {
+                type: [
+                  {
+                    originalName: { type: String, default: null },
+                    storedFilename: { type: String, required: true },
+                    mimeType: { type: String, default: null },
+                    sizeBytes: { type: Number, default: null },
+                    relativePath: { type: String, required: true },
+                  },
+                ],
+                default: [],
+              },
+              createdAt: { type: Date, default: Date.now },
+              createdBy: {
                 type: mongoose.Schema.Types.ObjectId,
                 ref: 'User',
                 default: null,
@@ -556,6 +717,14 @@ const leadSchema = new mongoose.Schema(
   },
   { timestamps: true }
 );
+
+leadSchema.pre('validate', function syncPaymentPending() {
+  const offered = Math.max(0, Number(this.paymentOffered) || 0);
+  const received = Math.max(0, Number(this.paymentReceived) || 0);
+  this.paymentOffered = offered;
+  this.paymentReceived = received;
+  this.paymentPending = Math.max(0, offered - received);
+});
 
 leadSchema.index({ agentId: 1, stage: 1 });
 leadSchema.index({ closerId: 1, stage: 1 });

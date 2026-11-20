@@ -512,10 +512,12 @@ export default function AdminConsole({
       <div className="mx-auto max-w-7xl space-y-8 px-4 py-8 sm:px-6 lg:px-10">
         <header className={`${ADMIN_CARD} flex flex-wrap items-center justify-between gap-4`}>
           <div>
-            <p className="bg-gradient-to-r from-[#FF4B26] via-[#F23B18] to-[#C92000] bg-clip-text font-display text-sm font-bold italic tracking-wide text-transparent">
-              FLASH TECH
-            </p>
-            <h1 className="mt-1 font-display text-2xl font-semibold tracking-tight text-white sm:text-3xl">
+            <img
+              src="/logo.webp"
+              alt="Flash Tech"
+              className="h-8 w-auto max-w-[160px] object-contain object-left"
+            />
+            <h1 className="mt-2 font-display text-2xl font-semibold tracking-tight text-white sm:text-3xl">
               {title}
             </h1>
             <p className="mt-1 text-sm text-zinc-400">{subtitle}</p>

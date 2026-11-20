@@ -254,10 +254,13 @@ export const forceAbsent = async (recordId, reason, approverId) => {
   return record;
 };
 
-export const getMyHistory = async (userId, { month } = {}) => {
+export const getMyHistory = async (userId, { month, from, to } = {}) => {
   const filter = {};
 
-  if (month) {
+  if (from && to) {
+    // shiftDate stored as YYYY-MM-DD (Asia/Karachi calendar)
+    filter.shiftDate = { $gte: from, $lte: to };
+  } else if (month) {
     filter.shiftDate = { $regex: `^${month}` };
   }
 
@@ -265,7 +268,7 @@ export const getMyHistory = async (userId, { month } = {}) => {
     shiftDate: -1,
   });
 
-  if (!month) {
+  if (!month && !(from && to)) {
     query.limit(60);
   }
 

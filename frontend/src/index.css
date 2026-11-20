@@ -8,7 +8,7 @@
   }
 
   body {
-    @apply min-h-screen bg-obsidian font-sans text-ink;
+    @apply min-h-screen bg-[#0A0A0A] font-sans text-white;
   }
 }
 

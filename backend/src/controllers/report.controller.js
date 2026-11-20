@@ -68,7 +68,11 @@ export const getMonthlyReport = asyncHandler(async (req, res) => {
         $group: {
           _id: '$agentId',
           closedCount: { $sum: 1 },
-          totalSalesAmount: { $sum: { $ifNull: ['$salesAmount', 0] } },
+          totalSalesAmount: {
+            $sum: {
+              $ifNull: ['$paymentOffered', { $ifNull: ['$salesAmount', 0] }],
+            },
+          },
         },
       },
       ...userLookup('_id', 'agent'),
@@ -92,7 +96,11 @@ export const getMonthlyReport = asyncHandler(async (req, res) => {
         $group: {
           _id: '$closerId',
           closedCount: { $sum: 1 },
-          totalSalesAmount: { $sum: { $ifNull: ['$salesAmount', 0] } },
+          totalSalesAmount: {
+            $sum: {
+              $ifNull: ['$paymentOffered', { $ifNull: ['$salesAmount', 0] }],
+            },
+          },
         },
       },
       ...userLookup('_id', 'closer'),

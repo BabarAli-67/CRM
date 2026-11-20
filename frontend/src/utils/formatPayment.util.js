@@ -1,9 +1,13 @@
 /**
- * Client revenue totals — base salesAmount stays separate from upsell ledger.
+ * Client revenue totals — base paymentOffered/paymentReceived stay separate from upsell ledger.
  * Prefer persisted handover.totalCollectedAmount / totalContractValue when present.
  */
 export function getClientRevenueTotals(lead) {
-  const base = Math.max(0, Number(lead?.salesAmount) || 0);
+  const baseOffered = Math.max(
+    0,
+    Number(lead?.paymentOffered ?? lead?.salesAmount) || 0
+  );
+  const baseReceived = Math.max(0, Number(lead?.paymentReceived) || 0);
   const rows = Array.isArray(lead?.handover?.upsellLedger)
     ? lead.handover.upsellLedger
     : [];
@@ -16,13 +20,15 @@ export function getClientRevenueTotals(lead) {
     upsellTotal += total;
     upsellPaid += paid;
   }
-  const computedCollected = base + upsellPaid;
-  const computedContract = base + upsellTotal;
+  const computedCollected = baseReceived + upsellPaid;
+  const computedContract = baseOffered + upsellTotal;
   const storedCollected = Number(lead?.handover?.totalCollectedAmount);
   const storedContract = Number(lead?.handover?.totalContractValue);
 
   return {
-    baseAmount: base,
+    baseAmount: baseOffered,
+    baseOffered,
+    baseReceived,
     upsellTotal,
     upsellPaid,
     upsellPending: Math.max(0, upsellTotal - upsellPaid),

@@ -1,4 +1,5 @@
 import Callback from '../models/callback.model.js';
+import { buildAlertFlagsForSchedule } from './alertTiming.util.js';
 
 /** Statuses that still appear on an agent's active agenda / reminders. */
 export const ACTIVE_CALLBACK_STATUSES = ['pending', 'attended'];
@@ -34,8 +35,39 @@ export async function resolveCallbacksForLead(leadId, resolution) {
 }
 
 /**
+ * Hand pending/attended lead-linked callbacks to the assigned closer.
+ * Keeps status pending, sets closerId, re-arms PKT alert flags when due time
+ * is still upcoming so the closer gets the exact-time ring.
+ *
+ * @param {import('mongoose').Types.ObjectId|string} leadId
+ * @param {import('mongoose').Types.ObjectId|string} closerId
+ */
+export async function transferPendingCallbacksToCloser(leadId, closerId) {
+  if (!leadId || !closerId) return { modifiedCount: 0 };
+
+  const open = await Callback.find({
+    leadId,
+    status: { $in: ACTIVE_CALLBACK_STATUSES },
+  });
+
+  if (!open.length) return { modifiedCount: 0 };
+
+  let modifiedCount = 0;
+  for (const cb of open) {
+    cb.closerId = closerId;
+    cb.assignedCloserId = closerId;
+    cb.status = 'pending';
+    cb.alerts = buildAlertFlagsForSchedule(cb.callbackAt);
+    await cb.save();
+    modifiedCount += 1;
+  }
+
+  return { modifiedCount };
+}
+
+/**
  * Heal pending callbacks whose linked lead is no longer with the agent.
- * Used as a safety net for records created before auto-resolve existed.
+ * Leads with a closer get callbacks transferred (still pending for closer alerts).
  */
 export async function healStaleAgentCallbacks(agentId) {
   const pending = await Callback.find({
@@ -43,11 +75,12 @@ export async function healStaleAgentCallbacks(agentId) {
     status: 'pending',
     leadId: { $ne: null },
   })
-    .populate('leadId', 'stage status agentId')
-    .select('_id leadId');
+    .populate('leadId', 'stage status agentId closerId')
+    .select('_id leadId closerId assignedCloserId');
 
-  const transferredIds = [];
+  const transferredAwayIds = [];
   const cancelledIds = [];
+  let handedToCloser = 0;
 
   for (const cb of pending) {
     const lead = cb.leadId;
@@ -59,17 +92,22 @@ export async function healStaleAgentCallbacks(agentId) {
     }
 
     if (lead.stage === 'closed_sale') {
-      transferredIds.push(cb._id);
+      transferredAwayIds.push(cb._id);
       continue;
     }
 
-    // Active but no longer with this agent (pool / claimed by closer)
+    // Active but no longer with this agent → hand to closer when possible
     if (
       lead.stage === 'active' &&
       (lead.status !== 'with_agent' ||
         String(lead.agentId) !== String(agentId))
     ) {
-      transferredIds.push(cb._id);
+      if (lead.closerId) {
+        await transferPendingCallbacksToCloser(lead._id, lead.closerId);
+        handedToCloser += 1;
+      } else {
+        transferredAwayIds.push(cb._id);
+      }
     }
   }
 
@@ -78,9 +116,9 @@ export async function healStaleAgentCallbacks(agentId) {
     'alerts.exactTimeFired': true,
   };
 
-  if (transferredIds.length) {
+  if (transferredAwayIds.length) {
     await Callback.updateMany(
-      { _id: { $in: transferredIds } },
+      { _id: { $in: transferredAwayIds } },
       { $set: { status: 'transferred', ...silence } }
     );
   }
@@ -92,7 +130,8 @@ export async function healStaleAgentCallbacks(agentId) {
   }
 
   return {
-    transferred: transferredIds.length,
+    transferred: transferredAwayIds.length,
     cancelled: cancelledIds.length,
+    handedToCloser,
   };
 }

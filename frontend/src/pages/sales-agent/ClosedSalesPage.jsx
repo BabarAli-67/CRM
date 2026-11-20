@@ -85,8 +85,7 @@ export default function ClosedSalesPage() {
                         {row.businessName}
                       </p>
                       <p className="mt-0.5 text-xs text-zinc-500">
-                        {row.phone || '—'}
-                      </p>
+                        {row.businessPhone || row.personalPhone || '—'}                      </p>
                     </td>
                     <td className="px-4 py-3.5 text-zinc-300">
                       {formatPaymentSummary(row.payment)}

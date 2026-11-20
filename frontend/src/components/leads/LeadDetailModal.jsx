@@ -77,24 +77,45 @@ const formatExpiry = (raw) => {
 const emptyFormFromLead = (lead) => ({
   clientName: lead?.clientName || '',
   businessName: lead?.businessName || '',
-  phone: lead?.phone || '',
-  workEmail: lead?.workEmail || '',
+  personalPhone: lead?.personalPhone || '',
+  businessPhone: lead?.businessPhone || '',
+  businessEmail: lead?.businessEmail || '',
   personalEmail: lead?.personalEmail || '',
   websiteLink: lead?.websiteLink || '',
   gmbLink: lead?.gmbLink || '',
-  servicesArea: lead?.servicesArea || '',
-  serviceOffered: lead?.serviceOffered || '',
-  salesAmount:
-    lead?.salesAmount != null && lead?.salesAmount !== ''
-      ? String(lead.salesAmount)
+  serviceAreas: lead?.serviceAreas || '',
+  servicesOffered: lead?.servicesOffered || '',
+  paymentOffered:
+    lead?.paymentOffered != null && lead?.paymentOffered !== ''
+      ? String(lead.paymentOffered)
+      : lead?.salesAmount != null && lead?.salesAmount !== ''
+        ? String(lead.salesAmount)
+        : '',
+  paymentReceived:
+    lead?.paymentReceived != null && lead?.paymentReceived !== ''
+      ? String(lead.paymentReceived)
+      : '0',
+  paymentPending:
+    lead?.paymentPending != null && lead?.paymentPending !== ''
+      ? String(lead.paymentPending)
       : '',
   notes: lead?.notes || '',
   paymentMethod: lead?.payment?.method || 'via_link',
   otherDetails: lead?.payment?.otherDetails || '',
+  linkUrl: lead?.payment?.linkUrl || '',
+  cardHolderName: lead?.payment?.cardHolderName || '',
+  billingZip: lead?.payment?.billingZip || '',
   cardNumber: '',
   cardExpiry: '',
   cardCvv: '',
 });
+
+const computePendingDisplay = (offeredRaw, receivedRaw) => {
+  const offered = Number(String(offeredRaw ?? '').trim());
+  const received = Number(String(receivedRaw ?? '').trim() || '0');
+  if (Number.isNaN(offered) || Number.isNaN(received)) return '';
+  return String(Math.max(0, offered - received));
+};
 
 const normalizeUrl = (raw) => {
   const v = String(raw || '').trim();
@@ -108,6 +129,7 @@ const normalizeUrl = (raw) => {
  * Never renders cardReferenceToken.
  *
  * @param {boolean} [canEdit] — closer may tweak details before Move to CST
+ * @param {boolean} [initialEditing] — open already in edit mode when canEdit
  * @param {(lead: object) => void} [onLeadUpdated]
  */
 export default function LeadDetailModal({
@@ -117,6 +139,7 @@ export default function LeadDetailModal({
   footer = null,
   headerActions = null,
   canEdit = false,
+  initialEditing = false,
   onLeadUpdated = null,
 }) {
   const queryClient = useQueryClient();
@@ -126,10 +149,10 @@ export default function LeadDetailModal({
 
   useEffect(() => {
     if (!lead) return;
-    setEditing(false);
+    setEditing(Boolean(canEdit && initialEditing));
     setEditError('');
     setForm(emptyFormFromLead(lead));
-  }, [lead]);
+  }, [lead, canEdit, initialEditing]);
 
   const detectedBrand = useMemo(
     () => detectCardBrand(form.cardNumber),
@@ -163,12 +186,26 @@ export default function LeadDetailModal({
   const isClosed = lead.stage === 'closed_sale';
 
   const setField = (key) => (e) => {
-    setForm((f) => ({ ...f, [key]: e.target.value }));
+    const nextValue = e.target.value;
+    setForm((f) => {
+      const next = { ...f, [key]: nextValue };
+      if (key === 'paymentOffered' || key === 'paymentReceived') {
+        next.paymentPending = computePendingDisplay(
+          key === 'paymentOffered' ? nextValue : next.paymentOffered,
+          key === 'paymentReceived' ? nextValue : next.paymentReceived
+        );
+      }
+      return next;
+    });
   };
 
   const buildPaymentPayload = () => {
     if (form.paymentMethod === 'via_link') {
-      return { method: 'via_link' };
+      const url = String(form.linkUrl || '').trim();
+      if (!url) {
+        return { error: 'Enter the payment link / reference URL.' };
+      }
+      return { method: 'via_link', linkUrl: normalizeUrl(url) || url };
     }
     if (form.paymentMethod === 'other') {
       const details = form.otherDetails.trim();
@@ -178,6 +215,15 @@ export default function LeadDetailModal({
         };
       }
       return { method: 'other', otherDetails: details };
+    }
+
+    const holder = form.cardHolderName.trim();
+    const zip = form.billingZip.trim();
+    if (!holder) {
+      return { error: 'Name on Card is required.' };
+    }
+    if (!zip) {
+      return { error: 'Billing Zip Code is required.' };
     }
 
     // Card — if no new number entered, keep existing card payment as-is
@@ -191,6 +237,8 @@ export default function LeadDetailModal({
           cardReferenceToken:
             payment.cardReferenceToken ||
             `local_${payment.cardBrand || 'other'}_${payment.cardLast4}_${Date.now()}`,
+          cardHolderName: holder,
+          billingZip: zip,
         };
       }
       return { error: 'Enter a card number, or choose another payment method.' };
@@ -226,6 +274,8 @@ export default function LeadDetailModal({
       cardLast4,
       cardBrand: brandId,
       cardReferenceToken: `local_${brandId}_${cardLast4}_${Date.now()}`,
+      cardHolderName: holder,
+      billingZip: zip,
     };
   };
 
@@ -233,46 +283,60 @@ export default function LeadDetailModal({
     e.preventDefault();
     setEditError('');
 
-    if (!form.businessName.trim() || !form.phone.trim()) {
-      setEditError('Business name and phone are required.');
+    const personalPhone = form.personalPhone.trim() || null;
+    const businessPhone = form.businessPhone.trim() || null;
+    if (!form.businessName.trim() || (!personalPhone && !businessPhone)) {
+      setEditError('Business name and at least one phone are required.');
       return;
     }
 
-    const salesRaw = form.salesAmount.trim();
-    let salesAmount = null;
+    const offeredRaw = form.paymentOffered.trim();
+    let paymentOffered = null;
+    let paymentReceived = Number(form.paymentReceived.trim() || '0');
+    if (Number.isNaN(paymentReceived) || paymentReceived < 0) {
+      setEditError('Payment received must be a valid non-negative number.');
+      return;
+    }
+
     if (isClosed) {
-      if (salesRaw === '') {
-        setEditError('Sales Amount is required.');
+      if (offeredRaw === '') {
+        setEditError('Payment Offered is required.');
         return;
       }
-      const n = Number(salesRaw);
+      const n = Number(offeredRaw);
       if (Number.isNaN(n) || n < 0) {
-        setEditError('Sales amount must be a valid non-negative number.');
+        setEditError('Payment offered must be a valid non-negative number.');
         return;
       }
-      salesAmount = n;
-    } else if (salesRaw !== '') {
-      const n = Number(salesRaw);
+      paymentOffered = n;
+    } else if (offeredRaw !== '') {
+      const n = Number(offeredRaw);
       if (Number.isNaN(n) || n < 0) {
-        setEditError('Sales amount must be a valid non-negative number.');
+        setEditError('Payment offered must be a valid non-negative number.');
         return;
       }
-      salesAmount = n;
+      paymentOffered = n;
     }
 
     const payload = {
       clientName: form.clientName.trim() || null,
       businessName: form.businessName.trim(),
-      phone: form.phone.trim(),
-      workEmail: form.workEmail.trim() || null,
+      personalPhone,
+      businessPhone,
+      businessEmail: form.businessEmail.trim() || null,
       personalEmail: form.personalEmail.trim() || null,
       websiteLink: normalizeUrl(form.websiteLink),
       gmbLink: normalizeUrl(form.gmbLink),
-      servicesArea: form.servicesArea.trim() || null,
-      serviceOffered: form.serviceOffered.trim() || null,
-      salesAmount,
+      serviceAreas: form.serviceAreas.trim() || null,
+      servicesOffered: form.servicesOffered.trim() || null,
       notes: form.notes.trim() || null,
     };
+    if (paymentOffered != null) {
+      payload.paymentOffered = paymentOffered;
+      payload.paymentReceived = paymentReceived;
+    } else if (form.paymentReceived.trim() !== '') {
+      payload.paymentReceived = paymentReceived;
+    }
 
     if (isClosed) {
       const built = buildPaymentPayload();
@@ -320,12 +384,18 @@ export default function LeadDetailModal({
               id="lead-detail-title"
               className="font-display text-lg font-semibold text-white"
             >
-              {editing ? 'Edit closed sale' : lead.businessName || 'Lead details'}
+              {editing
+                ? isClosed
+                  ? 'Edit closed sale'
+                  : 'Edit lead'
+                : lead.businessName || 'Lead details'}
             </h2>
             <p className="mt-0.5 text-sm text-zinc-400">
               {editing
-                ? 'Update intake, payment, and notes before CST handoff'
-                : lead.phone || '—'}
+                ? isClosed
+                  ? 'Update intake, payment, and notes before CST handoff'
+                  : 'Update intake details — saves overwrite the lead record'
+                : lead.businessPhone || lead.personalPhone || '—'}
             </p>
           </div>
           <div className="flex shrink-0 items-center gap-2">
@@ -350,14 +420,6 @@ export default function LeadDetailModal({
             >
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <label className={labelClass}>
-                  <span className="text-zinc-400">Client Name</span>
-                  <input
-                    value={form.clientName}
-                    onChange={setField('clientName')}
-                    className={fieldClass}
-                  />
-                </label>
-                <label className={labelClass}>
                   <span className="text-zinc-400">Business Name *</span>
                   <input
                     required
@@ -367,20 +429,26 @@ export default function LeadDetailModal({
                   />
                 </label>
                 <label className={labelClass}>
-                  <span className="text-zinc-400">Phone *</span>
+                  <span className="text-zinc-400">Client Name</span>
                   <input
-                    required
-                    value={form.phone}
-                    onChange={setField('phone')}
+                    value={form.clientName}
+                    onChange={setField('clientName')}
                     className={fieldClass}
                   />
                 </label>
                 <label className={labelClass}>
-                  <span className="text-zinc-400">Business Email</span>
+                  <span className="text-zinc-400">Personal Phone</span>
                   <input
-                    type="email"
-                    value={form.workEmail}
-                    onChange={setField('workEmail')}
+                    value={form.personalPhone}
+                    onChange={setField('personalPhone')}
+                    className={fieldClass}
+                  />
+                </label>
+                <label className={labelClass}>
+                  <span className="text-zinc-400">Business Phone</span>
+                  <input
+                    value={form.businessPhone}
+                    onChange={setField('businessPhone')}
                     className={fieldClass}
                   />
                 </label>
@@ -394,18 +462,11 @@ export default function LeadDetailModal({
                   />
                 </label>
                 <label className={labelClass}>
-                  <span className="text-zinc-400">Service Area</span>
+                  <span className="text-zinc-400">Business Email</span>
                   <input
-                    value={form.servicesArea}
-                    onChange={setField('servicesArea')}
-                    className={fieldClass}
-                  />
-                </label>
-                <label className={`${labelClass} sm:col-span-2`}>
-                  <span className="text-zinc-400">Services Offered</span>
-                  <input
-                    value={form.serviceOffered}
-                    onChange={setField('serviceOffered')}
+                    type="email"
+                    value={form.businessEmail}
+                    onChange={setField('businessEmail')}
                     className={fieldClass}
                   />
                 </label>
@@ -430,23 +491,100 @@ export default function LeadDetailModal({
                   />
                 </label>
                 <label className={labelClass}>
-                  <span className="text-zinc-400">
-                    Sales Amount {isClosed ? '*' : ''}
-                  </span>
-                  <div className="relative">
-                    <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-zinc-500">
-                      $
+                  <span className="text-zinc-400">Service Areas</span>
+                  <input
+                    value={form.serviceAreas}
+                    onChange={setField('serviceAreas')}
+                    className={fieldClass}
+                  />
+                </label>
+                <label className={labelClass}>
+                  <span className="text-zinc-400">Services Offered</span>
+                  <input
+                    value={form.servicesOffered}
+                    onChange={setField('servicesOffered')}
+                    className={fieldClass}
+                  />
+                </label>
+                <div className="grid grid-cols-1 gap-3 sm:col-span-2 sm:grid-cols-3">
+                  <label className={labelClass}>
+                    <span className="text-zinc-400">
+                      Payment Offered {isClosed ? '*' : ''}
                     </span>
-                    <input
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      required={isClosed}
-                      value={form.salesAmount}
-                      onChange={setField('salesAmount')}
-                      className={`${fieldClass} pl-7`}
-                    />
-                  </div>
+                    <div className="relative">
+                      <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-zinc-500">
+                        $
+                      </span>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        required={isClosed}
+                        value={form.paymentOffered}
+                        onChange={setField('paymentOffered')}
+                        className={`${fieldClass} pl-7`}
+                      />
+                    </div>
+                  </label>
+                  <label className={labelClass}>
+                    <span className="text-zinc-400">
+                      Payment Received {isClosed ? '*' : ''}
+                    </span>
+                    <div className="relative">
+                      <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-zinc-500">
+                        $
+                      </span>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        required={isClosed}
+                        value={form.paymentReceived}
+                        onChange={setField('paymentReceived')}
+                        className={`${fieldClass} pl-7`}
+                      />
+                    </div>
+                  </label>
+                  <label className={labelClass}>
+                    <span className="text-zinc-400">Payment Pending</span>
+                    <div className="relative">
+                      <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-zinc-500">
+                        $
+                      </span>
+                      <input
+                        readOnly
+                        type="number"
+                        value={
+                          form.paymentPending ||
+                          computePendingDisplay(
+                            form.paymentOffered,
+                            form.paymentReceived
+                          )
+                        }
+                        className={`${fieldClass} pl-7`}
+                        tabIndex={-1}
+                        aria-readonly="true"
+                      />
+                    </div>
+                  </label>
+                </div>
+                <label className={labelClass}>
+                  <span className="text-zinc-400">Agent Name</span>
+                  <input
+                    readOnly
+                    value={formatUserRef(lead.agentId) || '—'}
+                    className={`${fieldClass} opacity-90`}
+                    tabIndex={-1}
+                  />
+                </label>
+                <label className={labelClass}>
+                  <span className="text-zinc-400">Assigned Closer</span>
+                  <input
+                    readOnly
+                    value={formatUserRef(lead.closerId) || '—'}
+                    className={`${fieldClass} opacity-90`}
+                    tabIndex={-1}
+                  />
                 </label>
               </div>
 
@@ -550,7 +688,40 @@ export default function LeadDetailModal({
                           />
                         </label>
                       </div>
+                      <label className={labelClass}>
+                        <span className="text-zinc-400">Name on Card</span>
+                        <input
+                          value={form.cardHolderName}
+                          onChange={setField('cardHolderName')}
+                          className={fieldClass}
+                          autoComplete="off"
+                        />
+                      </label>
+                      <label className={labelClass}>
+                        <span className="text-zinc-400">Billing Zip Code</span>
+                        <input
+                          value={form.billingZip}
+                          onChange={setField('billingZip')}
+                          className={fieldClass}
+                          autoComplete="off"
+                        />
+                      </label>
                     </div>
+                  ) : null}
+
+                  {form.paymentMethod === 'via_link' ? (
+                    <label className={labelClass}>
+                      <span className="text-zinc-400">
+                        Payment link / reference
+                      </span>
+                      <input
+                        type="url"
+                        value={form.linkUrl}
+                        onChange={setField('linkUrl')}
+                        placeholder="https://"
+                        className={fieldClass}
+                      />
+                    </label>
                   ) : null}
 
                   {form.paymentMethod === 'other' ? (
@@ -601,11 +772,12 @@ export default function LeadDetailModal({
               <Section title="Business & contact">
                 <Row label="Client">{lead.clientName}</Row>
                 <Row label="Business">{lead.businessName}</Row>
-                <Row label="Phone">{lead.phone}</Row>
-                <Row label="Business email">{lead.workEmail}</Row>
+                <Row label="Personal phone">{lead.personalPhone}</Row>
+                <Row label="Business phone">{lead.businessPhone}</Row>
+                <Row label="Business email">{lead.businessEmail}</Row>
                 <Row label="Personal email">{lead.personalEmail}</Row>
-                <Row label="Service area">{lead.servicesArea}</Row>
-                <Row label="Services">{lead.serviceOffered}</Row>
+                <Row label="Service areas">{lead.serviceAreas}</Row>
+                <Row label="Services">{lead.servicesOffered}</Row>
               </Section>
 
               <Section title="Web presence">
@@ -623,7 +795,23 @@ export default function LeadDetailModal({
               </Section>
 
               <Section title="Sales & payment">
-                <Row label="Sales amount">{formatMoney(lead.salesAmount)}</Row>
+                <Row label="Payment offered">
+                  {formatMoney(lead.paymentOffered ?? lead.salesAmount)}
+                </Row>
+                <Row label="Payment received">
+                  {formatMoney(lead.paymentReceived)}
+                </Row>
+                <Row label="Payment pending">
+                  {formatMoney(
+                    lead.paymentPending != null
+                      ? lead.paymentPending
+                      : Math.max(
+                          0,
+                          (Number(lead.paymentOffered ?? lead.salesAmount) ||
+                            0) - (Number(lead.paymentReceived) || 0)
+                        )
+                  )}
+                </Row>
                 <Row label="Payment">{formatPaymentSummary(payment)}</Row>
                 {payment?.method === 'via_link' ? (
                   <Row label="Method">Payment Link</Row>
@@ -639,6 +827,10 @@ export default function LeadDetailModal({
                     <Row label="Card last 4">
                       {payment.cardLast4 ? `•••• ${payment.cardLast4}` : '—'}
                     </Row>
+                    <Row label="Name on card">
+                      {payment.cardHolderName || '—'}
+                    </Row>
+                    <Row label="Billing zip">{payment.billingZip || '—'}</Row>
                   </>
                 ) : null}
                 {payment?.method === 'other' ? (

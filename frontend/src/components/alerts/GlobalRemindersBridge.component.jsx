@@ -24,11 +24,6 @@ import { buildLeadFollowUpReminders } from '../../utils/leadReminders.js';
 /**
  * Always-on reminder bridge for department dashboards (Agent + Closer + CST).
  * Keeps independent 5-min (warning) + on-time (due) timers alive on every tab.
- * CST retention uses the same exact-time due window as Agent/Closer callbacks
- * (fiveMinFired pre-set so only the on-time phase arms).
- * Dismissing warning must never mute the due chime — each phase has its own flag:
- *   alerts.fiveMinFired  ≈ warningTriggered
- *   alerts.exactTimeFired ≈ dueTriggered
  */
 export default function GlobalRemindersBridge() {
   const { user } = useAuth();
@@ -37,15 +32,24 @@ export default function GlobalRemindersBridge() {
   const userId = user?._id;
 
   useEffect(() => {
+    let unlocked = false;
     const unlock = () => {
       unlockAudioPlayback();
       requestNotificationPermission();
-    };
-    window.addEventListener('pointerdown', unlock, { once: true, passive: true });
-    window.addEventListener('keydown', unlock, { once: true, passive: true });
-    return () => {
+      unlocked = true;
       window.removeEventListener('pointerdown', unlock);
       window.removeEventListener('keydown', unlock);
+      window.removeEventListener('click', unlock);
+    };
+    window.addEventListener('pointerdown', unlock, { passive: true });
+    window.addEventListener('keydown', unlock, { passive: true });
+    window.addEventListener('click', unlock, { passive: true });
+    return () => {
+      if (!unlocked) {
+        window.removeEventListener('pointerdown', unlock);
+        window.removeEventListener('keydown', unlock);
+        window.removeEventListener('click', unlock);
+      }
     };
   }, []);
 
@@ -57,14 +61,16 @@ export default function GlobalRemindersBridge() {
     queryKey: ['myCallbacks'],
     queryFn: () => getMyCallbacks(false),
     enabled: isAgent,
-    refetchInterval: 30_000,
+    refetchInterval: 5_000,
   });
 
   const { data: closerCallbacks = [] } = useQuery({
     queryKey: ['closerCallbacks'],
     queryFn: getMyCloserCallbacks,
     enabled: isCloser,
-    refetchInterval: 30_000,
+    refetchInterval: 5_000,
+    refetchIntervalInBackground: true,
+    staleTime: 0,
   });
 
   const { data: myLeads = [] } = useQuery({
@@ -99,7 +105,6 @@ export default function GlobalRemindersBridge() {
           (lead) =>
             lead?.handover?.retention?.at &&
             lead?.handover?.retention?.status === 'scheduled' &&
-            // Still awaiting CST dismiss / mark-done
             !Boolean(lead?.handover?.retention?.alerts?.exactTimeFired)
         )
         .map((lead) => ({
@@ -111,10 +116,8 @@ export default function GlobalRemindersBridge() {
             lead.updatedAt ||
             lead.createdAt,
           notifyUserIds: uid ? [uid] : [],
-          // Retention is desk-wide: ring for whichever CST Manager is signed in
           notifyAll: true,
           alerts: {
-            // Exact-time only — same as callbacks once fiveMin is skipped
             fiveMinFired: true,
             exactTimeFired: Boolean(
               lead.handover.retention.alerts?.exactTimeFired
@@ -122,7 +125,7 @@ export default function GlobalRemindersBridge() {
           },
           businessName: lead.businessName,
           clientName: lead.clientName,
-          phone: lead.phone,
+          phone: lead.businessPhone || lead.personalPhone || '',
           item: lead,
         }));
     }
@@ -137,47 +140,60 @@ export default function GlobalRemindersBridge() {
             kind: 'callback',
             triggerAt: cb.callbackAt,
             createdAt: cb.createdAt,
+            updatedAt: cb.updatedAt,
             notifyUserIds: agentId ? [String(agentId)] : [],
-            // warningTriggered / dueTriggered (persisted as fiveMinFired / exactTimeFired)
             alerts: {
               fiveMinFired: Boolean(cb.alerts?.fiveMinFired),
               exactTimeFired: Boolean(cb.alerts?.exactTimeFired),
             },
             businessName: cb.businessName,
-            phone: cb.phone,
+            phone: cb.businessPhone || cb.personalPhone || '',
             item: cb,
           };
         });
       return [
         ...callbackItems,
-        ...buildLeadFollowUpReminders(myLeads, userId, { role: 'sales_agent' }),
+        ...buildLeadFollowUpReminders(myLeads, userId, {
+          role: 'sales_agent',
+        }),
       ];
     }
 
     if (isCloser) {
-      // Closer personal callbacks — same dual-phase alerts as agent
+      const uid = String(userId || '');
       const callbackItems = (closerCallbacks || [])
         .filter((cb) => cb.status === 'pending')
+        .filter((cb) => {
+          const owner = String(cb.closerId?._id || cb.closerId || '');
+          const assigned = String(
+            cb.assignedCloserId?._id || cb.assignedCloserId || ''
+          );
+          return !uid || owner === uid || assigned === uid;
+        })
         .map((cb) => {
-          const closerId = cb.closerId?._id || cb.closerId || userId;
+          const notify = new Set();
+          const owner = cb.closerId?._id || cb.closerId;
+          const assigned = cb.assignedCloserId?._id || cb.assignedCloserId;
+          if (owner) notify.add(String(owner));
+          if (assigned) notify.add(String(assigned));
+          if (uid) notify.add(uid);
           return {
             id: cb._id,
             kind: 'closer_callback',
             triggerAt: cb.callbackAt,
             createdAt: cb.createdAt,
-            notifyUserIds: closerId ? [String(closerId)] : [String(userId)],
+            updatedAt: cb.updatedAt,
+            notifyUserIds: [...notify],
             alerts: {
               fiveMinFired: Boolean(cb.alerts?.fiveMinFired),
               exactTimeFired: Boolean(cb.alerts?.exactTimeFired),
             },
             businessName: cb.businessName,
-            phone: cb.phone,
+            phone: cb.businessPhone || cb.personalPhone || '',
             item: cb,
           };
         });
 
-      // Prefer closer_callback when a lead already has one — avoids double
-      // popups and flag races that can mute the due chime on the lead follow-up.
       const leadIdsCoveredByCloserCb = new Set(
         callbackItems
           .map((item) => {
@@ -209,8 +225,8 @@ export default function GlobalRemindersBridge() {
   ]);
 
   useReminderScheduler(reminderItems, {
+    pollIntervalMs: isCloser || isAgent ? 5_000 : undefined,
     markAlert: async ({ id, kind, fiveMinFired, exactTimeFired }) => {
-      // Phase-scoped only — never send both flags unless both were requested
       const patch = {
         ...(typeof fiveMinFired === 'boolean' ? { fiveMinFired } : {}),
         ...(typeof exactTimeFired === 'boolean' ? { exactTimeFired } : {}),
@@ -223,7 +239,6 @@ export default function GlobalRemindersBridge() {
       });
 
       if (kind === 'retention') {
-        // Same as callbacks: persist phase flag when the scheduler fires (and on OK)
         if (typeof exactTimeFired === 'boolean' && exactTimeFired) {
           queryClient.setQueryData(['retentionReminders'], (old) => {
             if (!Array.isArray(old)) return old;
@@ -273,12 +288,11 @@ export default function GlobalRemindersBridge() {
               : cb
           );
         });
-        // Keep assigned-leads follow-up flags in sync when this callback is lead-linked
         const cachedCallbacks =
           queryClient.getQueryData(['closerCallbacks']) || [];
-        const source = (Array.isArray(cachedCallbacks) ? cachedCallbacks : []).find(
-          (c) => String(c._id) === String(id)
-        );
+        const source = (
+          Array.isArray(cachedCallbacks) ? cachedCallbacks : []
+        ).find((c) => String(c._id) === String(id));
         const leadId = source?.leadId?._id || source?.leadId;
         if (leadId) {
           queryClient.setQueryData(['assignedLeads'], (old) => {

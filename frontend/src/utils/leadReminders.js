@@ -49,7 +49,7 @@ export function buildLeadFollowUpReminders(leads, currentUserId, options = {}) {
           exactTimeFired: false,
         },
         businessName: lead.businessName,
-        phone: lead.phone,
+        phone: lead.businessPhone || lead.personalPhone || '',
         item: lead,
       };
     });

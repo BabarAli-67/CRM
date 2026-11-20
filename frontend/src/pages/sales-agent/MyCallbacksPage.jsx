@@ -145,7 +145,7 @@ export default function MyCallbacksPage() {
 
       <CallbackForm
         open={composerOpen}
-        title={editTarget ? 'Edit Callback' : 'Schedule Callback'}
+        title={editTarget ? 'Edit Callback' : 'Schedule a Callback'}
         initialValues={editTarget}
         isSubmitting={saveMutation.isPending}
         onClose={closeComposer}

@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
-import { NavLink, useNavigate } from 'react-router-dom';
+import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { Clock3 } from 'lucide-react';
+import { Bell, Clock3, LogOut, Menu, X } from 'lucide-react';
 import AttendanceBanner from '../AttendanceBanner.component.jsx';
+import DockedChatWindowsHost from '../DockedChatWindowsHost.component.jsx';
 import GracefulExitModal from '../GracefulExitModal.component.jsx';
 import GlobalRemindersBridge from '../alerts/GlobalRemindersBridge.component.jsx';
+import MessengerIcon from '../MessengerIcon.component.jsx';
 import SessionIdentityBadge from '../SessionIdentityBadge.component.jsx';
 import useAuth from '../../hooks/useAuth.hook.js';
 import { getHistory, getTodayStatus } from '../../services/attendance.service.js';
@@ -17,24 +19,54 @@ const ROLE_LABELS = {
   tech_team: 'Tech Team',
 };
 
+/** Status pills — Black / White / Orange only (no emerald / amber / sky washes). */
 const PULSE_BADGE = {
-  on_duty: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20',
-  checked_out: 'bg-sky-500/10 text-sky-400 border-sky-500/20',
+  on_duty: 'bg-[#F25E26]/15 text-white border-[#F25E26]/50',
+  checked_out: 'bg-white/5 text-white border-white/15',
   pending_approval:
-    'bg-transparent text-amber-400 border-amber-500/40 border-dashed',
-  off_duty: 'bg-slate-500/10 text-slate-400 border-slate-500/20',
-  absent: 'bg-red-500/10 text-red-400 border-red-500/20',
-  weekend_off: 'bg-zinc-500/10 text-zinc-400 border-zinc-500/20',
-  unknown: 'bg-zinc-500/10 text-zinc-400 border-zinc-500/20',
+    'bg-transparent text-[#F25E26] border-[#F25E26]/50 border-dashed',
+  off_duty: 'bg-white/5 text-[#A3A3A3] border-white/10',
+  absent: 'bg-white/5 text-white border-white/20',
+  weekend_off: 'bg-white/5 text-[#A3A3A3] border-white/10',
+  unknown: 'bg-white/5 text-[#A3A3A3] border-white/10',
 };
 
-const navLinkClass = ({ isActive }) =>
-  [
-    'rounded-full px-3.5 py-1.5 text-sm font-medium transition-colors cursor-pointer',
-    isActive
-      ? 'bg-orange-600 text-white shadow-lg shadow-orange-600/20'
-      : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50',
-  ].join(' ');
+const pathOf = (to) => {
+  if (typeof to === 'string') return to.split('?')[0];
+  return to?.pathname || '';
+};
+
+const searchOf = (to) => {
+  if (typeof to === 'string') {
+    const i = to.indexOf('?');
+    return i >= 0 ? to.slice(i + 1) : '';
+  }
+  return String(to?.search || '').replace(/^\?/, '');
+};
+
+function isItemActive(item, pathname, search) {
+  const extras = item.alsoMatch || [];
+  if (
+    extras.some(
+      (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`)
+    )
+  ) {
+    return true;
+  }
+
+  const itemPath = pathOf(item.to);
+  const itemTab = item.matchTab ?? new URLSearchParams(searchOf(item.to)).get('tab');
+  if (itemTab != null) {
+    if (pathname !== itemPath) return false;
+    const currentTab =
+      new URLSearchParams(search).get('tab') || item.defaultTab || 'leads';
+    return currentTab === itemTab;
+  }
+  if (item.end === false) {
+    return pathname === itemPath || pathname.startsWith(`${itemPath}/`);
+  }
+  return pathname === itemPath;
+}
 
 const currentMonthValue = () => {
   // Match backend shiftDate calendar (Asia/Karachi)
@@ -234,11 +266,11 @@ function DepartmentKpiStrip({ role }) {
 
   return (
     <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-      <div className="bg-zinc-900/40 border border-zinc-800/60 rounded-xl p-5 hover:border-zinc-700/60 transition-all">
-        <p className="text-xs font-medium uppercase tracking-wider text-zinc-500">
+      <div className="rounded-xl border border-white/10 bg-[#111111] p-5 transition-all hover:border-white/15">
+        <p className="text-xs font-medium uppercase tracking-wider text-[#A3A3A3]">
           Shift Status
         </p>
-        <p className="mt-1 text-sm text-zinc-400">Current pulse</p>
+        <p className="mt-1 text-sm text-white/70">Current pulse</p>
         <span
           className={`mt-3 inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-semibold uppercase tracking-wider ${pulseClasses}`}
         >
@@ -246,24 +278,24 @@ function DepartmentKpiStrip({ role }) {
         </span>
       </div>
 
-      <div className="bg-zinc-900/40 border border-zinc-800/60 rounded-xl p-5 hover:border-zinc-700/60 transition-all">
-        <p className="text-xs font-medium uppercase tracking-wider text-zinc-500">
+      <div className="rounded-xl border border-white/10 bg-[#111111] p-5 transition-all hover:border-white/15">
+        <p className="text-xs font-medium uppercase tracking-wider text-[#A3A3A3]">
           Shift Window
         </p>
-        <div className="mt-3 flex items-center gap-2 text-zinc-100">
-          <Clock3 className="h-4 w-4 shrink-0 text-orange-400/80" aria-hidden />
+        <div className="mt-3 flex items-center gap-2 text-white">
+          <Clock3 className="h-4 w-4 shrink-0 text-[#F25E26]" aria-hidden />
           <p className="text-sm font-medium tabular-nums">
             {startLabel} – {endLabel}{' '}
-            <span className="text-zinc-500">PKT</span>
+            <span className="text-[#A3A3A3]">PKT</span>
           </p>
         </div>
       </div>
 
-      <div className="bg-zinc-900/40 border border-zinc-800/60 rounded-xl p-5 hover:border-zinc-700/60 transition-all">
-        <p className="text-xs font-medium uppercase tracking-wider text-zinc-500">
+      <div className="rounded-xl border border-white/10 bg-[#111111] p-5 transition-all hover:border-white/15">
+        <p className="text-xs font-medium uppercase tracking-wider text-[#A3A3A3]">
           {showClosedCount ? 'Activity' : 'Monthly Hours'}
         </p>
-        <p className="mt-1 text-sm text-zinc-400">{activityLabel}</p>
+        <p className="mt-1 text-sm text-white/70">{activityLabel}</p>
         <p className="mt-3 font-display text-2xl font-semibold tabular-nums text-white">
           {activityValue}
         </p>
@@ -272,69 +304,179 @@ function DepartmentKpiStrip({ role }) {
   );
 }
 
+function HeaderPulseDot() {
+  const { data: todayData } = useQuery({
+    queryKey: ['todayAttendance'],
+    queryFn: getTodayStatus,
+    refetchInterval: 30_000,
+  });
+  const pulse = derivePulse(todayData?.attendance);
+  const pulseClasses = PULSE_BADGE[pulse.key] || PULSE_BADGE.unknown;
+
+  return (
+    <span
+      className={`hidden items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wider sm:inline-flex ${pulseClasses}`}
+      title={`Shift: ${pulse.label}`}
+    >
+      <Bell className="h-3 w-3" aria-hidden />
+      {pulse.label}
+    </span>
+  );
+}
+
 /**
- * Shared premium shell for department dashboards (Sales Agent, Closer, CST, Tech).
- * Styling only — nav items and children remain role-specific.
+ * Shared SaaS shell — left sidebar + top header.
+ * Styling/layout only; routes, APIs, and reminder listeners stay intact.
  */
-export default function DepartmentShell({ title, roleLabel, navItems, children }) {
+export default function DepartmentShell({
+  title,
+  roleLabel,
+  navItems,
+  children,
+  /** When false, hide AttendanceBanner + KPI strip (page content only). */
+  showAttendanceChrome = true,
+}) {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   const role = user?.role;
   const displayRole = roleLabel || ROLE_LABELS[role] || role || 'Department';
+  const [mobileOpen, setMobileOpen] = useState(false);
 
   const handleLogout = () => {
     logout();
     navigate('/login', { replace: true });
   };
 
+  useEffect(() => {
+    setMobileOpen(false);
+  }, [location.pathname, location.search]);
+
+  useEffect(() => {
+    if (!mobileOpen) return undefined;
+    const onKey = (e) => {
+      if (e.key === 'Escape') setMobileOpen(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [mobileOpen]);
+
+  const sidebar = (
+    <div className="flex h-full w-64 flex-col border-r border-[#222222] bg-[#111111] text-white">
+      <div className="flex h-16 shrink-0 items-center gap-3 border-b border-[#222222] px-5">
+        <div className="min-w-0">
+          <img
+            src="/logo.webp"
+            alt="Flash Tech"
+            className="h-8 w-auto max-w-[148px] object-contain object-left"
+          />
+          <p className="mt-1 truncate text-[10px] font-medium uppercase tracking-wider text-[#A3A3A3]">
+            {displayRole}
+          </p>
+        </div>
+      </div>
+
+      <nav
+        className="flex-1 space-y-1 overflow-y-auto px-3 py-4"
+        aria-label={`${displayRole} navigation`}
+      >
+        {navItems.map((item) => {
+          const active = isItemActive(item, location.pathname, location.search);
+          const Icon = item.icon;
+          return (
+            <NavLink
+              key={`${pathOf(item.to)}?${searchOf(item.to)}:${item.label}`}
+              to={item.to}
+              end={item.end ?? true}
+              className={`flex min-h-11 items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition ${
+                active
+                  ? 'bg-[#F25E26] text-white'
+                  : 'text-[#A3A3A3] hover:bg-white/5 hover:text-white'
+              }`}
+            >
+              {Icon ? (
+                <Icon className="h-4 w-4 shrink-0" aria-hidden />
+              ) : (
+                <span
+                  className={`h-1.5 w-1.5 shrink-0 rounded-full ${
+                    active ? 'bg-white' : 'bg-white/30'
+                  }`}
+                  aria-hidden
+                />
+              )}
+              <span className="truncate">{item.label}</span>
+            </NavLink>
+          );
+        })}
+      </nav>
+
+      <div className="shrink-0 border-t border-[#222222] p-3">
+        <button
+          type="button"
+          onClick={handleLogout}
+          className="flex min-h-11 w-full cursor-pointer items-center gap-3 rounded-xl border border-white/10 px-3 py-2.5 text-sm font-medium text-white transition hover:border-white/20 hover:bg-white/5"
+        >
+          <LogOut className="h-4 w-4 shrink-0 text-[#A3A3A3]" aria-hidden />
+          Logout
+        </button>
+      </div>
+    </div>
+  );
+
   return (
-    <div className="flex min-h-screen flex-col bg-[#0B0C0E] text-white">
-      <AttendanceBanner />
+    <div className="flex h-screen overflow-hidden bg-[#0A0A0A] text-white">
       <GracefulExitModal />
       <GlobalRemindersBridge />
+      <MessengerIcon />
+      <DockedChatWindowsHost />
 
-      <header className="bg-zinc-900/60 backdrop-blur-md border-b border-zinc-800/80 sticky top-0 z-30 px-4 py-4 sm:px-8">
-        <div className="mx-auto flex w-full max-w-7xl flex-wrap items-center justify-between gap-4">
-          <div className="min-w-0">
-            <p className="bg-gradient-to-r from-[#FF4B26] via-[#F23B18] to-[#C92000] bg-clip-text text-xs font-bold italic tracking-wide text-transparent">
-              FLASH TECH
-            </p>
-            <h1 className="font-display text-xl font-semibold tracking-tight text-white sm:text-2xl">
+      <aside className="hidden h-full shrink-0 md:block">{sidebar}</aside>
+
+      {mobileOpen ? (
+        <div className="fixed inset-0 z-40 md:hidden">
+          <button
+            type="button"
+            aria-label="Close menu"
+            className="absolute inset-0 bg-black/70"
+            onClick={() => setMobileOpen(false)}
+          />
+          <div className="relative z-10 h-full w-64 shadow-2xl">{sidebar}</div>
+        </div>
+      ) : null}
+
+      <div className="flex min-w-0 flex-1 flex-col">
+        <header className="flex h-16 shrink-0 items-center justify-between gap-3 border-b border-[#222222] bg-[#111111] px-4 sm:px-6">
+          <div className="flex min-w-0 items-center gap-3">
+            <button
+              type="button"
+              className="inline-flex h-11 w-11 items-center justify-center rounded-xl text-white hover:bg-white/5 md:hidden"
+              aria-label="Open menu"
+              aria-expanded={mobileOpen}
+              onClick={() => setMobileOpen(true)}
+            >
+              {mobileOpen ? (
+                <X className="h-5 w-5" aria-hidden />
+              ) : (
+                <Menu className="h-5 w-5" aria-hidden />
+              )}
+            </button>
+            <h1 className="truncate font-display text-lg font-semibold tracking-tight text-white sm:text-xl">
               {title}
             </h1>
           </div>
-
-          <div className="flex flex-wrap items-center gap-3 sm:gap-4">
+          <div className="flex min-w-0 items-center gap-2 sm:gap-3">
+            <HeaderPulseDot />
             <SessionIdentityBadge user={user} roleLabel={displayRole} />
-            <nav
-              className="flex flex-wrap items-center gap-1 rounded-full border border-zinc-800/80 bg-zinc-900/40 p-1"
-              aria-label={`${displayRole} navigation`}
-            >
-              {navItems.map((item) => (
-                <NavLink
-                  key={item.to}
-                  to={item.to}
-                  end={item.end ?? true}
-                  className={navLinkClass}
-                >
-                  {item.label}
-                </NavLink>
-              ))}
-            </nav>
-            <button
-              type="button"
-              onClick={handleLogout}
-              className="cursor-pointer rounded-full border border-red-500/30 px-3.5 py-1.5 text-sm font-medium text-red-400 transition-colors hover:bg-red-500/10"
-            >
-              Logout
-            </button>
           </div>
-        </div>
-      </header>
+        </header>
 
-      <div className="max-w-7xl mx-auto w-full flex-1 px-6 py-8 space-y-6">
-        <DepartmentKpiStrip role={role} />
-        <div className="space-y-6">{children}</div>
+        <main className="min-h-0 flex-1 overflow-y-auto bg-[#0A0A0A] pb-24">
+          {showAttendanceChrome ? <AttendanceBanner /> : null}
+          <div className="mx-auto w-full max-w-7xl space-y-6 px-4 py-6 sm:px-6">
+            {showAttendanceChrome ? <DepartmentKpiStrip role={role} /> : null}
+            <div className="space-y-6">{children}</div>
+          </div>
+        </main>
       </div>
     </div>
   );

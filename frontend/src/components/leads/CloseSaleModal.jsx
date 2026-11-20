@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import useAuth from '../../hooks/useAuth.hook.js';
+import { createCloserCallback } from '../../services/callback.service.js';
 import {
   closeLead,
   getLeadById,
@@ -19,11 +20,85 @@ const fieldClass =
 
 const readOnlyClass = `${fieldClass} opacity-90`;
 
+const numInputClass =
+  'w-full rounded-lg border border-zinc-700 bg-zinc-900 py-2 text-center text-sm text-white outline-none transition focus:border-orange-500/50 focus:ring-2 focus:ring-orange-500/20 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none';
+
 const METHOD_OPTIONS = [
   { value: 'via_card', label: 'Card' },
   { value: 'via_link', label: 'Payment Link' },
   { value: 'other', label: 'Others' },
 ];
+
+const pad = (n) => String(n).padStart(2, '0');
+
+const digitsOnly = (raw, maxLen) => {
+  const d = String(raw || '').replace(/\D/g, '');
+  return maxLen ? d.slice(0, maxLen) : d;
+};
+
+const clampOnBlur = (raw, min, max, { padTo = 0 } = {}) => {
+  if (raw === '' || raw == null) return '';
+  const n = Number(raw);
+  if (Number.isNaN(n)) return '';
+  const clamped = Math.min(max, Math.max(min, Math.trunc(n)));
+  return padTo > 0 ? String(clamped).padStart(padTo, '0') : String(clamped);
+};
+
+const todayDateValue = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+};
+
+const splitDateTime = (value) => {
+  const d = value ? new Date(value) : null;
+  if (!d || Number.isNaN(d.getTime())) {
+    return { date: '', hour: '', minute: '', period: 'AM' };
+  }
+  let h24 = d.getHours();
+  const period = h24 >= 12 ? 'PM' : 'AM';
+  let h12 = h24 % 12;
+  if (h12 === 0) h12 = 12;
+  return {
+    date: `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`,
+    hour: pad(h12),
+    minute: pad(d.getMinutes()),
+    period,
+  };
+};
+
+const toIsoTimestamp = ({ date, hour, minute, period }) => {
+  if (
+    !date ||
+    hour === '' ||
+    minute === '' ||
+    hour == null ||
+    minute == null ||
+    !period
+  ) {
+    return null;
+  }
+  let h = Number(hour);
+  const mi = Number(minute);
+  if (
+    Number.isNaN(h) ||
+    Number.isNaN(mi) ||
+    h < 1 ||
+    h > 12 ||
+    mi < 0 ||
+    mi > 59
+  ) {
+    return null;
+  }
+  if (period === 'AM') {
+    if (h === 12) h = 0;
+  } else if (h !== 12) {
+    h += 12;
+  }
+  const [y, m, day] = date.split('-').map(Number);
+  const local = new Date(y, m - 1, day, h, mi, 0, 0);
+  if (Number.isNaN(local.getTime())) return null;
+  return local.toISOString();
+};
 
 /** Format expiry as MM/YY while typing. */
 const formatExpiry = (raw) => {
@@ -81,33 +156,53 @@ function CardBrandBadge({ brand }) {
 const emptyReview = {
   clientName: '',
   businessName: '',
-  phone: '',
-  workEmail: '',
+  personalPhone: '',
+  businessPhone: '',
+  businessEmail: '',
   personalEmail: '',
   websiteLink: '',
   gmbLink: '',
-  servicesArea: '',
-  serviceOffered: '',
-  salesAmount: '',
+  serviceAreas: '',
+  servicesOffered: '',
+  paymentOffered: '',
+  paymentReceived: '0',
+  paymentPending: '',
   notes: '',
+};
+
+const computePendingDisplay = (offeredRaw, receivedRaw) => {
+  const offered = Number(String(offeredRaw ?? '').trim());
+  const received = Number(String(receivedRaw ?? '').trim() || '0');
+  if (Number.isNaN(offered) || Number.isNaN(received)) return '';
+  return String(Math.max(0, offered - received));
 };
 
 const mapLeadToReview = (lead) => {
   if (!lead) return emptyReview;
+  const paymentOffered =
+    lead.paymentOffered != null && lead.paymentOffered !== ''
+      ? String(lead.paymentOffered)
+      : lead.salesAmount != null && lead.salesAmount !== ''
+        ? String(lead.salesAmount)
+        : '';
+  const paymentReceived =
+    lead.paymentReceived != null && lead.paymentReceived !== ''
+      ? String(lead.paymentReceived)
+      : '0';
   return {
     clientName: lead.clientName || '',
     businessName: lead.businessName || '',
-    phone: lead.phone || '',
-    workEmail: lead.workEmail || '',
+    personalPhone: lead.personalPhone || '',
+    businessPhone: lead.businessPhone || '',
+    businessEmail: lead.businessEmail || '',
     personalEmail: lead.personalEmail || '',
     websiteLink: lead.websiteLink || '',
     gmbLink: lead.gmbLink || '',
-    servicesArea: lead.servicesArea || '',
-    serviceOffered: lead.serviceOffered || '',
-    salesAmount:
-      lead.salesAmount != null && lead.salesAmount !== ''
-        ? String(lead.salesAmount)
-        : '',
+    serviceAreas: lead.serviceAreas || '',
+    servicesOffered: lead.servicesOffered || '',
+    paymentOffered,
+    paymentReceived,
+    paymentPending: computePendingDisplay(paymentOffered, paymentReceived),
     notes: lead.notes || '',
   };
 };
@@ -184,6 +279,7 @@ export default function CloseSaleModal({ open, lead, onClose, onSuccess }) {
   const { user } = useAuth();
   const queryClient = useQueryClient();
   const isAgent = user?.role === 'sales_agent';
+  const isCloser = user?.role === 'closer';
   const leadId = lead?._id || null;
 
   const [review, setReview] = useState(emptyReview);
@@ -192,7 +288,16 @@ export default function CloseSaleModal({ open, lead, onClose, onSuccess }) {
   const [cardNumber, setCardNumber] = useState('');
   const [cardExpiry, setCardExpiry] = useState('');
   const [cardCvv, setCardCvv] = useState('');
+  const [cardHolderName, setCardHolderName] = useState('');
+  const [billingZip, setBillingZip] = useState('');
+  const [linkUrl, setLinkUrl] = useState('');
   const [otherDetails, setOtherDetails] = useState('');
+  const [cbDate, setCbDate] = useState('');
+  const [cbHour, setCbHour] = useState('');
+  const [cbMinute, setCbMinute] = useState('');
+  const [cbPeriod, setCbPeriod] = useState('AM');
+  const [cbNotes, setCbNotes] = useState('');
+  const [originalCallbackAt, setOriginalCallbackAt] = useState(null);
   const [error, setError] = useState('');
   const [toast, setToast] = useState(false);
 
@@ -236,6 +341,17 @@ export default function CloseSaleModal({ open, lead, onClose, onSuccess }) {
           ? String(selectedLead.closerId)
           : ''
     );
+    const parts = splitDateTime(selectedLead.followUp?.callbackAt);
+    setCbDate(parts.date);
+    setCbHour(parts.hour);
+    setCbMinute(parts.minute);
+    setCbPeriod(parts.period || 'AM');
+    setCbNotes(selectedLead.followUp?.notes || '');
+    setOriginalCallbackAt(
+      selectedLead.followUp?.callbackAt
+        ? new Date(selectedLead.followUp.callbackAt).toISOString()
+        : null
+    );
   }, [open, selectedLead]);
 
   useEffect(() => {
@@ -244,6 +360,9 @@ export default function CloseSaleModal({ open, lead, onClose, onSuccess }) {
     setCardNumber('');
     setCardExpiry('');
     setCardCvv('');
+    setCardHolderName('');
+    setBillingZip('');
+    setLinkUrl('');
     setOtherDetails('');
     setError('');
   }, [open, leadId]);
@@ -259,10 +378,17 @@ export default function CloseSaleModal({ open, lead, onClose, onSuccess }) {
   }, [cvvMax]);
 
   const mutation = useMutation({
-    mutationFn: ({ id, payload }) => closeLead(id, payload),
+    mutationFn: async ({ id, payload, followUpUpsert }) => {
+      // Upsert follow-up while lead is still active (API requires stage: active)
+      if (followUpUpsert) {
+        await createCloserCallback(followUpUpsert);
+      }
+      return closeLead(id, payload);
+    },
     onSuccess: (data, variables) => {
       setError('');
       applyCloseCaches(queryClient, variables.id, data?.lead || null);
+      queryClient.invalidateQueries({ queryKey: ['closerCallbacks'] });
       setToast(true);
       onSuccess?.(data?.lead);
       onClose?.();
@@ -273,7 +399,17 @@ export default function CloseSaleModal({ open, lead, onClose, onSuccess }) {
   });
 
   const handleReviewChange = (field) => (e) => {
-    setReview((prev) => ({ ...prev, [field]: e.target.value }));
+    const nextValue = e.target.value;
+    setReview((prev) => {
+      const next = { ...prev, [field]: nextValue };
+      if (field === 'paymentOffered' || field === 'paymentReceived') {
+        next.paymentPending = computePendingDisplay(
+          field === 'paymentOffered' ? nextValue : next.paymentOffered,
+          field === 'paymentReceived' ? nextValue : next.paymentReceived
+        );
+      }
+      return next;
+    });
   };
 
   const handleCardNumberChange = (raw) => {
@@ -282,9 +418,17 @@ export default function CloseSaleModal({ open, lead, onClose, onSuccess }) {
   };
 
   const buildPayment = () => {
-    // Payment Link: selection alone is enough — no URL / reference fields
     if (method === 'via_link') {
-      return { payment: { method: 'via_link' } };
+      const url = String(linkUrl || '').trim();
+      if (!url) {
+        return { error: 'Enter the payment link / reference URL.' };
+      }
+      return {
+        payment: {
+          method: 'via_link',
+          linkUrl: normalizeUrl(url) || url,
+        },
+      };
     }
 
     if (method === 'other') {
@@ -305,6 +449,8 @@ export default function CloseSaleModal({ open, lead, onClose, onSuccess }) {
     const brandId = brandPayloadId(brand);
     const maxLen = maxCardDigits(brand);
     const minLen = brand.id === 'amex' ? 15 : brand.id === 'diners' ? 14 : 13;
+    const holder = cardHolderName.trim();
+    const zip = billingZip.trim();
 
     if (digits.length < minLen || digits.length > maxLen) {
       return {
@@ -324,6 +470,12 @@ export default function CloseSaleModal({ open, lead, onClose, onSuccess }) {
         error: `Enter a valid ${brand.cvvLength}-digit CVC / CVV.`,
       };
     }
+    if (!holder) {
+      return { error: 'Name on Card is required.' };
+    }
+    if (!zip) {
+      return { error: 'Billing Zip Code is required.' };
+    }
 
     const cardLast4 = digits.slice(-4);
     const cardReferenceToken = `local_${brandId}_${cardLast4}_${Date.now()}`;
@@ -334,6 +486,9 @@ export default function CloseSaleModal({ open, lead, onClose, onSuccess }) {
         cardLast4,
         cardBrand: brandId,
         cardReferenceToken,
+        cardHolderName: holder,
+        billingZip: zip,
+        cardExpiry: cardExpiry.trim(),
       },
     };
   };
@@ -342,8 +497,10 @@ export default function CloseSaleModal({ open, lead, onClose, onSuccess }) {
     e.preventDefault();
     setError('');
 
-    if (!review.businessName.trim() || !review.phone.trim()) {
-      setError('Business name and phone are required.');
+    const personalPhone = review.personalPhone.trim() || null;
+    const businessPhone = review.businessPhone.trim() || null;
+    if (!review.businessName.trim() || (!personalPhone && !businessPhone)) {
+      setError('Business name and at least one phone are required.');
       return;
     }
 
@@ -352,14 +509,19 @@ export default function CloseSaleModal({ open, lead, onClose, onSuccess }) {
       return;
     }
 
-    const salesRaw = review.salesAmount.trim();
-    if (salesRaw === '') {
-      setError('Sales Amount is required.');
+    const offeredRaw = review.paymentOffered.trim();
+    if (offeredRaw === '') {
+      setError('Payment Offered is required.');
       return;
     }
-    const salesAmount = Number(salesRaw);
-    if (Number.isNaN(salesAmount) || salesAmount < 0) {
-      setError('Sales amount must be a valid non-negative number.');
+    const paymentOffered = Number(offeredRaw);
+    if (Number.isNaN(paymentOffered) || paymentOffered < 0) {
+      setError('Payment offered must be a valid non-negative number.');
+      return;
+    }
+    const paymentReceived = Number(review.paymentReceived.trim() || '0');
+    if (Number.isNaN(paymentReceived) || paymentReceived < 0) {
+      setError('Payment received must be a valid non-negative number.');
       return;
     }
 
@@ -369,18 +531,51 @@ export default function CloseSaleModal({ open, lead, onClose, onSuccess }) {
       return;
     }
 
+    let followUpUpsert = null;
+    const hasAnyCbField = Boolean(cbDate || cbHour || cbMinute || cbNotes.trim());
+    if (hasAnyCbField) {
+      const normalizedHour = clampOnBlur(cbHour, 1, 12, { padTo: 2 });
+      const normalizedMinute = clampOnBlur(cbMinute, 0, 59, { padTo: 2 });
+      setCbHour(normalizedHour);
+      setCbMinute(normalizedMinute);
+      const iso = toIsoTimestamp({
+        date: cbDate,
+        hour: normalizedHour,
+        minute: normalizedMinute,
+        period: cbPeriod,
+      });
+      if (!iso) {
+        setError('Provide a valid scheduled callback date and time, or clear those fields.');
+        return;
+      }
+      const changed =
+        !originalCallbackAt ||
+        new Date(iso).getTime() !== new Date(originalCallbackAt).getTime() ||
+        String(cbNotes || '').trim() !==
+          String(selectedLead.followUp?.notes || '').trim();
+      if (changed && isCloser) {
+        followUpUpsert = {
+          leadId: selectedLead._id,
+          callbackAt: iso,
+          notes: cbNotes.trim() || null,
+        };
+      }
+    }
+
     const payload = {
       payment: built.payment,
       clientName: review.clientName.trim() || null,
       businessName: review.businessName.trim(),
-      phone: review.phone.trim(),
-      workEmail: review.workEmail.trim() || null,
+      personalPhone,
+      businessPhone,
+      businessEmail: review.businessEmail.trim() || null,
       personalEmail: review.personalEmail.trim() || null,
       websiteLink: normalizeUrl(review.websiteLink),
       gmbLink: normalizeUrl(review.gmbLink),
-      servicesArea: review.servicesArea.trim() || null,
-      serviceOffered: review.serviceOffered.trim() || null,
-      salesAmount,
+      serviceAreas: review.serviceAreas.trim() || null,
+      servicesOffered: review.servicesOffered.trim() || null,
+      paymentOffered,
+      paymentReceived,
       notes: review.notes.trim() || null,
     };
 
@@ -388,7 +583,7 @@ export default function CloseSaleModal({ open, lead, onClose, onSuccess }) {
       payload.closerId = closerId;
     }
 
-    mutation.mutate({ id: selectedLead._id, payload });
+    mutation.mutate({ id: selectedLead._id, payload, followUpUpsert });
   };
 
   return (
@@ -426,10 +621,12 @@ export default function CloseSaleModal({ open, lead, onClose, onSuccess }) {
                 id="close-sale-modal-title"
                 className="font-display text-lg font-semibold text-white"
               >
-                Move to Closed Sale
+                {isCloser ? 'Confirm & Close' : 'Move to Closed Sale'}
               </h3>
               <p className="mt-1 text-sm text-zinc-400">
-                Review full intake · assign closer · capture payment
+                {isCloser
+                  ? 'Review intake · payment · optional follow-up schedule'
+                  : 'Review full intake · assign closer · capture payment'}
               </p>
             </div>
 
@@ -459,11 +656,18 @@ export default function CloseSaleModal({ open, lead, onClose, onSuccess }) {
                     />
                   </label>
                   <label className="block space-y-1.5 text-sm text-zinc-300">
-                    <span>Phone Number *</span>
+                    <span>Personal Phone</span>
                     <input
-                      required
-                      value={review.phone}
-                      onChange={handleReviewChange('phone')}
+                      value={review.personalPhone}
+                      onChange={handleReviewChange('personalPhone')}
+                      className={fieldClass}
+                    />
+                  </label>
+                  <label className="block space-y-1.5 text-sm text-zinc-300">
+                    <span>Business Phone *</span>
+                    <input
+                      value={review.businessPhone}
+                      onChange={handleReviewChange('businessPhone')}
                       className={fieldClass}
                     />
                   </label>
@@ -471,8 +675,8 @@ export default function CloseSaleModal({ open, lead, onClose, onSuccess }) {
                     <span>Business Email</span>
                     <input
                       type="email"
-                      value={review.workEmail}
-                      onChange={handleReviewChange('workEmail')}
+                      value={review.businessEmail}
+                      onChange={handleReviewChange('businessEmail')}
                       className={fieldClass}
                       placeholder="ops@business.com"
                     />
@@ -507,10 +711,10 @@ export default function CloseSaleModal({ open, lead, onClose, onSuccess }) {
                     />
                   </label>
                   <label className="block space-y-1.5 text-sm text-zinc-300">
-                    <span>Service Area</span>
+                    <span>Service Areas</span>
                     <input
-                      value={review.servicesArea}
-                      onChange={handleReviewChange('servicesArea')}
+                      value={review.serviceAreas}
+                      onChange={handleReviewChange('serviceAreas')}
                       className={fieldClass}
                       placeholder="City, State, or Region"
                     />
@@ -518,33 +722,72 @@ export default function CloseSaleModal({ open, lead, onClose, onSuccess }) {
                   <label className="block space-y-1.5 text-sm text-zinc-300">
                     <span>Services Offered</span>
                     <input
-                      value={review.serviceOffered}
-                      onChange={handleReviewChange('serviceOffered')}
+                      value={review.servicesOffered}
+                      onChange={handleReviewChange('servicesOffered')}
                       className={fieldClass}
                       placeholder="Website, SEO, Yelp"
                     />
                   </label>
-                  <label className="block space-y-1.5 text-sm text-zinc-300">
-                    <span>
-                      Sales Amount <span className="text-red-500">*</span>
-                    </span>
-                    <div className="relative">
-                      <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-zinc-500">
-                        $
+                  <div className="grid grid-cols-1 gap-4 sm:col-span-2 sm:grid-cols-3">
+                    <label className="block space-y-1.5 text-sm text-zinc-300">
+                      <span>
+                        Payment Offered <span className="text-red-500">*</span>
                       </span>
-                      <input
-                        required
-                        type="number"
-                        min="0"
-                        step="0.01"
-                        value={review.salesAmount}
-                        onChange={handleReviewChange('salesAmount')}
-                        className={`${fieldClass} pl-7`}
-                        placeholder="0.00"
-                        aria-required="true"
-                      />
-                    </div>
-                  </label>
+                      <div className="relative">
+                        <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-zinc-500">
+                          $
+                        </span>
+                        <input
+                          required
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={review.paymentOffered}
+                          onChange={handleReviewChange('paymentOffered')}
+                          className={`${fieldClass} pl-7`}
+                          placeholder="0.00"
+                          aria-required="true"
+                        />
+                      </div>
+                    </label>
+                    <label className="block space-y-1.5 text-sm text-zinc-300">
+                      <span>
+                        Payment Received <span className="text-red-500">*</span>
+                      </span>
+                      <div className="relative">
+                        <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-zinc-500">
+                          $
+                        </span>
+                        <input
+                          required
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={review.paymentReceived}
+                          onChange={handleReviewChange('paymentReceived')}
+                          className={`${fieldClass} pl-7`}
+                          placeholder="0"
+                          aria-required="true"
+                        />
+                      </div>
+                    </label>
+                    <label className="block space-y-1.5 text-sm text-zinc-300">
+                      <span>Payment Pending</span>
+                      <div className="relative">
+                        <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-zinc-500">
+                          $
+                        </span>
+                        <input
+                          readOnly
+                          type="number"
+                          value={review.paymentPending}
+                          className={`${fieldClass} pl-7`}
+                          tabIndex={-1}
+                          aria-readonly="true"
+                        />
+                      </div>
+                    </label>
+                  </div>
                   <label className="block space-y-1.5 text-sm text-zinc-300">
                     <span>Agent Name</span>
                     <input
@@ -600,7 +843,108 @@ export default function CloseSaleModal({ open, lead, onClose, onSuccess }) {
 
               <section className="space-y-3">
                 <h4 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
-                  Payment method
+                  Scheduled callback
+                </h4>
+                <p className="text-xs text-zinc-500">
+                  Prefills from the lead follow-up. Edit only if you need to
+                  override before closing.
+                </p>
+                <label className="block space-y-1.5 text-sm text-zinc-300">
+                  <span>Date</span>
+                  <input
+                    type="date"
+                    value={cbDate}
+                    onChange={(e) => setCbDate(e.target.value)}
+                    className={fieldClass}
+                    min={todayDateValue()}
+                  />
+                </label>
+                <div className="space-y-1.5">
+                  <p className="text-sm font-medium text-zinc-300">Time</p>
+                  <div className="grid grid-cols-3 gap-2">
+                    <label className="block space-y-1">
+                      <span className="text-[11px] uppercase tracking-wide text-zinc-500">
+                        Hour
+                      </span>
+                      <input
+                        type="number"
+                        inputMode="numeric"
+                        min={1}
+                        max={12}
+                        placeholder="HH"
+                        value={cbHour}
+                        onChange={(e) =>
+                          setCbHour(digitsOnly(e.target.value, 2))
+                        }
+                        onBlur={() =>
+                          setCbHour(clampOnBlur(cbHour, 1, 12, { padTo: 2 }))
+                        }
+                        className={numInputClass}
+                      />
+                    </label>
+                    <label className="block space-y-1">
+                      <span className="text-[11px] uppercase tracking-wide text-zinc-500">
+                        Minute
+                      </span>
+                      <input
+                        type="number"
+                        inputMode="numeric"
+                        min={0}
+                        max={59}
+                        placeholder="MM"
+                        value={cbMinute}
+                        onChange={(e) =>
+                          setCbMinute(digitsOnly(e.target.value, 2))
+                        }
+                        onBlur={() =>
+                          setCbMinute(
+                            clampOnBlur(cbMinute, 0, 59, { padTo: 2 })
+                          )
+                        }
+                        className={numInputClass}
+                      />
+                    </label>
+                    <div className="space-y-1">
+                      <span className="text-[11px] uppercase tracking-wide text-zinc-500">
+                        Period
+                      </span>
+                      <div className="flex h-[42px] overflow-hidden rounded-lg border border-zinc-700/80 bg-zinc-950 p-0.5">
+                        {['AM', 'PM'].map((p) => {
+                          const active = cbPeriod === p;
+                          return (
+                            <button
+                              key={p}
+                              type="button"
+                              onClick={() => setCbPeriod(p)}
+                              className={`flex-1 rounded-md text-xs font-semibold transition ${
+                                active
+                                  ? 'bg-orange-600 text-white shadow-sm'
+                                  : 'text-zinc-400 hover:text-zinc-200'
+                              }`}
+                            >
+                              {p}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <label className="block space-y-1.5 text-sm text-zinc-300">
+                  <span>Notes</span>
+                  <textarea
+                    rows={2}
+                    value={cbNotes}
+                    onChange={(e) => setCbNotes(e.target.value)}
+                    placeholder="Follow-up notes"
+                    className={`${fieldClass} resize-y`}
+                  />
+                </label>
+              </section>
+
+              <section className="space-y-3">
+                <h4 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
+                  Payment method *
                 </h4>
                 <div className="flex flex-wrap gap-2">
                   {METHOD_OPTIONS.map((opt) => {
@@ -612,7 +956,7 @@ export default function CloseSaleModal({ open, lead, onClose, onSuccess }) {
                         onClick={() => setMethod(opt.value)}
                         className={`rounded-full px-3.5 py-1.5 text-sm font-medium transition ${
                           active
-                            ? 'bg-orange-600 text-white shadow-lg shadow-orange-950/30'
+                            ? 'bg-flash-primary text-white shadow-lg shadow-orange-950/30'
                             : 'border border-zinc-700 text-zinc-300 hover:bg-zinc-800'
                         }`}
                       >
@@ -625,7 +969,7 @@ export default function CloseSaleModal({ open, lead, onClose, onSuccess }) {
                 {method === 'via_card' ? (
                   <div className="space-y-3">
                     <label className="block space-y-1.5 text-sm text-zinc-300">
-                      <span>Card Number</span>
+                      <span>Card Number *</span>
                       <div className="relative">
                         <input
                           required
@@ -653,14 +997,14 @@ export default function CloseSaleModal({ open, lead, onClose, onSuccess }) {
                         </span>
                       ) : (
                         <span className="text-[11px] text-zinc-500">
-                          Brand is detected automatically as you type
+                          Only last 4 + brand are stored — never the full card
                         </span>
                       )}
                     </label>
 
                     <div className="grid grid-cols-2 gap-3">
                       <label className="block space-y-1.5 text-sm text-zinc-300">
-                        <span>Expiry (MM/YY)</span>
+                        <span>Expiry (MM/YY) *</span>
                         <input
                           required
                           inputMode="numeric"
@@ -674,7 +1018,7 @@ export default function CloseSaleModal({ open, lead, onClose, onSuccess }) {
                         />
                       </label>
                       <label className="block space-y-1.5 text-sm text-zinc-300">
-                        <span>CVC / CVV</span>
+                        <span>CVC / CVV *</span>
                         <input
                           required
                           inputMode="numeric"
@@ -693,12 +1037,48 @@ export default function CloseSaleModal({ open, lead, onClose, onSuccess }) {
                         />
                       </label>
                     </div>
+                    <label className="block space-y-1.5 text-sm text-zinc-300">
+                      <span>Name on Card *</span>
+                      <input
+                        required
+                        value={cardHolderName}
+                        onChange={(e) => setCardHolderName(e.target.value)}
+                        placeholder="Name as printed on card"
+                        className={fieldClass}
+                        autoComplete="off"
+                      />
+                    </label>
+                    <label className="block space-y-1.5 text-sm text-zinc-300">
+                      <span>Billing Zip Code *</span>
+                      <input
+                        required
+                        value={billingZip}
+                        onChange={(e) => setBillingZip(e.target.value)}
+                        placeholder="e.g. 90210"
+                        className={fieldClass}
+                        autoComplete="off"
+                      />
+                    </label>
                   </div>
+                ) : null}
+
+                {method === 'via_link' ? (
+                  <label className="block space-y-1.5 text-sm text-zinc-300">
+                    <span>Payment link / reference *</span>
+                    <input
+                      required
+                      type="url"
+                      value={linkUrl}
+                      onChange={(e) => setLinkUrl(e.target.value)}
+                      placeholder="https://pay.example.com/…"
+                      className={fieldClass}
+                    />
+                  </label>
                 ) : null}
 
                 {method === 'other' ? (
                   <label className="block space-y-1.5 text-sm text-zinc-300">
-                    <span>Payment notes / mode</span>
+                    <span>Payment details *</span>
                     <textarea
                       required
                       rows={3}
@@ -731,9 +1111,13 @@ export default function CloseSaleModal({ open, lead, onClose, onSuccess }) {
               <button
                 type="submit"
                 disabled={mutation.isPending}
-                className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-500 disabled:opacity-60"
+                className="rounded-xl bg-flash-primary px-4 py-2 text-sm font-semibold text-white hover:bg-[#ff6a36] disabled:opacity-60"
               >
-                {mutation.isPending ? 'Closing…' : 'Confirm Close'}
+                {mutation.isPending
+                  ? 'Closing…'
+                  : isCloser
+                    ? 'Confirm & Close'
+                    : 'Confirm Close'}
               </button>
             </div>
           </form>

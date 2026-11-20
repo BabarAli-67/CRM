@@ -23,6 +23,22 @@ const formatTime = (value) => {
   });
 };
 
+const bannerShell =
+  'border-b border-[#222222] bg-[#0A0A0A] px-4 py-4 text-white';
+
+const bannerCard =
+  'mx-auto max-w-7xl rounded-xl border border-white/15 bg-[#111111] px-4 py-4 sm:px-5 border-l-4 border-l-[#F25E26]';
+
+const ctaClass =
+  'cursor-pointer rounded-xl bg-[#F25E26] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[#ff6a36] disabled:cursor-not-allowed disabled:opacity-60';
+
+const secondaryBtnClass =
+  'cursor-pointer rounded-xl border border-white/15 bg-transparent px-4 py-2 text-sm font-semibold text-white transition hover:border-white/25 hover:bg-white/5 disabled:opacity-60';
+
+/**
+ * Attendance strip — Matte Black + White + Flash Orange only.
+ * No amber / emerald / muddy washes.
+ */
 export default function AttendanceBanner() {
   const queryClient = useQueryClient();
   const { now, loading: clockLoading } = useShiftClock();
@@ -93,7 +109,9 @@ export default function AttendanceBanner() {
   }
 
   const errorLine = actionError ? (
-    <p className="mt-2 text-sm text-red-400">{actionError}</p>
+    <p className="mt-2 text-sm text-[#F25E26]" role="alert">
+      {actionError}
+    </p>
   ) : null;
 
   if (
@@ -101,21 +119,24 @@ export default function AttendanceBanner() {
     !attendance.checkOutTime
   ) {
     return (
-      <div className="border-b border-emerald-500/20 bg-emerald-500/10 px-4 py-3 text-emerald-100">
-        <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3 px-2 sm:px-4">
-          <p className="text-sm font-medium">
-            Checked in at {formatTime(attendance.checkInTime)}
-          </p>
+      <div className={bannerShell}>
+        <div className={`${bannerCard} flex flex-wrap items-center justify-between gap-3`}>
+          <div>
+            <p className="text-sm font-semibold text-white">On duty</p>
+            <p className="mt-0.5 text-sm text-[#A3A3A3]">
+              Checked in at {formatTime(attendance.checkInTime)}
+            </p>
+          </div>
           <button
             type="button"
             onClick={() => checkOutMutation.mutate()}
             disabled={checkOutMutation.isPending}
-            className="cursor-pointer rounded-full bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-emerald-500 disabled:opacity-60"
+            className={secondaryBtnClass}
           >
             {checkOutMutation.isPending ? 'Checking out…' : 'Check Out'}
           </button>
         </div>
-        {errorLine}
+        {errorLine ? <div className="mx-auto mt-2 max-w-7xl px-1">{errorLine}</div> : null}
       </div>
     );
   }
@@ -132,12 +153,14 @@ export default function AttendanceBanner() {
     const afterShiftStart = current >= shiftStartAt;
 
     return (
-      <div className="border-b border-amber-500/20 bg-amber-500/10 px-4 py-4 text-amber-100">
-        <div className="mx-auto max-w-7xl px-2 sm:px-4">
+      <div className={bannerShell}>
+        <div className={bannerCard}>
           {beforeCheckInOpens ? (
             <>
-              <p className="text-base font-semibold">Check-in not open yet</p>
-              <p className="mt-1 text-sm text-amber-200/80">
+              <p className="text-base font-semibold text-white">
+                Check-in not open yet
+              </p>
+              <p className="mt-1 text-sm text-[#A3A3A3]">
                 Check-in opens 20 minutes before shift (at{' '}
                 {formatTime(checkInOpensAt)}). Shift starts at{' '}
                 {formatTime(attendance.shiftStartAt)}.
@@ -145,27 +168,27 @@ export default function AttendanceBanner() {
             </>
           ) : withinOnTimeWindow ? (
             <>
-              <p className="text-base font-semibold">
+              <p className="text-base font-semibold text-white">
                 Mark your attendance for today’s shift
               </p>
-              <p className="mt-1 text-sm text-amber-200/80">
+              <p className="mt-1 text-sm text-[#A3A3A3]">
                 Shift starts at {formatTime(attendance.shiftStartAt)}.
               </p>
               <button
                 type="button"
                 onClick={() => checkInMutation.mutate()}
                 disabled={checkInMutation.isPending}
-                className="mt-3 cursor-pointer rounded-full bg-amber-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-amber-500 disabled:opacity-60"
+                className={`mt-3 ${ctaClass}`}
               >
                 {checkInMutation.isPending ? 'Marking…' : 'Mark Attendance'}
               </button>
             </>
           ) : afterShiftStart ? (
             <>
-              <p className="text-base font-semibold">
+              <p className="text-base font-semibold text-white">
                 On-time check-in window has closed
               </p>
-              <p className="mt-1 text-sm text-amber-200/80">
+              <p className="mt-1 text-sm text-[#A3A3A3]">
                 Shift started at {formatTime(attendance.shiftStartAt)}.
               </p>
               <div className="mt-3">
@@ -173,7 +196,7 @@ export default function AttendanceBanner() {
                   <button
                     type="button"
                     onClick={() => setShowLateForm(true)}
-                    className="cursor-pointer rounded-full bg-amber-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-amber-500"
+                    className={ctaClass}
                   >
                     Request Attendance
                   </button>
@@ -181,7 +204,7 @@ export default function AttendanceBanner() {
                   <div className="max-w-lg space-y-2">
                     <label
                       htmlFor="late-reason"
-                      className="block text-sm font-medium text-amber-100"
+                      className="block text-sm font-medium text-white"
                     >
                       Reason Note
                     </label>
@@ -191,7 +214,7 @@ export default function AttendanceBanner() {
                       value={lateReason}
                       onChange={(e) => setLateReason(e.target.value)}
                       placeholder="Explain why you are late (5–300 characters)"
-                      className="w-full rounded-lg border border-amber-500/30 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-400/40"
+                      className="w-full rounded-lg border border-white/15 bg-[#0A0A0A] px-3 py-2 text-sm text-white outline-none placeholder:text-[#A3A3A3] focus:border-[#F25E26]/60 focus:ring-1 focus:ring-[#F25E26]/30"
                     />
                     <button
                       type="button"
@@ -199,7 +222,7 @@ export default function AttendanceBanner() {
                       disabled={
                         lateMutation.isPending || lateReason.trim().length < 5
                       }
-                      className="cursor-pointer rounded-full bg-amber-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-amber-500 disabled:opacity-60"
+                      className={ctaClass}
                     >
                       {lateMutation.isPending ? 'Submitting…' : 'Submit Request'}
                     </button>
@@ -216,13 +239,13 @@ export default function AttendanceBanner() {
 
   if (attendance.status === 'pending_approval') {
     return (
-      <div className="border-b border-zinc-700/80 bg-zinc-900/80 px-4 py-3 text-zinc-200">
-        <div className="mx-auto max-w-7xl px-2 sm:px-4">
-          <p className="text-sm font-medium">
+      <div className={bannerShell}>
+        <div className={bannerCard}>
+          <p className="text-sm font-semibold text-white">
             Your late attendance request is awaiting Super Admin review
           </p>
           {attendance.lateReason ? (
-            <p className="mt-1 text-sm text-zinc-400">
+            <p className="mt-1 text-sm text-[#A3A3A3]">
               Reason: {attendance.lateReason}
             </p>
           ) : null}
@@ -233,13 +256,13 @@ export default function AttendanceBanner() {
 
   if (attendance.status === 'absent') {
     return (
-      <div className="border-b border-red-500/20 bg-red-500/10 px-4 py-3 text-red-100">
-        <div className="mx-auto max-w-7xl px-2 sm:px-4">
-          <p className="text-sm font-semibold">
+      <div className={bannerShell}>
+        <div className={bannerCard}>
+          <p className="text-sm font-semibold text-white">
             You have been marked absent for today
           </p>
           {attendance.forcedAbsentReason ? (
-            <p className="mt-1 text-sm text-red-200/80">
+            <p className="mt-1 text-sm text-[#A3A3A3]">
               Reason: {attendance.forcedAbsentReason}
             </p>
           ) : null}

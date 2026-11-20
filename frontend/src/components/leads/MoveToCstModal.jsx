@@ -1,12 +1,32 @@
 import { useEffect, useMemo, useState } from 'react';
+import {
+  brandPayloadId,
+  cardDigitsOnly,
+  detectCardBrand,
+  formatCardNumber,
+  maxCardDigits,
+} from '../../utils/cardBrand.util.js';
 
 const pillActive =
-  'bg-orange-600 text-white shadow-lg shadow-orange-950/30';
+  'bg-[#F25E26] text-white shadow-lg shadow-orange-950/30';
 const pillIdle =
   'border border-zinc-700 text-zinc-300 hover:bg-zinc-800';
 
 const fieldClass =
-  'w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2.5 text-sm text-zinc-100 outline-none transition focus:border-orange-500/50 focus:ring-2 focus:ring-orange-500/20';
+  'w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2.5 text-sm text-zinc-100 outline-none transition focus:border-[#F25E26]/50 focus:ring-2 focus:ring-[#F25E26]/20';
+
+const PAY_OPTIONS = [
+  { value: 'old_card', label: 'Old Card' },
+  { value: 'new_card', label: 'New Card' },
+  { value: 'via_link', label: 'Link' },
+  { value: 'other', label: 'Others' },
+];
+
+const formatExpiry = (raw) => {
+  const digits = String(raw || '').replace(/\D/g, '').slice(0, 4);
+  if (digits.length <= 2) return digits;
+  return `${digits.slice(0, 2)}/${digits.slice(2)}`;
+};
 
 const YesNoToggle = ({ value, onChange, name }) => (
   <div className="flex flex-wrap gap-2" role="radiogroup" aria-label={name}>
@@ -33,8 +53,11 @@ const YesNoToggle = ({ value, onChange, name }) => (
   </div>
 );
 
+const maskCardNumber = (last4) =>
+  last4 ? `•••• •••• •••• ${String(last4).slice(-4)}` : '•••• •••• •••• ••••';
+
 /**
- * Two-column CST handover modal: Document Sign + Upscale.
+ * Handover CST modal: Document Sign + Upsell (+ payment) + handover note.
  */
 export default function MoveToCstModal({
   open,
@@ -43,36 +66,96 @@ export default function MoveToCstModal({
   onSubmit,
   isSubmitting = false,
 }) {
+  const savedCards = useMemo(
+    () => (Array.isArray(lead?.savedCards) ? lead.savedCards : []),
+    [lead?.savedCards]
+  );
+
   const [documentSigned, setDocumentSigned] = useState(null);
   const [signedFile, setSignedFile] = useState(null);
-  const [upscale, setUpscale] = useState(null);
-  const [itemName, setItemName] = useState('');
+  const [upsell, setUpsell] = useState(null);
+  const [serviceName, setServiceName] = useState('');
   const [price, setPrice] = useState('');
-  const [upscaleNotes, setUpscaleNotes] = useState('');
+  const [payMethod, setPayMethod] = useState('old_card');
+  const [selectedCardId, setSelectedCardId] = useState('');
+  const [cardNumber, setCardNumber] = useState('');
+  const [cardExpiry, setCardExpiry] = useState('');
+  const [cardCvv, setCardCvv] = useState('');
+  const [cardHolderName, setCardHolderName] = useState('');
+  const [billingZip, setBillingZip] = useState('');
+  const [payReference, setPayReference] = useState('');
+  const [upsellNotes, setUpsellNotes] = useState('');
+  const [handoverNotes, setHandoverNotes] = useState('');
   const [error, setError] = useState('');
+
+  const detectedBrand = useMemo(
+    () => detectCardBrand(cardNumber),
+    [cardNumber]
+  );
+  const cvvMax = detectedBrand.cvvLength || 3;
 
   useEffect(() => {
     if (!open) return;
     setDocumentSigned(null);
     setSignedFile(null);
-    setUpscale(null);
-    setItemName('');
+    setUpsell(null);
+    setServiceName('');
     setPrice('');
-    setUpscaleNotes('');
+    setPayMethod(savedCards.length ? 'old_card' : 'new_card');
+    setSelectedCardId(savedCards[0]?.cardId || '');
+    setCardNumber('');
+    setCardExpiry('');
+    setCardCvv('');
+    setCardHolderName('');
+    setBillingZip('');
+    setPayReference('');
+    setUpsellNotes('');
+    setHandoverNotes('');
     setError('');
-  }, [open, lead?._id]);
+  }, [open, lead?._id, savedCards]);
+
+  const selectedSaved = useMemo(
+    () => savedCards.find((c) => String(c.cardId) === String(selectedCardId)),
+    [savedCards, selectedCardId]
+  );
 
   const canSubmit = useMemo(() => {
-    if (documentSigned === null || upscale === null) return false;
+    if (documentSigned === null || upsell === null) return false;
     if (documentSigned === true && !signedFile) return false;
-    if (upscale === true) {
-      if (!itemName.trim()) return false;
-      if (price === '' || price == null) return false;
-      const n = Number(price);
-      if (Number.isNaN(n) || n < 0) return false;
+    if (upsell !== true) return true;
+    if (!serviceName.trim()) return false;
+    if (price === '' || price == null) return false;
+    const n = Number(price);
+    if (Number.isNaN(n) || n < 0) return false;
+    if (payMethod === 'old_card') {
+      return Boolean(selectedCardId && selectedSaved);
     }
-    return true;
-  }, [documentSigned, signedFile, upscale, itemName, price]);
+    if (payMethod === 'new_card') {
+      return Boolean(
+        cardDigitsOnly(cardNumber).length >= 13 &&
+          /^\d{2}\/\d{2}$/.test(cardExpiry.trim()) &&
+          cardCvv.trim().length >= 3 &&
+          cardHolderName.trim() &&
+          billingZip.trim()
+      );
+    }
+    return Boolean(payReference.trim());
+  }, [
+    documentSigned,
+    signedFile,
+    upsell,
+    serviceName,
+    price,
+    payMethod,
+    selectedCardId,
+    selectedSaved,
+    cardNumber,
+    cardExpiry,
+    cardCvv,
+    cardHolderName,
+    billingZip,
+    payReference,
+  ]);
 
   if (!open || !lead) return null;
 
@@ -87,9 +170,12 @@ export default function MoveToCstModal({
       file.type === 'image/png' ||
       file.type === 'image/jpeg' ||
       file.type === 'image/jpg' ||
-      /\.(pdf|png|jpe?g)$/i.test(file.name);
+      file.type === 'application/msword' ||
+      file.type ===
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
+      /\.(pdf|png|jpe?g|docx?)$/i.test(file.name);
     if (!okType) {
-      setError('Signed document must be PDF, PNG, or JPG.');
+      setError('Signed document must be PDF, DOC, DOCX, PNG, or JPG.');
       setSignedFile(null);
       e.target.value = '';
       return;
@@ -98,24 +184,89 @@ export default function MoveToCstModal({
     setSignedFile(file);
   };
 
+  const buildNewCardFields = () => {
+    const digits = cardDigitsOnly(cardNumber);
+    const brand = detectCardBrand(digits);
+    const brandId = brandPayloadId(brand);
+    const maxLen = maxCardDigits(brand);
+    const minLen = brand.id === 'amex' ? 15 : brand.id === 'diners' ? 14 : 13;
+    if (digits.length < minLen || digits.length > maxLen) {
+      return {
+        error: `Enter a valid ${brand.label || 'card'} number (${minLen}–${maxLen} digits).`,
+      };
+    }
+    if (!/^\d{2}\/\d{2}$/.test(cardExpiry.trim())) {
+      return { error: 'Enter expiry as MM/YY.' };
+    }
+    const [mm] = cardExpiry.split('/').map(Number);
+    if (mm < 1 || mm > 12) {
+      return { error: 'Expiry month must be between 01 and 12.' };
+    }
+    const cvvRe = new RegExp(`^\\d{${brand.cvvLength}}$`);
+    if (!cvvRe.test(cardCvv.trim())) {
+      return {
+        error: `Enter a valid ${brand.cvvLength}-digit CVC / CVV.`,
+      };
+    }
+    if (!cardHolderName.trim()) {
+      return { error: 'Name on Card is required.' };
+    }
+    if (!billingZip.trim()) {
+      return { error: 'Billing Zip Code is required.' };
+    }
+    const cardLast4 = digits.slice(-4);
+    return {
+      last4: cardLast4,
+      brand: brandId,
+      token: `local_${brandId}_${cardLast4}_${Date.now()}`,
+      expiry: cardExpiry.trim(),
+      holder: cardHolderName.trim(),
+      zip: billingZip.trim(),
+    };
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
     if (!canSubmit) {
-      setError('Complete Document Sign and Upscale requirements before submitting.');
+      setError('Complete Document Sign and Upsell requirements before submitting.');
       return;
     }
 
     const formData = new FormData();
     formData.append('documentSigned', documentSigned ? 'true' : 'false');
-    formData.append('upscale', upscale ? 'true' : 'false');
-    formData.append('upscaleNotes', upscaleNotes.trim());
+    formData.append('upscale', upsell ? 'true' : 'false');
+    formData.append('upsell', upsell ? 'true' : 'false');
+    formData.append('upscaleNotes', upsellNotes.trim());
+    formData.append('upsellNotes', upsellNotes.trim());
+    formData.append('handoverNotes', handoverNotes.trim());
     if (documentSigned && signedFile) {
       formData.append('signedDocument', signedFile);
     }
-    if (upscale) {
-      formData.append('upscaleItemName', itemName.trim());
+    if (upsell) {
+      formData.append('upscaleItemName', serviceName.trim());
+      formData.append('upsellServiceName', serviceName.trim());
       formData.append('upscalePrice', String(price));
+      formData.append('upsellPrice', String(price));
+      formData.append('upsellPaymentMethod', payMethod);
+
+      if (payMethod === 'old_card') {
+        formData.append('selectedCardId', selectedCardId);
+      } else if (payMethod === 'new_card') {
+        const built = buildNewCardFields();
+        if (built.error) {
+          setError(built.error);
+          return;
+        }
+        formData.append('newCardLast4', built.last4);
+        formData.append('newCardBrand', built.brand);
+        formData.append('newCardReferenceToken', built.token);
+        formData.append('newCardExpiry', built.expiry);
+        formData.append('newCardHolderName', built.holder);
+        formData.append('newCardBillingZip', built.zip);
+      } else {
+        formData.append('upsellPaymentReference', payReference.trim());
+      }
     }
 
     try {
@@ -149,11 +300,13 @@ export default function MoveToCstModal({
               id="move-to-cst-title"
               className="font-display text-lg font-semibold text-white"
             >
-              Handover to CST
+              Handover CST
             </h2>
             <p className="mt-1 text-sm text-zinc-400">
               {lead.businessName}
-              {lead.phone ? ` · ${lead.phone}` : ''}
+              {lead.businessPhone || lead.personalPhone
+                ? ` · ${lead.businessPhone || lead.personalPhone}`
+                : ''}
             </p>
           </div>
           <button
@@ -168,7 +321,6 @@ export default function MoveToCstModal({
 
         <form onSubmit={handleSubmit} className="space-y-5" noValidate>
           <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
-            {/* Left — Document Sign */}
             <section className="space-y-3 rounded-xl border border-zinc-800 bg-zinc-950/40 p-4">
               <h3 className="text-sm font-semibold text-white">
                 Document Sign <span className="text-red-400">*</span>
@@ -189,7 +341,7 @@ export default function MoveToCstModal({
                   </span>
                   <input
                     type="file"
-                    accept=".pdf,.png,.jpg,.jpeg,application/pdf,image/png,image/jpeg"
+                    accept=".pdf,.doc,.docx,.png,.jpg,.jpeg,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,image/png,image/jpeg"
                     onChange={handleFileChange}
                     className="block w-full text-sm text-zinc-400 file:mr-3 file:rounded-lg file:border-0 file:bg-zinc-800 file:px-3 file:py-2 file:text-sm file:font-medium file:text-zinc-200 hover:file:bg-zinc-700"
                   />
@@ -199,7 +351,7 @@ export default function MoveToCstModal({
                     </span>
                   ) : (
                     <span className="block text-xs text-zinc-500">
-                      PDF, PNG, or JPG
+                      PDF, DOC, DOCX, PNG, or JPG
                     </span>
                   )}
                 </label>
@@ -211,25 +363,24 @@ export default function MoveToCstModal({
               ) : null}
             </section>
 
-            {/* Right — Upscale */}
             <section className="space-y-3 rounded-xl border border-zinc-800 bg-zinc-950/40 p-4">
               <h3 className="text-sm font-semibold text-white">
-                Upscale <span className="text-red-400">*</span>
+                Upsell <span className="text-red-400">*</span>
               </h3>
               <YesNoToggle
-                name="Upscale"
-                value={upscale}
-                onChange={setUpscale}
+                name="Upsell"
+                value={upsell}
+                onChange={setUpsell}
               />
-              {upscale === true ? (
+              {upsell === true ? (
                 <div className="space-y-3">
                   <label className="block space-y-1.5 text-sm text-zinc-300">
                     <span className="font-medium">
-                      Item Name <span className="text-red-400">*</span>
+                      Service Name <span className="text-red-400">*</span>
                     </span>
                     <input
-                      value={itemName}
-                      onChange={(e) => setItemName(e.target.value)}
+                      value={serviceName}
+                      onChange={(e) => setServiceName(e.target.value)}
                       className={fieldClass}
                       placeholder="e.g. SEO package"
                     />
@@ -258,13 +409,245 @@ export default function MoveToCstModal({
             </section>
           </div>
 
+          {upsell === true ? (
+            <section className="space-y-3 rounded-xl border border-zinc-800 bg-zinc-950/40 p-4">
+              <h3 className="text-sm font-semibold text-white">
+                Payment Method <span className="text-red-400">*</span>
+              </h3>
+              <div className="flex flex-wrap gap-2">
+                {PAY_OPTIONS.map((opt) => {
+                  const disabled =
+                    opt.value === 'old_card' && savedCards.length === 0;
+                  const active = payMethod === opt.value;
+                  return (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      disabled={disabled}
+                      onClick={() => setPayMethod(opt.value)}
+                      className={`rounded-full px-3.5 py-1.5 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-40 ${
+                        active ? pillActive : pillIdle
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {payMethod === 'old_card' ? (
+                savedCards.length === 0 ? (
+                  <p className="text-sm text-amber-400">
+                    No saved cards on this lead yet — use New Card instead.
+                  </p>
+                ) : (
+                  <div className="space-y-3">
+                    {savedCards.length > 1 ? (
+                      <label className="block space-y-1.5 text-sm text-zinc-300">
+                        <span className="font-medium">Select saved card</span>
+                        <select
+                          value={selectedCardId}
+                          onChange={(e) => setSelectedCardId(e.target.value)}
+                          className={`${fieldClass} appearance-none`}
+                        >
+                          {savedCards.map((c) => (
+                            <option key={c.cardId} value={c.cardId}>
+                              {(c.cardBrand || 'Card').toUpperCase()} · ••••{' '}
+                              {c.cardLast4}
+                              {c.nameOnCard ? ` · ${c.nameOnCard}` : ''}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    ) : null}
+                    {selectedSaved ? (
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                        <label className="block space-y-1 text-sm text-zinc-300">
+                          <span className="text-zinc-500">Card Number</span>
+                          <input
+                            readOnly
+                            value={maskCardNumber(selectedSaved.cardLast4)}
+                            className={`${fieldClass} opacity-90`}
+                            tabIndex={-1}
+                          />
+                        </label>
+                        <label className="block space-y-1 text-sm text-zinc-300">
+                          <span className="text-zinc-500">Expiry</span>
+                          <input
+                            readOnly
+                            value={selectedSaved.expiry || '—'}
+                            className={`${fieldClass} opacity-90`}
+                            tabIndex={-1}
+                          />
+                        </label>
+                        <label className="block space-y-1 text-sm text-zinc-300">
+                          <span className="text-zinc-500">CVC</span>
+                          <input
+                            readOnly
+                            value={
+                              selectedSaved.cvcOnFile !== false ? '•••' : '—'
+                            }
+                            className={`${fieldClass} opacity-90`}
+                            tabIndex={-1}
+                            title="CVC was collected at save time and is not re-displayed"
+                          />
+                        </label>
+                        <label className="block space-y-1 text-sm text-zinc-300">
+                          <span className="text-zinc-500">Name on Card</span>
+                          <input
+                            readOnly
+                            value={selectedSaved.nameOnCard || '—'}
+                            className={`${fieldClass} opacity-90`}
+                            tabIndex={-1}
+                          />
+                        </label>
+                        <label className="block space-y-1 text-sm text-zinc-300 sm:col-span-2">
+                          <span className="text-zinc-500">
+                            Billing Zip Code
+                          </span>
+                          <input
+                            readOnly
+                            value={selectedSaved.billingZipCode || '—'}
+                            className={`${fieldClass} opacity-90`}
+                            tabIndex={-1}
+                          />
+                        </label>
+                      </div>
+                    ) : null}
+                  </div>
+                )
+              ) : null}
+
+              {payMethod === 'new_card' ? (
+                <div className="space-y-3">
+                  <label className="block space-y-1.5 text-sm text-zinc-300">
+                    <span>
+                      Card Number <span className="text-red-400">*</span>
+                    </span>
+                    <input
+                      required
+                      inputMode="numeric"
+                      value={cardNumber}
+                      onChange={(e) =>
+                        setCardNumber(
+                          formatCardNumber(
+                            e.target.value,
+                            detectCardBrand(e.target.value)
+                          )
+                        )
+                      }
+                      placeholder="#### #### #### ####"
+                      className={fieldClass}
+                      autoComplete="off"
+                    />
+                  </label>
+                  <div className="grid grid-cols-2 gap-3">
+                    <label className="block space-y-1.5 text-sm text-zinc-300">
+                      <span>
+                        Expiry <span className="text-red-400">*</span>
+                      </span>
+                      <input
+                        required
+                        inputMode="numeric"
+                        value={cardExpiry}
+                        onChange={(e) =>
+                          setCardExpiry(formatExpiry(e.target.value))
+                        }
+                        placeholder="MM/YY"
+                        className={fieldClass}
+                        autoComplete="off"
+                      />
+                    </label>
+                    <label className="block space-y-1.5 text-sm text-zinc-300">
+                      <span>
+                        CVC <span className="text-red-400">*</span>
+                      </span>
+                      <input
+                        required
+                        inputMode="numeric"
+                        maxLength={cvvMax}
+                        value={cardCvv}
+                        onChange={(e) =>
+                          setCardCvv(
+                            e.target.value.replace(/\D/g, '').slice(0, cvvMax)
+                          )
+                        }
+                        placeholder={cvvMax === 4 ? '1234' : '123'}
+                        className={fieldClass}
+                        autoComplete="off"
+                      />
+                    </label>
+                  </div>
+                  <label className="block space-y-1.5 text-sm text-zinc-300">
+                    <span>
+                      Name on Card <span className="text-red-400">*</span>
+                    </span>
+                    <input
+                      required
+                      value={cardHolderName}
+                      onChange={(e) => setCardHolderName(e.target.value)}
+                      className={fieldClass}
+                      autoComplete="off"
+                    />
+                  </label>
+                  <label className="block space-y-1.5 text-sm text-zinc-300">
+                    <span>
+                      Billing Zip Code <span className="text-red-400">*</span>
+                    </span>
+                    <input
+                      required
+                      value={billingZip}
+                      onChange={(e) => setBillingZip(e.target.value)}
+                      className={fieldClass}
+                      autoComplete="off"
+                    />
+                  </label>
+                </div>
+              ) : null}
+
+              {payMethod === 'via_link' || payMethod === 'other' ? (
+                <label className="block space-y-1.5 text-sm text-zinc-300">
+                  <span>
+                    {payMethod === 'via_link'
+                      ? 'Payment Link / Transaction Reference'
+                      : 'Payment Notes / Details'}{' '}
+                    <span className="text-red-400">*</span>
+                  </span>
+                  <textarea
+                    required
+                    rows={2}
+                    value={payReference}
+                    onChange={(e) => setPayReference(e.target.value)}
+                    className={`${fieldClass} resize-y`}
+                    placeholder={
+                      payMethod === 'via_link'
+                        ? 'https://… or transaction id'
+                        : 'Bank transfer, cash, etc.'
+                    }
+                  />
+                </label>
+              ) : null}
+
+              <label className="block space-y-1.5 text-sm text-zinc-300">
+                <span className="font-medium">Upsell Notes</span>
+                <textarea
+                  rows={2}
+                  value={upsellNotes}
+                  onChange={(e) => setUpsellNotes(e.target.value)}
+                  placeholder="Optional context for this upsell…"
+                  className={`${fieldClass} resize-y`}
+                />
+              </label>
+            </section>
+          ) : null}
+
           <label className="block space-y-1.5 text-sm text-zinc-300">
-            <span className="font-medium">Upscale Notes</span>
+            <span className="font-medium">Handover CST Note</span>
             <textarea
               rows={3}
-              value={upscaleNotes}
-              onChange={(e) => setUpscaleNotes(e.target.value)}
-              placeholder="Handover context for CST…"
+              value={handoverNotes}
+              onChange={(e) => setHandoverNotes(e.target.value)}
+              placeholder="Optional handover instructions for the CST Manager…"
               className={`${fieldClass} resize-y`}
             />
           </label>
@@ -287,9 +670,9 @@ export default function MoveToCstModal({
             <button
               type="submit"
               disabled={!canSubmit || isSubmitting}
-              className="rounded-xl bg-orange-600 px-4 py-2 text-sm font-semibold text-white shadow-lg shadow-orange-950/30 hover:bg-orange-500 disabled:cursor-not-allowed disabled:opacity-50"
+              className="rounded-xl bg-[#F25E26] px-4 py-2 text-sm font-semibold text-white shadow-lg shadow-orange-950/30 hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {isSubmitting ? 'Submitting…' : 'Submit to CST'}
+              {isSubmitting ? 'Submitting…' : 'Confirm & Handover to CST'}
             </button>
           </div>
         </form>

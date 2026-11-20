@@ -1,12 +1,13 @@
 import Lead from '../models/lead.model.js';
-import { resolveCallbacksForLead } from './callbackResolve.util.js';
+import { transferPendingCallbacksToCloser } from './callbackResolve.util.js';
+import { buildAlertFlagsForSchedule } from './alertTiming.util.js';
 
 /** Agent must close or hand off a lead within this window. */
 export const AGENT_HOLD_MS = 24 * 60 * 60 * 1000;
 
 /**
  * Immutable per-lead 24h clock — document createdAt only.
- * Never use lastAgentActivityAt / updatedAt (those can be rewritten on read/save).
+ * Never use updatedAt (that can be rewritten on read/save).
  */
 export function agentHoldAnchor(lead) {
   const created = lead?.createdAt ? new Date(lead.createdAt).getTime() : NaN;
@@ -20,8 +21,7 @@ export function agentHoldRemainingMs(lead, now = Date.now()) {
 
 /**
  * Escalate stale with_agent leads directly to their pre-assigned closer.
- * Compares each lead's own createdAt against the 24h cutoff — read paths never
- * mutate timestamps; this write only touches expired docs' status metadata.
+ * Pending callbacks transfer to that closer (stay pending + re-armed alerts).
  * @param {import('mongoose').Types.ObjectId|string|null} [agentId]
  * @returns {Promise<{ escalated: number, ids: string[] }>}
  */
@@ -39,34 +39,42 @@ export async function escalateStaleAgentLeads(agentId = null) {
     filter.agentId = agentId;
   }
 
-  const stale = await Lead.find(filter).select('_id').lean();
+  const stale = await Lead.find(filter)
+    .select('_id closerId followUp')
+    .lean();
   if (!stale.length) {
     return { escalated: 0, ids: [] };
   }
 
-  const ids = stale.map((l) => l._id);
   const now = new Date();
+  const ids = [];
 
-  await Lead.updateMany(
-    { _id: { $in: ids } },
-    {
-      $set: {
-        status: 'with_closer',
-        escalatedAt: now,
-        escalationType: 'auto',
-        escalatedReason: 'Auto Moved',
-        'followUp.alerts.fiveMinFired': true,
-        'followUp.alerts.exactTimeFired': true,
-      },
+  for (const lead of stale) {
+    const $set = {
+      status: 'with_closer',
+      escalatedAt: now,
+      handedOverAt: now,
+      escalationType: 'auto',
+      escalatedReason: 'Auto Moved',
+    };
+
+    // Keep follow-up time visible; re-arm closer reminders if still scheduled
+    if (lead.followUp?.callbackAt) {
+      $set['followUp.acknowledged'] = false;
+      $set['followUp.alerts'] = buildAlertFlagsForSchedule(
+        lead.followUp.callbackAt
+      );
     }
-  );
 
-  for (const id of ids) {
+    await Lead.updateOne({ _id: lead._id }, { $set });
+
     try {
-      await resolveCallbacksForLead(id, 'transferred');
+      await transferPendingCallbacksToCloser(lead._id, lead.closerId);
     } catch {
       // Continue — escalation already applied
     }
+
+    ids.push(lead._id);
   }
 
   return { escalated: ids.length, ids: ids.map(String) };

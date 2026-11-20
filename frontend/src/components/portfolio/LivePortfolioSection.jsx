@@ -9,8 +9,8 @@ import {
 const CATEGORY_OPTIONS = [
   { id: 'seo', label: 'SEO' },
   { id: 'web', label: 'Web' },
-  { id: 'social_media', label: 'Social Media' },
-  { id: 'other', label: 'Other' },
+  { id: 'citation_pages', label: 'Citation Pages' },
+  { id: 'others', label: 'Others' },
 ];
 
 const STATUS_OPTIONS = [
@@ -47,8 +47,11 @@ const formatPkt = (value) => {
   });
 };
 
-const categoryLabel = (id) =>
-  CATEGORY_OPTIONS.find((c) => c.id === id)?.label || id;
+const categoryLabel = (id) => {
+  if (id === 'social_media') return 'Others';
+  if (id === 'other') return 'Others';
+  return CATEGORY_OPTIONS.find((c) => c.id === id)?.label || id;
+};
 
 /**
  * Section F — Live Portfolio, Keywords & Tech Monthly Reports.
@@ -81,14 +84,17 @@ export default function LivePortfolioSection({
   const [error, setError] = useState('');
 
   const persistLive = async (nextKeywords, nextRequests) => {
-    if (!isTech) return;
     setBusy(true);
     setError('');
     try {
-      const updated = await saveLivePortfolio(leadId, {
-        portfolioKeywords: nextKeywords,
-        changeRequests: nextRequests,
-      });
+      // CST may update change requests; keywords stay Tech-managed
+      const payload = isTech
+        ? {
+            portfolioKeywords: nextKeywords,
+            changeRequests: nextRequests,
+          }
+        : { changeRequests: nextRequests };
+      const updated = await saveLivePortfolio(leadId, payload);
       onLeadUpdated?.(updated);
       setMessage('Live portfolio updated.');
     } catch (err) {

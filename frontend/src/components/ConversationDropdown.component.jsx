@@ -258,7 +258,7 @@ export default function ConversationDropdown({ onClose }) {
 
   return (
     <div
-      className="absolute right-0 z-50 mt-2 flex max-h-[460px] w-[22rem] max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-2xl border border-zinc-800/80 bg-zinc-950 shadow-2xl"
+      className="flex max-h-[min(460px,calc(100vh-7.5rem))] w-[22rem] max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-2xl border border-[#222222] bg-[#111111] shadow-2xl shadow-black/50"
       role="dialog"
       aria-label="Messenger"
     >
@@ -291,8 +291,8 @@ export default function ConversationDropdown({ onClose }) {
                 onClick={() => setActiveTab(tab.id)}
                 className={`flex flex-1 cursor-pointer items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-semibold transition ${
                   isActive
-                    ? 'bg-orange-600 text-white shadow-sm'
-                    : 'text-zinc-400 hover:text-zinc-200'
+                    ? 'bg-[#F25E26] text-white shadow-sm'
+                    : 'text-[#A3A3A3] hover:text-white'
                 }`}
               >
                 {tab.label}

@@ -95,7 +95,24 @@ export default function PromoteToLeadModal({
               Callback
             </p>
             <p className="mt-1 font-medium text-white">{callback.businessName}</p>
-            <p className="mt-0.5 text-sm text-zinc-400">{callback.phone}</p>
+            {callback.personalPhone ? (
+              <p className="mt-0.5 text-sm text-zinc-400">
+                Personal: {callback.personalPhone}
+              </p>
+            ) : null}
+            {callback.businessPhone ? (
+              <p className="mt-0.5 text-sm text-zinc-400">
+                Business: {callback.businessPhone}
+              </p>
+            ) : null}
+            {!callback.personalPhone && !callback.businessPhone ? (
+              <p className="mt-0.5 text-sm text-zinc-500">No phone on file</p>
+            ) : null}
+            {callback.businessLink ? (
+              <p className="mt-0.5 truncate text-sm text-zinc-500">
+                {callback.businessLink}
+              </p>
+            ) : null}
           </div>
 
           <label className="block space-y-1.5 text-sm text-zinc-300">

@@ -11,6 +11,17 @@ const ALLOWED_MIME_TYPES = new Set([
   'image/png',
   'image/jpeg',
   'image/jpg',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+]);
+
+const ALLOWED_EXT = new Set([
+  '.pdf',
+  '.png',
+  '.jpg',
+  '.jpeg',
+  '.doc',
+  '.docx',
 ]);
 
 const storage = multer.diskStorage({
@@ -26,12 +37,13 @@ const storage = multer.diskStorage({
 });
 
 const fileFilter = (req, file, cb) => {
-  if (ALLOWED_MIME_TYPES.has(file.mimetype)) {
+  const ext = path.extname(file.originalname || '').toLowerCase();
+  if (ALLOWED_MIME_TYPES.has(file.mimetype) || ALLOWED_EXT.has(ext)) {
     return cb(null, true);
   }
   return cb(
     new Error(
-      'Signed document must be a PDF, PNG, or JPG file.'
+      'Signed document must be a PDF, DOC, DOCX, PNG, or JPG file.'
     ),
     false
   );

@@ -12,6 +12,7 @@ import {
   createCloserCallback,
   getMyCloserCallbacks,
   updateCloserCallback,
+  moveCloserCallbackToLead,
   markCloserAlert,
   getCloserTeamAgentCallbacks,
 } from '../controllers/callback.controller.js';
@@ -46,6 +47,12 @@ router.patch(
   '/closer/:id',
   restrictTo('closer'),
   updateCloserCallback
+);
+
+router.post(
+  '/closer/:id/move-to-lead',
+  restrictTo('closer'),
+  moveCloserCallbackToLead
 );
 
 router.get(

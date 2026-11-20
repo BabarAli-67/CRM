@@ -27,8 +27,11 @@ export const extendShift = async () => {
   return response.data;
 };
 
-export const getHistory = async (month) => {
-  const response = await api.get('/attendance/history', { params: { month } });
+/** @param {string|{ month?: string, from?: string, to?: string }} params */
+export const getHistory = async (params) => {
+  const query =
+    typeof params === 'string' ? { month: params } : params || {};
+  const response = await api.get('/attendance/history', { params: query });
   return response.data.data.records;
 };
 

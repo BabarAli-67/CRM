@@ -4,8 +4,13 @@ import {
   createCloserCallback,
   updateCloserCallback,
 } from '../../services/callback.service.js';
+import { clearReminderFireKeys } from '../../hooks/useReminderScheduler.js';
+import { clearQueuedReminders } from '../alerts/ReminderPopup.jsx';
+import { unlockAudioPlayback } from '../../utils/audioAlert.js';
 
 const pad = (n) => String(n).padStart(2, '0');
+
+const PKT = 'Asia/Karachi';
 
 /** Digits only; empty string allowed while typing. */
 const digitsOnly = (raw, maxLen) => {
@@ -21,44 +26,51 @@ const clampOnBlur = (raw, min, max, { padTo = 0 } = {}) => {
   return padTo > 0 ? String(clamped).padStart(padTo, '0') : String(clamped);
 };
 
-const todayDateValue = () => {
-  const d = new Date();
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-};
+/** YYYY-MM-DD for "today" in Asia/Karachi (PKT). */
+const todayDateValue = () =>
+  new Date().toLocaleDateString('en-CA', { timeZone: PKT });
 
+/** Read an Instant as PKT wall-clock parts for the form. */
 const splitDateTime = (value) => {
   const d = value ? new Date(value) : new Date();
   if (Number.isNaN(d.getTime())) {
-    const now = new Date();
-    let h24 = now.getHours();
-    const period = h24 >= 12 ? 'PM' : 'AM';
-    let h12 = h24 % 12;
-    if (h12 === 0) h12 = 12;
-    return {
-      date: todayDateValue(),
-      hour: pad(h12),
-      minute: pad(now.getMinutes()),
-      period,
-    };
+    return splitDateTime(new Date());
   }
 
-  let h24 = d.getHours();
-  const period = h24 >= 12 ? 'PM' : 'AM';
-  let h12 = h24 % 12;
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: PKT,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: true,
+  }).formatToParts(d);
+
+  const get = (type) => parts.find((p) => p.type === type)?.value || '';
+  const hour24Candidate = Number(get('hour'));
+  const dayPeriod = (get('dayPeriod') || 'AM').toUpperCase();
+  let h12 = hour24Candidate;
+  // en-US hour12 parts already yield 1–12
   if (h12 === 0) h12 = 12;
 
   return {
-    date: `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`,
+    date: `${get('year')}-${get('month')}-${get('day')}`,
     hour: pad(h12),
-    minute: pad(d.getMinutes()),
-    period,
+    minute: pad(Number(get('minute')) || 0),
+    period: dayPeriod.startsWith('P') ? 'PM' : 'AM',
   };
 };
 
-/** Default date/time = now (local), used for clean Add Callback opens. */
+/** Default date/time = now in PKT. */
 const nowDateTimeParts = () => splitDateTime(new Date());
 
-/** Combine local date + 12h clock into an ISO timestamp. */
+/**
+ * Interpret Date + 12h Time as Asia/Karachi (PKT, +05:00) wall time → UTC ISO.
+ * BUG FIX: previously used `new Date(y, m-1, day, h, mi)` (browser-local), which
+ * stored PKT wall clock ~5h early when the OS timezone was not Asia/Karachi —
+ * callbacks saved "1–2 min from now" landed overdue with no ring (past catch-up).
+ */
 const toIsoTimestamp = ({ date, hour, minute, period }) => {
   if (
     !date ||
@@ -90,26 +102,38 @@ const toIsoTimestamp = ({ date, hour, minute, period }) => {
     h += 12;
   }
 
-  const [y, m, day] = date.split('-').map(Number);
-  const local = new Date(y, m - 1, day, h, mi, 0, 0);
-  if (Number.isNaN(local.getTime())) return null;
-  return local.toISOString();
+  const isoWithOffset = `${date}T${pad(h)}:${pad(mi)}:00+05:00`;
+  const instant = new Date(isoWithOffset);
+  if (Number.isNaN(instant.getTime())) return null;
+  return instant.toISOString();
 };
 
 const fieldClass =
-  'w-full rounded-lg border border-zinc-700/80 bg-zinc-950 px-3 py-2.5 text-sm text-zinc-100 outline-none transition focus:border-orange-500/50 focus:ring-2 focus:ring-orange-500/20';
+  'w-full rounded-lg border border-white/15 bg-[#0A0A0A] px-3 py-2 text-sm text-white outline-none transition focus:border-[#F25E26]/50 focus:ring-2 focus:ring-[#F25E26]/20';
 
 const selectClass = `${fieldClass} appearance-none cursor-pointer`;
 
 const numInputClass =
-  'w-full rounded-lg border border-zinc-700 bg-zinc-900 py-2 text-center text-sm text-white outline-none transition focus:border-orange-500/50 focus:ring-2 focus:ring-orange-500/20 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none';
+  'w-full rounded-lg border border-white/15 bg-[#0A0A0A] py-2 text-center text-sm text-white outline-none transition focus:border-[#F25E26]/50 focus:ring-2 focus:ring-[#F25E26]/20 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none';
 
 const blankContact = () => ({
   businessName: '',
-  phone: '',
+  personalPhone: '',
+  businessPhone: '',
+  businessLink: '',
   notes: '',
   selectedLeadId: '',
 });
+
+const callbackBusinessPhone = (cb) =>
+  cb?.businessPhone || cb?.personalPhone || '';
+
+const normalizeWebsite = (raw) => {
+  let link = String(raw || '').trim();
+  if (!link) return '';
+  if (!/^https?:\/\//i.test(link)) link = `https://${link}`;
+  return link;
+};
 
 /**
  * Closer-only schedule / reschedule modal.
@@ -133,7 +157,9 @@ export default function CloserScheduleCallbackModal({
   const [sourceMode, setSourceMode] = useState('manual'); // 'manual' | 'claimed'
   const [selectedLeadId, setSelectedLeadId] = useState('');
   const [businessName, setBusinessName] = useState('');
-  const [phone, setPhone] = useState('');
+  const [personalPhone, setPersonalPhone] = useState('');
+  const [businessPhone, setBusinessPhone] = useState('');
+  const [businessLink, setBusinessLink] = useState('');
   const [date, setDate] = useState(todayDateValue);
   const [hour, setHour] = useState('09');
   const [minute, setMinute] = useState('00');
@@ -160,7 +186,9 @@ export default function CloserScheduleCallbackModal({
   const clearContactFields = () => {
     const blank = blankContact();
     setBusinessName(blank.businessName);
-    setPhone(blank.phone);
+    setPersonalPhone(blank.personalPhone);
+    setBusinessPhone(blank.businessPhone);
+    setBusinessLink(blank.businessLink);
     setNotes(blank.notes);
     setSelectedLeadId(blank.selectedLeadId);
   };
@@ -186,7 +214,9 @@ export default function CloserScheduleCallbackModal({
       applyDateTime(parts);
       setNotes(callback.notes || '');
       setBusinessName(callback.businessName || '');
-      setPhone(callback.phone || '');
+      setPersonalPhone(callback.personalPhone || '');
+      setBusinessPhone(callbackBusinessPhone(callback));
+      setBusinessLink(callback.businessLink || '');
       setSourceMode('manual');
       setSelectedLeadId('');
       return;
@@ -195,9 +225,11 @@ export default function CloserScheduleCallbackModal({
     if (lead && !allowStandalone) {
       const parts = splitDateTime(lead.followUp?.callbackAt);
       applyDateTime(parts);
-      setNotes('');
+      setNotes(lead.followUp?.notes || '');
       setBusinessName(lead.businessName || '');
-      setPhone(lead.phone || '');
+      setPersonalPhone(lead.personalPhone || '');
+      setBusinessPhone(lead.businessPhone || lead.personalPhone || '');
+      setBusinessLink(lead.websiteLink || '');
       setSourceMode('claimed');
       setSelectedLeadId(lead._id);
       return;
@@ -216,11 +248,17 @@ export default function CloserScheduleCallbackModal({
     if (sourceMode !== 'claimed') return;
     if (!selectedLead) {
       setBusinessName('');
-      setPhone('');
+      setPersonalPhone('');
+      setBusinessPhone('');
+      setBusinessLink('');
       return;
     }
     setBusinessName(selectedLead.businessName || '');
-    setPhone(selectedLead.phone || '');
+    setPersonalPhone(selectedLead.personalPhone || '');
+    setBusinessPhone(
+      selectedLead.businessPhone || selectedLead.personalPhone || ''
+    );
+    setBusinessLink(selectedLead.websiteLink || '');
   }, [open, lockedLead, isReschedule, sourceMode, selectedLead]);
 
   const switchSourceMode = (mode) => {
@@ -232,7 +270,9 @@ export default function CloserScheduleCallbackModal({
     setNotes('');
     setSelectedLeadId('');
     setBusinessName('');
-    setPhone('');
+    setPersonalPhone('');
+    setBusinessPhone('');
+    setBusinessLink('');
   };
 
   const previewLabel = useMemo(() => {
@@ -262,6 +302,12 @@ export default function CloserScheduleCallbackModal({
       return createCloserCallback(payload);
     },
     onSuccess: () => {
+      // Allow the new/rescheduled time to ring (clear session mute + queue)
+      if (isReschedule && callback?._id) {
+        clearReminderFireKeys({ kind: 'closer_callback', id: callback._id });
+        clearQueuedReminders({ kind: 'closer_callback', id: callback._id });
+      }
+      unlockAudioPlayback();
       queryClient.invalidateQueries({ queryKey: ['closerCallbacks'] });
       queryClient.invalidateQueries({ queryKey: ['assignedLeads'] });
       queryClient.invalidateQueries({ queryKey: ['adminCallbacks'] });
@@ -278,6 +324,18 @@ export default function CloserScheduleCallbackModal({
   if (!open) return null;
   if (isReschedule && !callback) return null;
   if (!allowStandalone && !lockedLead && !isReschedule) return null;
+
+  const hasExistingFollowUp = Boolean(
+    lockedLead?.followUp?.callbackAt && !isReschedule
+  );
+  const modalTitle = isReschedule
+    ? 'Reschedule Callback'
+    : hasExistingFollowUp
+      ? 'View / Override Schedule'
+      : 'Schedule Callback';
+  const modalSubtitle = hasExistingFollowUp
+    ? 'Existing follow-up is prefilled — save to override the schedule'
+    : null;
 
   const contactReadOnly =
     isReschedule ||
@@ -341,22 +399,131 @@ export default function CloserScheduleCallbackModal({
     }
 
     const name = businessName.trim();
-    const phoneVal = phone.trim();
-    if (!name || !phoneVal) {
-      setError('Business name and phone number are required.');
+    const link = normalizeWebsite(businessLink);
+    if (!name || !link) {
+      setError('Business Name and Website Link are required.');
       return;
     }
 
     mutation.mutate({
       businessName: name,
-      phone: phoneVal,
+      personalPhone: personalPhone.trim() || null,
+      businessPhone: businessPhone.trim() || null,
+      businessLink: link,
       callbackAt: iso,
       notes: notes.trim() || null,
     });
   };
 
+  const isDirectContactForm =
+    allowStandalone &&
+    !isReschedule &&
+    !lockedLead &&
+    sourceMode === 'manual';
+
+  const dateTimeNotesBlock = (
+    <>
+      <label className="block space-y-1 text-sm text-[#A3A3A3]">
+        <span className="font-medium text-white">
+          Date <span className="text-[#F25E26]">*</span>
+        </span>
+        <input
+          required
+          type="date"
+          value={date}
+          onChange={(e) => setDate(e.target.value)}
+          className={`${fieldClass} [color-scheme:dark]`}
+        />
+      </label>
+
+      <div className="space-y-1">
+        <p className="text-sm font-medium text-white">
+          Time <span className="text-[#F25E26]">*</span>
+          <span className="ml-1 text-xs font-normal text-[#A3A3A3]">(PKT)</span>
+        </p>
+        <div className="grid grid-cols-3 gap-2">
+          <label className="block space-y-1">
+            <span className="text-[11px] uppercase tracking-wide text-[#A3A3A3]">
+              Hour
+            </span>
+            <input
+              type="number"
+              inputMode="numeric"
+              min={1}
+              max={12}
+              placeholder="HH"
+              value={hour}
+              onChange={(e) => setHour(digitsOnly(e.target.value, 2))}
+              onBlur={() => setHour(clampOnBlur(hour, 1, 12, { padTo: 2 }))}
+              className={numInputClass}
+            />
+          </label>
+          <label className="block space-y-1">
+            <span className="text-[11px] uppercase tracking-wide text-[#A3A3A3]">
+              Minute
+            </span>
+            <input
+              type="number"
+              inputMode="numeric"
+              min={0}
+              max={59}
+              placeholder="MM"
+              value={minute}
+              onChange={(e) => setMinute(digitsOnly(e.target.value, 2))}
+              onBlur={() =>
+                setMinute(clampOnBlur(minute, 0, 59, { padTo: 2 }))
+              }
+              className={numInputClass}
+            />
+          </label>
+          <div className="space-y-1">
+            <span className="text-[11px] uppercase tracking-wide text-[#A3A3A3]">
+              AM/PM
+            </span>
+            <div className="flex h-[38px] overflow-hidden rounded-lg border border-white/15 bg-[#0A0A0A] p-0.5">
+              {['AM', 'PM'].map((p) => {
+                const active = period === p;
+                return (
+                  <button
+                    key={p}
+                    type="button"
+                    onClick={() => setPeriod(p)}
+                    className={`flex-1 rounded-md text-xs font-semibold transition ${
+                      active
+                        ? 'bg-[#F25E26] text-white shadow-sm'
+                        : 'text-[#A3A3A3] hover:text-white'
+                    }`}
+                  >
+                    {p}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+        {previewLabel ? (
+          <p className="pt-0.5 text-xs text-[#A3A3A3]">
+            Scheduled for{' '}
+            <span className="font-medium text-white">{previewLabel}</span> (PKT)
+          </p>
+        ) : null}
+      </div>
+
+      <label className="block space-y-1 text-sm text-[#A3A3A3] sm:col-span-2">
+        <span className="font-medium text-white">Notes</span>
+        <textarea
+          rows={isDirectContactForm ? 2 : 3}
+          placeholder='e.g. "Customer requested call after 9 PM"'
+          value={notes}
+          onChange={(e) => setNotes(e.target.value)}
+          className={`${fieldClass} resize-none`}
+        />
+      </label>
+    </>
+  );
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-zinc-950/75 p-4 backdrop-blur-sm sm:p-6">
+    <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/75 p-4 backdrop-blur-sm sm:p-6">
       <button
         type="button"
         aria-label="Close form backdrop"
@@ -367,20 +534,29 @@ export default function CloserScheduleCallbackModal({
         role="dialog"
         aria-modal="true"
         aria-labelledby="closer-schedule-callback-title"
-        className="relative z-10 my-4 flex max-h-[min(85vh,720px)] w-full max-w-md flex-col overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900 shadow-2xl shadow-black/50 sm:my-8"
+        className={`relative z-10 my-4 flex w-full flex-col overflow-hidden rounded-2xl border border-[#222222] bg-[#111111] shadow-2xl shadow-black/50 sm:my-8 ${
+          isDirectContactForm
+            ? 'max-h-[min(92vh,640px)] max-w-2xl'
+            : 'max-h-[min(85vh,720px)] max-w-md'
+        }`}
       >
-        <div className="flex shrink-0 items-center justify-between border-b border-zinc-800 px-5 py-4">
-          <h2
-            id="closer-schedule-callback-title"
-            className="font-display text-lg font-semibold text-white"
-          >
-            {isReschedule ? 'Reschedule Callback' : 'Schedule Callback'}
-          </h2>
+        <div className="flex shrink-0 items-center justify-between gap-3 border-b border-[#222222] px-5 py-3.5">
+          <div className="min-w-0">
+            <h2
+              id="closer-schedule-callback-title"
+              className="font-display text-lg font-semibold text-white"
+            >
+              {modalTitle}
+            </h2>
+            {modalSubtitle ? (
+              <p className="mt-0.5 text-sm text-[#A3A3A3]">{modalSubtitle}</p>
+            ) : null}
+          </div>
           <button
             type="button"
             onClick={onClose}
             aria-label="Close"
-            className="rounded-lg px-2 py-1 text-sm text-zinc-400 transition hover:bg-zinc-800 hover:text-white"
+            className="rounded-lg px-2 py-1 text-sm text-[#A3A3A3] transition hover:bg-white/5 hover:text-white"
           >
             ✕
           </button>
@@ -392,222 +568,183 @@ export default function CloserScheduleCallbackModal({
           className="flex min-h-0 flex-1 flex-col"
           noValidate
         >
-          <div className="min-h-0 flex-1 space-y-5 overflow-y-auto overscroll-contain px-5 py-5 pr-3">
-          {allowStandalone && !isReschedule && !lockedLead ? (
-            <div className="space-y-3">
-              <div className="flex overflow-hidden rounded-lg border border-zinc-700/80 bg-zinc-950 p-0.5">
-                <button
-                  type="button"
-                  onClick={() => switchSourceMode('claimed')}
-                  disabled={claimedLeads.length === 0}
-                  className={`flex-1 rounded-md px-2 py-2 text-xs font-semibold transition disabled:cursor-not-allowed disabled:opacity-40 ${
-                    sourceMode === 'claimed'
-                      ? 'bg-orange-600 text-white shadow-sm'
-                      : 'text-zinc-400 hover:text-zinc-200'
-                  }`}
-                >
-                  Claimed Leads
-                </button>
-                <button
-                  type="button"
-                  onClick={() => switchSourceMode('manual')}
-                  className={`flex-1 rounded-md px-2 py-2 text-xs font-semibold transition ${
-                    sourceMode === 'manual'
-                      ? 'bg-orange-600 text-white shadow-sm'
-                      : 'text-zinc-400 hover:text-zinc-200'
-                  }`}
-                >
-                  Direct Contact
-                </button>
-              </div>
-
-              {sourceMode === 'claimed' ? (
-                claimedLeads.length === 0 ? (
-                  <p className="rounded-xl border border-zinc-800 bg-zinc-950/60 px-3.5 py-3 text-sm text-zinc-500">
-                    No claimed leads — switch to Direct Contact to schedule
-                    anyway.
-                  </p>
-                ) : (
-                  <label className="block space-y-1.5 text-sm text-zinc-300">
-                    <span className="font-medium">Select claimed lead</span>
-                    <select
-                      value={selectedLeadId}
-                      onChange={(e) => setSelectedLeadId(e.target.value)}
-                      className={selectClass}
-                    >
-                      <option value="">Choose a lead…</option>
-                      {claimedLeads.map((l) => (
-                        <option key={l._id} value={l._id}>
-                          {l.businessName} · {l.phone}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                )
-              ) : null}
-            </div>
-          ) : null}
-
-          {contactReadOnly && (selectedLead || lockedLead || callback) ? (
-            <div className="rounded-xl border border-zinc-800 bg-zinc-950/60 px-3.5 py-3">
-              <p className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500">
-                {callback && !callback.leadId && isReschedule
-                  ? 'Direct Contact'
-                  : 'Lead / Business Name'}
-              </p>
-              <p className="mt-1 font-medium text-white">
-                {(selectedLead || lockedLead || callback)?.businessName}
-              </p>
-              <p className="mt-0.5 text-sm text-zinc-400">
-                {(selectedLead || lockedLead || callback)?.phone}
-              </p>
-            </div>
-          ) : sourceMode === 'claimed' && allowStandalone && !lockedLead && !isReschedule ? (
-            <p className="rounded-xl border border-dashed border-zinc-700 bg-zinc-950/40 px-3.5 py-3 text-sm text-zinc-500">
-              Select a claimed lead above to load business name and phone.
-            </p>
-          ) : (
-            <div className="space-y-4">
-              <label className="block space-y-1.5 text-sm text-zinc-300">
-                <span className="font-medium">
-                  Business Name / Contact Person
-                </span>
-                <input
-                  required
-                  value={businessName}
-                  onChange={(e) => setBusinessName(e.target.value)}
-                  className={fieldClass}
-                  placeholder="e.g. Acme Plumbing"
-                />
-              </label>
-              <label className="block space-y-1.5 text-sm text-zinc-300">
-                <span className="font-medium">Phone Number</span>
-                <input
-                  required
-                  value={phone}
-                  onChange={(e) => setPhone(e.target.value)}
-                  className={fieldClass}
-                  placeholder="+92 …"
-                />
-              </label>
-            </div>
-          )}
-
-          <label className="block space-y-1.5 text-sm text-zinc-300">
-            <span className="font-medium">Date</span>
-            <input
-              required
-              type="date"
-              value={date}
-              onChange={(e) => setDate(e.target.value)}
-              className={fieldClass}
-            />
-          </label>
-
-          <div className="space-y-1.5">
-            <p className="text-sm font-medium text-zinc-300">Time</p>
-            <div className="grid grid-cols-3 gap-2">
-              <label className="block space-y-1">
-                <span className="text-[11px] uppercase tracking-wide text-zinc-500">
-                  Hour
-                </span>
-                <input
-                  type="number"
-                  inputMode="numeric"
-                  min={1}
-                  max={12}
-                  placeholder="HH"
-                  value={hour}
-                  onChange={(e) => setHour(digitsOnly(e.target.value, 2))}
-                  onBlur={() =>
-                    setHour(clampOnBlur(hour, 1, 12, { padTo: 2 }))
-                  }
-                  className={numInputClass}
-                />
-              </label>
-              <label className="block space-y-1">
-                <span className="text-[11px] uppercase tracking-wide text-zinc-500">
-                  Minute
-                </span>
-                <input
-                  type="number"
-                  inputMode="numeric"
-                  min={0}
-                  max={59}
-                  placeholder="MM"
-                  value={minute}
-                  onChange={(e) => setMinute(digitsOnly(e.target.value, 2))}
-                  onBlur={() =>
-                    setMinute(clampOnBlur(minute, 0, 59, { padTo: 2 }))
-                  }
-                  className={numInputClass}
-                />
-              </label>
-              <div className="space-y-1">
-                <span className="text-[11px] uppercase tracking-wide text-zinc-500">
-                  Period
-                </span>
-                <div className="flex h-[42px] overflow-hidden rounded-lg border border-zinc-700/80 bg-zinc-950 p-0.5">
-                  {['AM', 'PM'].map((p) => {
-                    const active = period === p;
-                    return (
-                      <button
-                        key={p}
-                        type="button"
-                        onClick={() => setPeriod(p)}
-                        className={`flex-1 rounded-md text-xs font-semibold transition ${
-                          active
-                            ? 'bg-orange-600 text-white shadow-sm'
-                            : 'text-zinc-400 hover:text-zinc-200'
-                        }`}
-                      >
-                        {p}
-                      </button>
-                    );
-                  })}
+          <div
+            className={`min-h-0 flex-1 space-y-3 px-5 py-4 ${
+              isDirectContactForm
+                ? 'overflow-hidden'
+                : 'overflow-y-auto overscroll-contain pr-3'
+            }`}
+          >
+            {allowStandalone && !isReschedule && !lockedLead ? (
+              <div className="space-y-3">
+                <div className="flex overflow-hidden rounded-lg border border-white/15 bg-[#0A0A0A] p-0.5">
+                  <button
+                    type="button"
+                    onClick={() => switchSourceMode('claimed')}
+                    disabled={claimedLeads.length === 0}
+                    className={`flex-1 rounded-md px-2 py-2 text-xs font-semibold transition disabled:cursor-not-allowed disabled:opacity-40 ${
+                      sourceMode === 'claimed'
+                        ? 'bg-[#F25E26] text-white shadow-sm'
+                        : 'text-[#A3A3A3] hover:text-white'
+                    }`}
+                  >
+                    Claimed Leads
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => switchSourceMode('manual')}
+                    className={`flex-1 rounded-md px-2 py-2 text-xs font-semibold transition ${
+                      sourceMode === 'manual'
+                        ? 'bg-[#F25E26] text-white shadow-sm'
+                        : 'text-[#A3A3A3] hover:text-white'
+                    }`}
+                  >
+                    Direct Contact
+                  </button>
                 </div>
+
+                {sourceMode === 'claimed' ? (
+                  claimedLeads.length === 0 ? (
+                    <p className="rounded-xl border border-[#222222] bg-[#0A0A0A]/60 px-3.5 py-3 text-sm text-[#A3A3A3]">
+                      No claimed leads — switch to Direct Contact to schedule
+                      anyway.
+                    </p>
+                  ) : (
+                    <label className="block space-y-1.5 text-sm text-[#A3A3A3]">
+                      <span className="font-medium text-white">
+                        Select claimed lead
+                      </span>
+                      <select
+                        value={selectedLeadId}
+                        onChange={(e) => setSelectedLeadId(e.target.value)}
+                        className={selectClass}
+                      >
+                        <option value="">Choose a lead…</option>
+                        {claimedLeads.map((l) => (
+                          <option key={l._id} value={l._id}>
+                            {l.businessName} ·{' '}
+                            {l.businessPhone || l.personalPhone || '—'}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  )
+                ) : null}
               </div>
-            </div>
-            {previewLabel ? (
-              <p className="pt-1 text-xs text-zinc-500">
-                Scheduled for{' '}
-                <span className="font-medium text-zinc-300">{previewLabel}</span>{' '}
-                (PKT)
+            ) : null}
+
+            {isDirectContactForm ? (
+              <div className="grid grid-cols-1 gap-x-3 gap-y-2.5 sm:grid-cols-2">
+                <label className="block space-y-1 text-sm text-[#A3A3A3]">
+                  <span className="font-medium text-white">
+                    Business Name <span className="text-[#F25E26]">*</span>
+                  </span>
+                  <input
+                    required
+                    value={businessName}
+                    onChange={(e) => setBusinessName(e.target.value)}
+                    className={fieldClass}
+                    placeholder="Acme Plumbing"
+                    aria-required="true"
+                  />
+                </label>
+
+                <label className="block space-y-1 text-sm text-[#A3A3A3]">
+                  <span className="font-medium text-white">
+                    Website Link <span className="text-[#F25E26]">*</span>
+                  </span>
+                  <input
+                    required
+                    type="url"
+                    placeholder="https://"
+                    value={businessLink}
+                    onChange={(e) => setBusinessLink(e.target.value)}
+                    className={fieldClass}
+                    aria-required="true"
+                  />
+                </label>
+
+                <label className="block space-y-1 text-sm text-[#A3A3A3]">
+                  <span className="font-medium text-white">
+                    Personal Phone No
+                  </span>
+                  <input
+                    value={personalPhone}
+                    onChange={(e) => setPersonalPhone(e.target.value)}
+                    className={fieldClass}
+                    placeholder="+92 …"
+                  />
+                </label>
+
+                <label className="block space-y-1 text-sm text-[#A3A3A3]">
+                  <span className="font-medium text-white">
+                    Business Phone No
+                  </span>
+                  <input
+                    value={businessPhone}
+                    onChange={(e) => setBusinessPhone(e.target.value)}
+                    className={fieldClass}
+                    placeholder="+92 …"
+                  />
+                </label>
+
+                {dateTimeNotesBlock}
+              </div>
+            ) : (
+              <>
+                {contactReadOnly &&
+                (selectedLead || lockedLead || callback) ? (
+                  <div className="rounded-xl border border-[#222222] bg-[#0A0A0A]/60 px-3.5 py-3">
+                    <p className="text-[11px] font-semibold uppercase tracking-wider text-[#A3A3A3]">
+                      {callback && !callback.leadId && isReschedule
+                        ? 'Direct Contact'
+                        : 'Lead / Business Name'}
+                    </p>
+                    <p className="mt-1 font-medium text-white">
+                      {(selectedLead || lockedLead || callback)?.businessName}
+                    </p>
+                    <p className="mt-0.5 text-sm text-[#A3A3A3]">
+                      {selectedLead?.businessPhone ||
+                        selectedLead?.personalPhone ||
+                        lockedLead?.businessPhone ||
+                        lockedLead?.personalPhone ||
+                        callbackBusinessPhone(callback) ||
+                        '—'}
+                    </p>
+                  </div>
+                ) : sourceMode === 'claimed' &&
+                  allowStandalone &&
+                  !lockedLead &&
+                  !isReschedule ? (
+                  <p className="rounded-xl border border-dashed border-white/15 bg-[#0A0A0A]/40 px-3.5 py-3 text-sm text-[#A3A3A3]">
+                    Select a claimed lead above to load business name and phone.
+                  </p>
+                ) : null}
+
+                <div className="space-y-4">{dateTimeNotesBlock}</div>
+              </>
+            )}
+
+            {error ? (
+              <p role="alert" className="text-sm text-[#F25E26]">
+                {error}
               </p>
             ) : null}
           </div>
 
-          <label className="block space-y-1.5 text-sm text-zinc-300">
-            <span className="font-medium">Notes / Follow-up Details</span>
-            <textarea
-              rows={3}
-              placeholder='e.g. "Customer requested call after 9 PM"'
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              className={`${fieldClass} resize-none`}
-            />
-          </label>
-
-          {error ? (
-            <p role="alert" className="text-sm text-red-300">
-              {error}
-            </p>
-          ) : null}
-          </div>
-
-          <div className="flex shrink-0 flex-wrap justify-end gap-2 border-t border-zinc-800 bg-zinc-900 px-5 py-4">
+          <div className="flex shrink-0 flex-wrap justify-end gap-2 border-t border-[#222222] bg-[#111111] px-5 py-3.5">
             <button
               type="button"
               onClick={onClose}
               disabled={mutation.isPending}
-              className="rounded-xl border border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-300 transition hover:bg-zinc-800 disabled:opacity-60"
+              className="rounded-xl border border-white/15 px-4 py-2 text-sm font-medium text-white transition hover:bg-white/5 disabled:opacity-60"
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={mutation.isPending}
-              className="rounded-xl bg-orange-600 px-4 py-2 text-sm font-semibold text-white shadow-lg shadow-orange-950/30 transition hover:bg-orange-500 disabled:cursor-not-allowed disabled:opacity-60"
+              className="rounded-xl bg-[#F25E26] px-4 py-2 text-sm font-semibold text-white shadow-lg shadow-[#F25E26]/25 transition hover:bg-[#ff6a33] disabled:cursor-not-allowed disabled:opacity-60"
             >
               {mutation.isPending ? 'Saving…' : 'Save Callback'}
             </button>

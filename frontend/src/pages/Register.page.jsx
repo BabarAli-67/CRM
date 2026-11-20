@@ -110,10 +110,12 @@ export default function RegisterPage() {
 
       <div className="relative w-full max-w-md rounded-card border border-obsidian-border bg-obsidian-surface/95 p-8 shadow-[0_24px_80px_rgba(0,0,0,0.45)] backdrop-blur">
         <div className="mb-8 text-center">
-          <p className="font-display text-2xl font-bold italic tracking-wide text-flash-primary">
-            FLASH TECH
-          </p>
-          <h1 className="mt-3 font-display text-3xl font-semibold tracking-tight text-ink">
+          <img
+            src="/logo.webp"
+            alt="Flash Tech"
+            className="mx-auto h-12 w-auto max-w-[220px] object-contain"
+          />
+          <h1 className="mt-5 font-display text-3xl font-semibold tracking-tight text-ink">
             {submitted ? 'Request submitted' : 'Create account'}
           </h1>
           <p className="mt-2 text-sm text-ink-muted">
