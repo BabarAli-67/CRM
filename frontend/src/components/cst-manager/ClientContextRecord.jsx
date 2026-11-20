@@ -290,6 +290,16 @@ export default function ClientContextRecord({
           <Field label="Services Offered">
             {displayOrDash(lead?.servicesOffered)}
           </Field>
+          {lead?.contractEnabled && Number(lead?.contractMonths) > 0 ? (
+            <Field label="Contract">
+              {`Active Contract · ${Math.floor(Number(lead.contractMonths))} Month${
+                Number(lead.contractMonths) === 1 ? '' : 's'
+              }`}
+              {lead.contractAmount != null
+                ? ` · $${Number(lead.contractAmount).toLocaleString('en-US')}`
+                : ''}
+            </Field>
+          ) : null}
         </div>
       </div>
 

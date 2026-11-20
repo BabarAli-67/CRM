@@ -18,6 +18,7 @@ import {
 } from '../../utils/formatPayment.util.js';
 import { retentionAlertAtFromClosedAt } from '../../utils/emailjs.util.js';
 import {
+  formatContractBadgeLabel,
   formatPktDateTimeLong,
   getRetentionBadge,
 } from '../../utils/retention.util.js';
@@ -185,7 +186,7 @@ export default function HandoverQueuePage() {
       if (dateQ) {
         const retentionAt =
           row.handover?.retention?.at ||
-          retentionAlertAtFromClosedAt(row.closedAt);
+          retentionAlertAtFromClosedAt(row.closedAt, row);
         if (pktDateKey(retentionAt) !== dateQ) return false;
       }
       return true;
@@ -473,6 +474,7 @@ export default function HandoverQueuePage() {
                   const collected = revenue.totalCollected;
                   const pending = revenue.totalPending;
                   const retentionBadge = getRetentionBadge(row);
+                  const contractBadge = formatContractBadgeLabel(row);
 
                   const unread = Number(row.unreadCommentCount) || 0;
 
@@ -490,6 +492,11 @@ export default function HandoverQueuePage() {
                         <h3 className="truncate font-display text-sm font-bold tracking-tight text-white">
                           {row.businessName?.trim() || '—'}
                         </h3>
+                        {contractBadge ? (
+                          <span className="inline-flex shrink-0 items-center rounded-full bg-sky-500/15 px-2 py-0.5 text-[10px] font-bold text-sky-300 ring-1 ring-sky-500/40">
+                            {contractBadge}
+                          </span>
+                        ) : null}
                         {retentionBadge ? (
                           <span
                             className={`inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-[10px] font-bold ring-1 ${

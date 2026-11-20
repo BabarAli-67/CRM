@@ -17,6 +17,14 @@ import {
   formatLeadStage,
   formatPaymentSummary,
 } from '../../utils/formatPayment.util.js';
+import ContractOptionFields from './ContractOptionFields.jsx';
+import {
+  CONTRACT_MONTH_PRESETS,
+  formatContractBadgeLabel,
+  formatContractServicesLabel,
+  parseContractMonths,
+  stripContractLabel,
+} from '../../utils/contract.util.js';
 
 const formatPkt = (value) => {
   if (!value) return '—';
@@ -100,6 +108,8 @@ const emptyFormFromLead = (lead) => {
       ? String(receivedRaw)
       : '';
 
+  const months = parseContractMonths(lead?.contractMonths);
+
   return {
     clientName: lead?.clientName || '',
     businessName: lead?.businessName || '',
@@ -110,7 +120,16 @@ const emptyFormFromLead = (lead) => {
     websiteLink: lead?.websiteLink || '',
     gmbLink: lead?.gmbLink || '',
     serviceAreas: lead?.serviceAreas || '',
-    servicesOffered: lead?.servicesOffered || '',
+    servicesOffered: stripContractLabel(lead?.servicesOffered || ''),
+    contractEnabled: Boolean(lead?.contractEnabled),
+    contractMonths:
+      months && CONTRACT_MONTH_PRESETS.includes(months) ? months : months || 3,
+    contractMonthsCustom:
+      months && !CONTRACT_MONTH_PRESETS.includes(months) ? String(months) : '',
+    contractAmount:
+      lead?.contractAmount != null && lead?.contractAmount !== ''
+        ? String(lead.contractAmount)
+        : paymentOffered,
     paymentOffered,
     paymentReceived,
     paymentPending: computePendingDisplay(paymentOffered, paymentReceived),
@@ -205,10 +224,33 @@ export default function LeadDetailModal({
           key === 'paymentOffered' ? nextValue : next.paymentOffered,
           key === 'paymentReceived' ? nextValue : next.paymentReceived
         );
+        if (key === 'paymentOffered' && f.contractEnabled) {
+          next.contractAmount = nextValue;
+        }
       }
       return next;
     });
   };
+
+  const resolvedContractMonths = () => {
+    if (!form.contractEnabled) return null;
+    if (
+      form.contractMonths === 'custom' ||
+      !CONTRACT_MONTH_PRESETS.includes(Number(form.contractMonths))
+    ) {
+      return parseContractMonths(form.contractMonthsCustom);
+    }
+    return parseContractMonths(form.contractMonths);
+  };
+
+  const contractPreview = form.contractEnabled
+    ? formatContractServicesLabel(
+        form.servicesOffered,
+        resolvedContractMonths() ||
+          form.contractMonthsCustom ||
+          form.contractMonths
+      )
+    : '';
 
   const buildPaymentPayload = () => {
     if (form.paymentMethod === 'other') {
@@ -322,6 +364,34 @@ export default function LeadDetailModal({
       paymentOffered = n;
     }
 
+    let contractEnabled = false;
+    let contractMonths = null;
+    let contractAmount = null;
+    let finalServices = form.servicesOffered.trim() || null;
+    let finalOffered = paymentOffered;
+
+    if (form.contractEnabled) {
+      contractEnabled = true;
+      contractMonths = resolvedContractMonths();
+      if (!contractMonths) {
+        setEditError('Contract Timeframe (months) is required.');
+        return;
+      }
+      const amountRaw = String(
+        form.contractAmount || form.paymentOffered
+      ).trim();
+      contractAmount = Number(amountRaw);
+      if (!Number.isFinite(contractAmount) || contractAmount < 0) {
+        setEditError('Contract Amount must be a valid non-negative number.');
+        return;
+      }
+      finalOffered = contractAmount;
+      finalServices = formatContractServicesLabel(
+        form.servicesOffered,
+        contractMonths
+      );
+    }
+
     const payload = {
       clientName: form.clientName.trim() || null,
       businessName: form.businessName.trim(),
@@ -332,11 +402,14 @@ export default function LeadDetailModal({
       websiteLink: normalizeUrl(form.websiteLink),
       gmbLink: normalizeUrl(form.gmbLink),
       serviceAreas: form.serviceAreas.trim() || null,
-      servicesOffered: form.servicesOffered.trim() || null,
+      servicesOffered: finalServices,
+      contractEnabled,
+      contractMonths,
+      contractAmount,
       notes: form.notes.trim() || null,
     };
-    if (paymentOffered != null) {
-      payload.paymentOffered = paymentOffered;
+    if (finalOffered != null) {
+      payload.paymentOffered = finalOffered;
       payload.paymentReceived = paymentReceived;
     } else if (form.paymentReceived.trim() !== '') {
       payload.paymentReceived = paymentReceived;
@@ -508,8 +581,51 @@ export default function LeadDetailModal({
                     value={form.servicesOffered}
                     onChange={setField('servicesOffered')}
                     className={fieldClass}
+                    placeholder="SEO, GMB, Web, Citation Pages…"
                   />
                 </label>
+                <ContractOptionFields
+                  enabled={form.contractEnabled}
+                  onEnabledChange={(yes) =>
+                    setForm((prev) => ({
+                      ...prev,
+                      contractEnabled: yes,
+                      contractAmount: yes
+                        ? prev.contractAmount || prev.paymentOffered
+                        : prev.contractAmount,
+                      paymentOffered: yes
+                        ? prev.contractAmount || prev.paymentOffered
+                        : prev.paymentOffered,
+                      paymentPending: computePendingDisplay(
+                        yes
+                          ? prev.contractAmount || prev.paymentOffered
+                          : prev.paymentOffered,
+                        prev.paymentReceived
+                      ),
+                    }))
+                  }
+                  months={form.contractMonths}
+                  onMonthsChange={(m) =>
+                    setForm((prev) => ({ ...prev, contractMonths: m }))
+                  }
+                  customMonths={form.contractMonthsCustom}
+                  onCustomMonthsChange={(v) =>
+                    setForm((prev) => ({ ...prev, contractMonthsCustom: v }))
+                  }
+                  amount={form.contractAmount}
+                  onAmountChange={(v) =>
+                    setForm((prev) => ({
+                      ...prev,
+                      contractAmount: v,
+                      paymentOffered: v,
+                      paymentPending: computePendingDisplay(
+                        v,
+                        prev.paymentReceived
+                      ),
+                    }))
+                  }
+                  previewLabel={contractPreview}
+                />
                 <div className="grid grid-cols-1 gap-3 sm:col-span-2 sm:grid-cols-3">
                   <label className={labelClass}>
                     <span className="text-zinc-400">
@@ -768,6 +884,9 @@ export default function LeadDetailModal({
                 <Row label="Personal email">{lead.personalEmail}</Row>
                 <Row label="Service areas">{lead.serviceAreas}</Row>
                 <Row label="Services">{lead.servicesOffered}</Row>
+                {formatContractBadgeLabel(lead) ? (
+                  <Row label="Contract">{formatContractBadgeLabel(lead)}</Row>
+                ) : null}
               </Section>
 
               <Section title="Web presence">

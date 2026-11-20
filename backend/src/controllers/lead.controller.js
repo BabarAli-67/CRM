@@ -22,6 +22,7 @@ import {
 } from '../utils/savedCard.util.js';
 import { buildAlertFlagsForSchedule } from '../utils/alertTiming.util.js';
 import { resolvePktMonthRange } from '../utils/shiftTime.util.js';
+import { applyContractFieldsToLead } from '../utils/contract.util.js';
 import { randomUUID } from 'crypto';
 
 /** Parse ?month=YYYY-MM for closed-sales scoping. Defaults to current PKT month. */
@@ -121,6 +122,20 @@ const UPDATABLE_FIELDS = [
 ];
 
 const PAYMENT_SKIP_FIELDS = new Set(['paymentOffered', 'paymentReceived']);
+const CONTRACT_SKIP_FIELDS = new Set([
+  'contractEnabled',
+  'contractMonths',
+  'contractAmount',
+  'servicesOffered',
+]);
+
+const applyContractOrThrow = (lead, body) => {
+  try {
+    applyContractFieldsToLead(lead, body);
+  } catch (err) {
+    throw new ApiError(400, err?.message || 'Invalid contract fields');
+  }
+};
 
 const trimOrNull = (value) => {
   if (value === undefined || value === null) return null;
@@ -191,17 +206,37 @@ export const createLead = asyncHandler(async (req, res) => {
   const personalPhone = trimOrNull(req.body.personalPhone);
   const businessPhone = trimOrNull(req.body.businessPhone);
 
+  const contractDraft = {
+    servicesOffered,
+    paymentOffered: payment.paymentOffered,
+    paymentReceived: payment.paymentReceived,
+    paymentPending: payment.paymentPending,
+    contractEnabled: false,
+    contractMonths: null,
+    contractAmount: null,
+  };
+  applyContractOrThrow(contractDraft, {
+    ...req.body,
+    servicesOffered,
+  });
+
   const payload = {
     businessName: String(businessName).trim(),
     personalPhone,
     businessPhone,
     websiteLink,
-    servicesOffered,
+    servicesOffered: contractDraft.servicesOffered,
     agentId: req.user._id,
     closerId: closer._id,
-    paymentOffered: payment.paymentOffered,
-    paymentReceived: payment.paymentReceived,
-    paymentPending: payment.paymentPending,
+    paymentOffered: contractDraft.paymentOffered,
+    paymentReceived: contractDraft.paymentReceived,
+    paymentPending: contractDraft.paymentPending,
+    contractEnabled: Boolean(contractDraft.contractEnabled),
+    contractMonths: contractDraft.contractMonths ?? null,
+    contractAmount:
+      contractDraft.contractAmount != null
+        ? contractDraft.contractAmount
+        : null,
     status: 'with_agent',
     stage: 'active',
   };
@@ -578,6 +613,30 @@ export const moveLeadToCst = asyncHandler(async (req, res) => {
     ).trim();
     if (!upscaleItemName) {
       throw new ApiError(400, 'Service Name is required when Upsell is Yes');
+    }
+
+    // Optional multi-month contract on upsell — extends retention deferral only
+    // (does not rewrite base servicesOffered / paymentOffered)
+    const upsellContractOn =
+      body.contractEnabled === true ||
+      body.contractEnabled === 'true' ||
+      body.contractEnabled === '1' ||
+      body.contractEnabled === 'yes';
+    if (upsellContractOn) {
+      const months = Number(body.contractMonths);
+      if (!Number.isFinite(months) || months < 1) {
+        throw new ApiError(
+          400,
+          'Contract Timeframe (months) is required when Upsell Contract is Yes'
+        );
+      }
+      const existingMonths = lead.contractEnabled
+        ? Number(lead.contractMonths) || 0
+        : 0;
+      if (months > existingMonths) {
+        lead.contractEnabled = true;
+        lead.contractMonths = Math.min(120, Math.floor(months));
+      }
     }
 
     // Prefer Offered / Received split; fall back to legacy single price
@@ -1001,6 +1060,7 @@ export const updateLead = asyncHandler(async (req, res) => {
   for (const field of UPDATABLE_FIELDS) {
     if (req.body[field] === undefined) continue;
     if (PAYMENT_SKIP_FIELDS.has(field)) continue;
+    if (CONTRACT_SKIP_FIELDS.has(field)) continue;
     lead[field] =
       req.body[field] === '' || req.body[field] === null
         ? null
@@ -1008,6 +1068,25 @@ export const updateLead = asyncHandler(async (req, res) => {
   }
 
   applyPaymentFieldsToLead(lead, req.body, { requireOffered: false });
+  if (
+    req.body.contractEnabled !== undefined ||
+    req.body.contractMonths !== undefined ||
+    req.body.contractAmount !== undefined ||
+    req.body.servicesOffered !== undefined
+  ) {
+    if (
+      req.body.servicesOffered !== undefined &&
+      req.body.contractEnabled === undefined &&
+      !lead.contractEnabled
+    ) {
+      lead.servicesOffered =
+        req.body.servicesOffered === '' || req.body.servicesOffered === null
+          ? null
+          : req.body.servicesOffered;
+    } else {
+      applyContractOrThrow(lead, req.body);
+    }
+  }
 
   // Agents must always leave payment offered on save
   if (
@@ -1429,10 +1508,26 @@ export const closeLead = asyncHandler(async (req, res) => {
   for (const field of UPDATABLE_FIELDS) {
     if (req.body[field] === undefined) continue;
     if (PAYMENT_SKIP_FIELDS.has(field)) continue;
+    if (CONTRACT_SKIP_FIELDS.has(field)) continue;
     lead[field] =
       req.body[field] === '' || req.body[field] === null
         ? null
         : req.body[field];
+  }
+
+  if (
+    req.body.contractEnabled !== undefined ||
+    req.body.contractMonths !== undefined ||
+    req.body.contractAmount !== undefined ||
+    req.body.servicesOffered !== undefined
+  ) {
+    applyContractOrThrow(lead, {
+      ...req.body,
+      servicesOffered:
+        req.body.servicesOffered !== undefined
+          ? req.body.servicesOffered
+          : lead.servicesOffered,
+    });
   }
 
   lead.stage = 'closed_sale';

@@ -15,6 +15,13 @@ import {
   formatCardNumber,
   maxCardDigits,
 } from '../../utils/cardBrand.util.js';
+import ContractOptionFields from './ContractOptionFields.jsx';
+import {
+  CONTRACT_MONTH_PRESETS,
+  formatContractServicesLabel,
+  parseContractMonths,
+  stripContractLabel,
+} from '../../utils/contract.util.js';
 
 const fieldClass =
   'w-full rounded-lg border border-zinc-700/80 bg-zinc-950 px-3 py-2.5 text-sm text-zinc-100 outline-none transition focus:border-orange-500/50 focus:ring-2 focus:ring-orange-500/20';
@@ -164,6 +171,10 @@ const emptyReview = {
   gmbLink: '',
   serviceAreas: '',
   servicesOffered: '',
+  contractEnabled: false,
+  contractMonths: 3,
+  contractMonthsCustom: '',
+  contractAmount: '',
   paymentOffered: '',
   paymentReceived: '',
   paymentPending: '',
@@ -204,7 +215,21 @@ const mapLeadToReview = (lead) => {
     websiteLink: lead.websiteLink || '',
     gmbLink: lead.gmbLink || '',
     serviceAreas: lead.serviceAreas || '',
-    servicesOffered: lead.servicesOffered || '',
+    servicesOffered: stripContractLabel(lead.servicesOffered || ''),
+    contractEnabled: Boolean(lead.contractEnabled),
+    contractMonths: (() => {
+      const m = parseContractMonths(lead.contractMonths);
+      if (m && CONTRACT_MONTH_PRESETS.includes(m)) return m;
+      return m || 3;
+    })(),
+    contractMonthsCustom: (() => {
+      const m = parseContractMonths(lead.contractMonths);
+      return m && !CONTRACT_MONTH_PRESETS.includes(m) ? String(m) : '';
+    })(),
+    contractAmount:
+      lead.contractAmount != null && lead.contractAmount !== ''
+        ? String(lead.contractAmount)
+        : paymentOffered,
     paymentOffered,
     paymentReceived,
     paymentPending: computePendingDisplay(paymentOffered, paymentReceived),
@@ -406,10 +431,33 @@ export default function CloseSaleModal({ open, lead, onClose, onSuccess }) {
           field === 'paymentOffered' ? nextValue : next.paymentOffered,
           field === 'paymentReceived' ? nextValue : next.paymentReceived
         );
+        if (field === 'paymentOffered' && prev.contractEnabled) {
+          next.contractAmount = nextValue;
+        }
       }
       return next;
     });
   };
+
+  const resolvedContractMonths = () => {
+    if (!review.contractEnabled) return null;
+    if (
+      review.contractMonths === 'custom' ||
+      !CONTRACT_MONTH_PRESETS.includes(Number(review.contractMonths))
+    ) {
+      return parseContractMonths(review.contractMonthsCustom);
+    }
+    return parseContractMonths(review.contractMonths);
+  };
+
+  const contractPreview = review.contractEnabled
+    ? formatContractServicesLabel(
+        review.servicesOffered,
+        resolvedContractMonths() ||
+          review.contractMonthsCustom ||
+          review.contractMonths
+      )
+    : '';
 
   const handleCardNumberChange = (raw) => {
     const brand = detectCardBrand(raw);
@@ -548,6 +596,34 @@ export default function CloseSaleModal({ open, lead, onClose, onSuccess }) {
       }
     }
 
+    let contractEnabled = false;
+    let contractMonths = null;
+    let contractAmount = null;
+    let finalServices = review.servicesOffered.trim() || null;
+    let finalOffered = paymentOffered;
+
+    if (review.contractEnabled) {
+      contractEnabled = true;
+      contractMonths = resolvedContractMonths();
+      if (!contractMonths) {
+        setError('Contract Timeframe (months) is required.');
+        return;
+      }
+      const amountRaw = String(
+        review.contractAmount || review.paymentOffered
+      ).trim();
+      contractAmount = Number(amountRaw);
+      if (!Number.isFinite(contractAmount) || contractAmount < 0) {
+        setError('Contract Amount must be a valid non-negative number.');
+        return;
+      }
+      finalOffered = contractAmount;
+      finalServices = formatContractServicesLabel(
+        review.servicesOffered,
+        contractMonths
+      );
+    }
+
     const payload = {
       payment: built.payment,
       clientName: review.clientName.trim() || null,
@@ -559,9 +635,12 @@ export default function CloseSaleModal({ open, lead, onClose, onSuccess }) {
       websiteLink: normalizeUrl(review.websiteLink),
       gmbLink: normalizeUrl(review.gmbLink),
       serviceAreas: review.serviceAreas.trim() || null,
-      servicesOffered: review.servicesOffered.trim() || null,
-      paymentOffered,
+      servicesOffered: finalServices,
+      paymentOffered: finalOffered,
       paymentReceived,
+      contractEnabled,
+      contractMonths,
+      contractAmount,
       notes: review.notes.trim() || null,
     };
 
@@ -711,9 +790,54 @@ export default function CloseSaleModal({ open, lead, onClose, onSuccess }) {
                       value={review.servicesOffered}
                       onChange={handleReviewChange('servicesOffered')}
                       className={fieldClass}
-                      placeholder="Website, SEO, Yelp"
+                      placeholder="SEO, GMB, Web, Citation Pages…"
                     />
                   </label>
+                  <ContractOptionFields
+                    enabled={review.contractEnabled}
+                    onEnabledChange={(yes) =>
+                      setReview((prev) => ({
+                        ...prev,
+                        contractEnabled: yes,
+                        contractAmount: yes
+                          ? prev.contractAmount || prev.paymentOffered
+                          : prev.contractAmount,
+                        paymentOffered: yes
+                          ? prev.contractAmount || prev.paymentOffered
+                          : prev.paymentOffered,
+                        paymentPending: computePendingDisplay(
+                          yes
+                            ? prev.contractAmount || prev.paymentOffered
+                            : prev.paymentOffered,
+                          prev.paymentReceived
+                        ),
+                      }))
+                    }
+                    months={review.contractMonths}
+                    onMonthsChange={(m) =>
+                      setReview((prev) => ({ ...prev, contractMonths: m }))
+                    }
+                    customMonths={review.contractMonthsCustom}
+                    onCustomMonthsChange={(v) =>
+                      setReview((prev) => ({
+                        ...prev,
+                        contractMonthsCustom: v,
+                      }))
+                    }
+                    amount={review.contractAmount}
+                    onAmountChange={(v) =>
+                      setReview((prev) => ({
+                        ...prev,
+                        contractAmount: v,
+                        paymentOffered: v,
+                        paymentPending: computePendingDisplay(
+                          v,
+                          prev.paymentReceived
+                        ),
+                      }))
+                    }
+                    previewLabel={contractPreview}
+                  />
                   <div className="grid grid-cols-1 gap-4 sm:col-span-2 sm:grid-cols-3">
                     <label className="block space-y-1.5 text-sm text-zinc-300">
                       <span>

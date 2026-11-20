@@ -11,6 +11,7 @@ import {
   syncLegacyCardsIntoVault,
 } from '../utils/savedCard.util.js';
 import { emitToUser } from '../sockets/ioInstance.util.js';
+import { computeRetentionAlertAt } from '../utils/contract.util.js';
 import { randomUUID } from 'crypto';
 
 const CHANGE_REQUEST_CATEGORIES = new Set([
@@ -153,7 +154,9 @@ export const markClientOnboarded = asyncHandler(async (req, res) => {
     _id: req.params.id,
     stage: 'closed_sale',
     'handover.cstStatus': 'pending_review',
-  }).select('_id closedAt');
+  }).select(
+    '_id closedAt contractEnabled contractMonths contractAmount servicesOffered'
+  );
 
   if (!existing) {
     throw new ApiError(
@@ -162,11 +165,8 @@ export const markClientOnboarded = asyncHandler(async (req, res) => {
     );
   }
 
-  const closed = existing.closedAt ? new Date(existing.closedAt) : now;
-  const closedMs = closed.getTime();
-  const retentionAt = Number.isNaN(closedMs)
-    ? new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000)
-    : new Date(closedMs + 30 * 24 * 60 * 60 * 1000);
+  // Defer by contract months when Multi-Month Contract is active; else +30 days
+  const retentionAt = computeRetentionAlertAt(existing.closedAt || now, existing);
 
   const lead = await Lead.findOneAndUpdate(
     {

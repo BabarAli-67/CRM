@@ -67,10 +67,40 @@ export const sendOnboardingWelcomeEmail = async ({
   return { skipped: false, result, templateParams };
 };
 
-/** closedAt + exactly 30 days (preserves PKT wall-clock; PKT has no DST). */
-export const retentionAlertAtFromClosedAt = (closedAt) => {
+/**
+ * Initial retention alert time from closedAt.
+ * With an active multi-month contract: closedAt + contractMonths.
+ * Otherwise: closedAt + 30 days (PKT wall-clock; PKT has no DST).
+ * @param {string|Date} closedAt
+ * @param {object|number} [leadOrMonths] lead with contract* fields, or months number
+ */
+export const retentionAlertAtFromClosedAt = (closedAt, leadOrMonths) => {
   if (!closedAt) return null;
   const closed = new Date(closedAt);
   if (Number.isNaN(closed.getTime())) return null;
+
+  let months = null;
+  if (typeof leadOrMonths === 'number') {
+    months =
+      Number.isFinite(leadOrMonths) && leadOrMonths >= 1
+        ? Math.floor(leadOrMonths)
+        : null;
+  } else if (leadOrMonths && typeof leadOrMonths === 'object') {
+    if (
+      leadOrMonths.contractEnabled &&
+      Number(leadOrMonths.contractMonths) >= 1
+    ) {
+      months = Math.floor(Number(leadOrMonths.contractMonths));
+    }
+  }
+
+  if (months) {
+    const next = new Date(closed.getTime());
+    const day = next.getUTCDate();
+    next.setUTCMonth(next.getUTCMonth() + months);
+    if (next.getUTCDate() < day) next.setUTCDate(0);
+    return next;
+  }
+
   return new Date(closed.getTime() + 30 * 24 * 60 * 60 * 1000);
 };

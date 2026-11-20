@@ -7,10 +7,12 @@ import {
 import { formatMoneyAmount } from '../../utils/formatPayment.util.js';
 import {
   describeRetentionDelta,
+  formatContractBadgeLabel,
   formatPktDateTimeLong,
   fromPktDatetimeLocal,
   getRetentionBadge,
   getRetentionComparisonBaseline,
+  hasActiveContract,
   resolveRetentionAt,
   toPktDatetimeLocal,
 } from '../../utils/retention.util.js';
@@ -25,6 +27,7 @@ const inputClass =
 export default function CstRetentionPanel({ lead, onLeadUpdated }) {
   const retention = lead?.handover?.retention;
   const badge = getRetentionBadge(lead);
+  const contractBadge = formatContractBadgeLabel(lead);
   const nextAt = resolveRetentionAt(lead);
   const history = useMemo(() => {
     const rows = Array.isArray(retention?.history) ? [...retention.history] : [];
@@ -139,32 +142,42 @@ export default function CstRetentionPanel({ lead, onLeadUpdated }) {
             <p className="mt-1 text-sm text-zinc-500">
               Monthly recurring retention · audio / popup alerts fire at the
               saved Next Retention Date (PKT)
+              {hasActiveContract(lead)
+                ? ' · deferred for the active contract period'
+                : ''}
             </p>
           </div>
-          {badge ? (
-            <span
-              className={`inline-flex flex-col items-end rounded-xl border px-3 py-2 text-right ${
-                badge.kind === 'paid'
-                  ? 'border-emerald-500/40 bg-emerald-500/10'
-                  : 'border-[#F25E26]/40 bg-[#F25E26]/10'
-              }`}
-            >
+          <div className="flex flex-col items-end gap-2">
+            {contractBadge ? (
+              <span className="inline-flex rounded-xl border border-sky-500/40 bg-sky-500/10 px-3 py-2 text-[10px] font-semibold uppercase tracking-wide text-sky-300">
+                {contractBadge}
+              </span>
+            ) : null}
+            {badge ? (
               <span
-                className={`text-[10px] font-semibold uppercase tracking-wide ${
-                  badge.kind === 'paid' ? 'text-emerald-300' : 'text-[#F25E26]'
+                className={`inline-flex flex-col items-end rounded-xl border px-3 py-2 text-right ${
+                  badge.kind === 'paid'
+                    ? 'border-emerald-500/40 bg-emerald-500/10'
+                    : 'border-[#F25E26]/40 bg-[#F25E26]/10'
                 }`}
               >
-                {badge.label}
+                <span
+                  className={`text-[10px] font-semibold uppercase tracking-wide ${
+                    badge.kind === 'paid' ? 'text-emerald-300' : 'text-[#F25E26]'
+                  }`}
+                >
+                  {badge.label}
+                </span>
+                <span className="mt-0.5 text-xs font-medium text-white">
+                  Next · {formatPktDateTimeLong(badge.at)} PKT
+                </span>
               </span>
-              <span className="mt-0.5 text-xs font-medium text-white">
-                Next · {formatPktDateTimeLong(badge.at)} PKT
+            ) : (
+              <span className="rounded-xl border border-zinc-700 px-3 py-2 text-xs text-zinc-500">
+                No schedule yet
               </span>
-            </span>
-          ) : (
-            <span className="rounded-xl border border-zinc-700 px-3 py-2 text-xs text-zinc-500">
-              No schedule yet
-            </span>
-          )}
+            )}
+          </div>
         </div>
 
         <div className="mt-5 grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">

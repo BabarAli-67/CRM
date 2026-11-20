@@ -73,6 +73,27 @@ const leadSchema = new mongoose.Schema(
       required: true,
       trim: true,
     },
+    /**
+     * Multi-month contract on the base deal.
+     * When enabled, servicesOffered is labeled e.g. "SEO Contract (3 Months)"
+     * and CST retention is deferred by contractMonths (not +30 days).
+     */
+    contractEnabled: {
+      type: Boolean,
+      default: false,
+    },
+    contractMonths: {
+      type: Number,
+      default: null,
+      min: 1,
+      max: 120,
+    },
+    /** Total contract / upfront amount — syncs with paymentOffered when set. */
+    contractAmount: {
+      type: Number,
+      default: null,
+      min: 0,
+    },
     /** Deal value offered to the client (agent intake). */
     paymentOffered: {
       type: Number,

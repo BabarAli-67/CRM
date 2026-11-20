@@ -1,4 +1,10 @@
 import { retentionAlertAtFromClosedAt } from './emailjs.util.js';
+import {
+  formatContractBadgeLabel,
+  hasActiveContract,
+} from './contract.util.js';
+
+export { formatContractBadgeLabel, hasActiveContract };
 
 /** Format a Date / ISO as datetime-local value in Asia/Karachi. */
 export const toPktDatetimeLocal = (value) => {
@@ -53,7 +59,7 @@ export const resolveRetentionAt = (lead) => {
     const d = new Date(at);
     if (!Number.isNaN(d.getTime())) return d;
   }
-  return retentionAlertAtFromClosedAt(lead?.closedAt);
+  return retentionAlertAtFromClosedAt(lead?.closedAt, lead);
 };
 
 /**

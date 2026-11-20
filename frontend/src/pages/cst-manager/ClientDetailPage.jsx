@@ -18,6 +18,7 @@ import {
   getClientRevenueTotals,
 } from '../../utils/formatPayment.util.js';
 import {
+  formatContractBadgeLabel,
   formatPktDateTimeLong,
   getRetentionBadge,
 } from '../../utils/retention.util.js';
@@ -136,6 +137,7 @@ export default function ClientDetailPage() {
   const collected = revenue.totalCollected;
   const pending = revenue.totalPending;
   const retentionBadge = getRetentionBadge(lead);
+  const contractBadge = formatContractBadgeLabel(lead);
 
   useEffect(() => {
     if (!lead) return;
@@ -305,28 +307,37 @@ export default function ClientDetailPage() {
                     </div>
                   </div>
 
-                  {retentionBadge ? (
-                    <div
-                      className={`shrink-0 rounded-xl border px-3 py-2 text-right ${
-                        retentionBadge.kind === 'paid'
-                          ? 'border-emerald-500/40 bg-emerald-500/10'
-                          : 'border-[#F25E26]/30 bg-[#F25E26]/10'
-                      }`}
-                    >
-                      <p
-                        className={`text-[10px] font-semibold uppercase tracking-wide ${
+                  <div className="flex shrink-0 flex-col items-end gap-2">
+                    {contractBadge ? (
+                      <div className="rounded-xl border border-sky-500/40 bg-sky-500/10 px-3 py-2 text-right">
+                        <p className="text-[10px] font-semibold uppercase tracking-wide text-sky-300">
+                          {contractBadge}
+                        </p>
+                      </div>
+                    ) : null}
+                    {retentionBadge ? (
+                      <div
+                        className={`rounded-xl border px-3 py-2 text-right ${
                           retentionBadge.kind === 'paid'
-                            ? 'text-emerald-300'
-                            : 'text-[#F25E26]'
+                            ? 'border-emerald-500/40 bg-emerald-500/10'
+                            : 'border-[#F25E26]/30 bg-[#F25E26]/10'
                         }`}
                       >
-                        {retentionBadge.label}
-                      </p>
-                      <p className="mt-0.5 text-xs font-medium text-white">
-                        {formatPktDateTimeLong(retentionBadge.at)} PKT
-                      </p>
-                    </div>
-                  ) : null}
+                        <p
+                          className={`text-[10px] font-semibold uppercase tracking-wide ${
+                            retentionBadge.kind === 'paid'
+                              ? 'text-emerald-300'
+                              : 'text-[#F25E26]'
+                          }`}
+                        >
+                          {retentionBadge.label}
+                        </p>
+                        <p className="mt-0.5 text-xs font-medium text-white">
+                          {formatPktDateTimeLong(retentionBadge.at)} PKT
+                        </p>
+                      </div>
+                    ) : null}
+                  </div>
                 </div>
               </div>
 

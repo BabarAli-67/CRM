@@ -8,6 +8,13 @@ import {
   maxCardDigits,
   resolveCardBrandId,
 } from '../../utils/cardBrand.util.js';
+import ContractOptionFields from './ContractOptionFields.jsx';
+import {
+  CONTRACT_MONTH_PRESETS,
+  formatContractServicesLabel,
+  parseContractMonths,
+  stripContractLabel,
+} from '../../utils/contract.util.js';
 
 const pillActive =
   'bg-[#F25E26] text-white shadow-lg shadow-orange-950/30';
@@ -76,6 +83,10 @@ export default function MoveToCstModal({
   const [signedFile, setSignedFile] = useState(null);
   const [upsell, setUpsell] = useState(null);
   const [serviceName, setServiceName] = useState('');
+  const [contractEnabled, setContractEnabled] = useState(false);
+  const [contractMonths, setContractMonths] = useState(3);
+  const [contractMonthsCustom, setContractMonthsCustom] = useState('');
+  const [contractAmount, setContractAmount] = useState('');
   const [priceOffered, setPriceOffered] = useState('');
   const [priceReceived, setPriceReceived] = useState('');
   const [payMethod, setPayMethod] = useState('old_card');
@@ -109,6 +120,10 @@ export default function MoveToCstModal({
     setSignedFile(null);
     setUpsell(null);
     setServiceName('');
+    setContractEnabled(false);
+    setContractMonths(3);
+    setContractMonthsCustom('');
+    setContractAmount('');
     setPriceOffered('');
     setPriceReceived('');
     setPayMethod(savedCards.length ? 'old_card' : 'new_card');
@@ -140,6 +155,16 @@ export default function MoveToCstModal({
     if (Number.isNaN(offered) || offered < 0) return false;
     if (Number.isNaN(received) || received < 0) return false;
     if (received > offered) return false;
+    if (contractEnabled) {
+      const months =
+        contractMonths === 'custom' ||
+        !CONTRACT_MONTH_PRESETS.includes(Number(contractMonths))
+          ? parseContractMonths(contractMonthsCustom)
+          : parseContractMonths(contractMonths);
+      if (!months) return false;
+      const amt = Number(contractAmount || priceOffered);
+      if (!Number.isFinite(amt) || amt < 0) return false;
+    }
     if (payMethod === 'old_card') {
       return Boolean(selectedCardId && selectedSaved);
     }
@@ -158,6 +183,10 @@ export default function MoveToCstModal({
     signedFile,
     upsell,
     serviceName,
+    contractEnabled,
+    contractMonths,
+    contractMonthsCustom,
+    contractAmount,
     priceOffered,
     priceReceived,
     payMethod,
@@ -258,7 +287,7 @@ export default function MoveToCstModal({
       formData.append('signedDocument', signedFile);
     }
     if (upsell) {
-      const offered = Number(priceOffered);
+      let offered = Number(priceOffered);
       const received = Number(priceReceived) || 0;
       if (Number.isNaN(offered) || offered < 0) {
         setError('Price Offered must be a valid non-negative number.');
@@ -272,10 +301,36 @@ export default function MoveToCstModal({
         setError('Price Received cannot exceed Price Offered.');
         return;
       }
+
+      let finalServiceName = stripContractLabel(serviceName);
+      if (contractEnabled) {
+        const months =
+          contractMonths === 'custom' ||
+          !CONTRACT_MONTH_PRESETS.includes(Number(contractMonths))
+            ? parseContractMonths(contractMonthsCustom)
+            : parseContractMonths(contractMonths);
+        if (!months) {
+          setError('Contract Timeframe (months) is required.');
+          return;
+        }
+        const amt = Number(contractAmount || priceOffered);
+        if (!Number.isFinite(amt) || amt < 0) {
+          setError('Contract Amount must be a valid non-negative number.');
+          return;
+        }
+        offered = amt;
+        finalServiceName = formatContractServicesLabel(serviceName, months);
+        formData.append('contractEnabled', 'true');
+        formData.append('contractMonths', String(months));
+        formData.append('contractAmount', String(amt));
+      } else {
+        formData.append('contractEnabled', 'false');
+      }
+
       const pending = Math.max(0, offered - received);
 
-      formData.append('upscaleItemName', serviceName.trim());
-      formData.append('upsellServiceName', serviceName.trim());
+      formData.append('upscaleItemName', finalServiceName);
+      formData.append('upsellServiceName', finalServiceName);
       formData.append('upsellOffered', String(offered));
       formData.append('upscaleOffered', String(offered));
       formData.append('upsellReceived', String(received));
@@ -410,17 +465,54 @@ export default function MoveToCstModal({
                 onChange={setUpsell}
               />
               {upsell === true ? (
-                <label className="block space-y-1.5 text-sm text-zinc-300">
-                  <span className="font-medium">
-                    Service Name <span className="text-red-400">*</span>
-                  </span>
-                  <input
-                    value={serviceName}
-                    onChange={(e) => setServiceName(e.target.value)}
-                    className={fieldClass}
-                    placeholder="e.g. SEO package"
+                <>
+                  <label className="block space-y-1.5 text-sm text-zinc-300">
+                    <span className="font-medium">
+                      Service Name <span className="text-red-400">*</span>
+                    </span>
+                    <input
+                      value={serviceName}
+                      onChange={(e) => setServiceName(e.target.value)}
+                      className={fieldClass}
+                      placeholder="SEO, GMB, Web, Citation Pages…"
+                    />
+                  </label>
+                  <ContractOptionFields
+                    enabled={contractEnabled}
+                    onEnabledChange={(yes) => {
+                      setContractEnabled(yes);
+                      if (yes) {
+                        setContractAmount((prev) => prev || priceOffered);
+                        if (priceOffered === '' && contractAmount) {
+                          setPriceOffered(contractAmount);
+                        }
+                      }
+                    }}
+                    months={contractMonths}
+                    onMonthsChange={setContractMonths}
+                    customMonths={contractMonthsCustom}
+                    onCustomMonthsChange={setContractMonthsCustom}
+                    amount={contractAmount}
+                    onAmountChange={(v) => {
+                      setContractAmount(v);
+                      setPriceOffered(v);
+                    }}
+                    amountLabel="Contract Amount"
+                    previewLabel={
+                      contractEnabled
+                        ? formatContractServicesLabel(
+                            serviceName,
+                            contractMonths === 'custom' ||
+                              !CONTRACT_MONTH_PRESETS.includes(
+                                Number(contractMonths)
+                              )
+                              ? parseContractMonths(contractMonthsCustom)
+                              : parseContractMonths(contractMonths)
+                          )
+                        : ''
+                    }
                   />
-                </label>
+                </>
               ) : null}
             </section>
           </div>
