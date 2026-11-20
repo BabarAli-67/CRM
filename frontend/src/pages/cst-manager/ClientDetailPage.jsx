@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import CstManagerShell from '../../components/cst-manager/CstManagerShell.jsx';
 import ClientContextRecord from '../../components/cst-manager/ClientContextRecord.jsx';
@@ -23,6 +23,10 @@ const DETAIL_TABS = [
   { id: 'comments', label: 'Comments' },
   { id: 'work', label: 'Work & Reports' },
 ];
+
+const DETAIL_TAB_IDS = new Set(DETAIL_TABS.map((t) => t.id));
+const resolveDetailTab = (value) =>
+  DETAIL_TAB_IDS.has(value) ? value : 'context';
 
 const cardClass =
   'rounded-2xl border border-zinc-800/80 bg-[#111111] p-4 shadow-xl sm:p-5';
@@ -48,10 +52,31 @@ const formatPktFull = (value) => {
  */
 export default function ClientDetailPage() {
   const { id } = useParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const queryClient = useQueryClient();
-  const [detailTab, setDetailTab] = useState('context');
+  const [detailTab, setDetailTab] = useState(() =>
+    resolveDetailTab(searchParams.get('tab'))
+  );
   const [keywords, setKeywords] = useState([]);
   const [changeRequests, setChangeRequests] = useState([]);
+
+  useEffect(() => {
+    setDetailTab(resolveDetailTab(searchParams.get('tab')));
+  }, [searchParams]);
+
+  const selectDetailTab = (next) => {
+    const idTab = resolveDetailTab(next);
+    setDetailTab(idTab);
+    setSearchParams(
+      (prev) => {
+        const nextParams = new URLSearchParams(prev);
+        if (idTab === 'context') nextParams.delete('tab');
+        else nextParams.set('tab', idTab);
+        return nextParams;
+      },
+      { replace: true }
+    );
+  };
 
   const {
     data: lead,
@@ -211,6 +236,10 @@ export default function ClientDetailPage() {
               >
                 {DETAIL_TABS.map((tab) => {
                   const active = detailTab === tab.id;
+                  const unread =
+                    tab.id === 'comments'
+                      ? Number(lead.unreadCommentCount) || 0
+                      : 0;
                   return (
                     <button
                       key={tab.id}
@@ -219,14 +248,19 @@ export default function ClientDetailPage() {
                       id={`client-detail-tab-${tab.id}`}
                       aria-selected={active}
                       aria-controls={`client-detail-panel-${tab.id}`}
-                      onClick={() => setDetailTab(tab.id)}
-                      className={`rounded-lg px-3.5 py-2 text-sm font-semibold transition ${
+                      onClick={() => selectDetailTab(tab.id)}
+                      className={`inline-flex items-center gap-1.5 rounded-lg px-3.5 py-2 text-sm font-semibold transition ${
                         active
                           ? 'bg-[#F25E26]/15 text-[#F25E26] ring-1 ring-[#F25E26]/40'
                           : 'text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-200'
                       }`}
                     >
                       {tab.label}
+                      {unread > 0 ? (
+                        <span className="rounded-full bg-[#F25E26]/20 px-1.5 py-0.5 text-[10px] font-bold text-[#F25E26]">
+                          {unread}
+                        </span>
+                      ) : null}
                     </button>
                   );
                 })}

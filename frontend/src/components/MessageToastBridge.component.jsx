@@ -14,13 +14,15 @@ import {
   requestNotificationPermission,
   showBrowserNotification,
 } from '../utils/browserNotification.util.js';
+import { clientCommentsPath } from '../services/handover.service.js';
 import { getSocket } from '../utils/socketClient.util.js';
 
 const TOAST_TTL_MS = 7000;
+const COMMENT_ROLES = new Set(['cst_manager', 'tech_team']);
 
 /**
- * Global chat notifications: chime + toast when a message arrives and the
- * conversation is not the focused open docked window.
+ * Global chat + CST↔Tech client-comment notifications:
+ * chime + toast when a message/comment arrives.
  */
 export default function MessageToastBridge() {
   const { user } = useAuth();
@@ -103,32 +105,53 @@ export default function MessageToastBridge() {
     return off;
   }, [onMessageNew, queryClient, user?._id]);
 
-  // CST Client Detail comment @mentions → live toast + browser notification
+  // CST ↔ Tech client comments / @mentions → live toast + browser notification
   useEffect(() => {
+    if (!COMMENT_ROLES.has(user?.role)) return undefined;
+
     const socket = getSocket();
-    const onMention = (payload) => {
+    const seen = new Set();
+
+    const onComment = (payload) => {
       if (!payload?.leadId) return;
+      const toastId = `comment-${payload.leadId}-${payload.commentId || Date.now()}`;
+      if (seen.has(toastId)) return;
+      seen.add(toastId);
+      window.setTimeout(() => seen.delete(toastId), TOAST_TTL_MS + 500);
+
       playMessageChime();
-      const toastId = `mention-${payload.leadId}-${payload.commentId || Date.now()}`;
-      const senderName = payload.authorName || 'Team mention';
-      const preview =
-        payload.bodyPreview ||
-        `Mentioned you on ${payload.businessName || 'a client'}`;
+
+      const isMention = Boolean(payload.isMention);
+      const businessName = payload.businessName || 'a client';
+      const authorName = payload.authorName || 'Team';
+      const authorRole = payload.authorRole;
+      const roleWord =
+        authorRole === 'tech_team'
+          ? 'Tech'
+          : authorRole === 'cst_manager'
+            ? 'CST'
+            : authorName;
+
+      const preview = isMention
+        ? `${authorName} mentioned you on ${businessName}`
+        : `${roleWord} commented on ${businessName} — Click to view`;
 
       setToasts((prev) => [
         ...prev.filter((t) => t.id !== toastId),
         {
           id: toastId,
-          kind: 'client_mention',
+          kind: 'client_comment',
           leadId: payload.leadId,
-          senderName,
+          senderName: isMention ? 'Mention' : roleWord,
           preview,
         },
       ]);
 
       showBrowserNotification({
-        title: `Mention · ${payload.businessName || 'Client'}`,
-        body: `${senderName}: ${preview}`,
+        title: isMention
+          ? `Mention · ${businessName}`
+          : `Comment · ${businessName}`,
+        body: preview,
         tag: toastId,
       });
 
@@ -139,11 +162,24 @@ export default function MessageToastBridge() {
       queryClient.invalidateQueries({
         queryKey: ['lead', payload.leadId, 'portfolio'],
       });
+      queryClient.invalidateQueries({
+        queryKey: ['lead', payload.leadId, 'tech-portfolio'],
+      });
+      queryClient.invalidateQueries({ queryKey: ['commentNotifications'] });
+      queryClient.invalidateQueries({ queryKey: ['handoverQueue'] });
+      queryClient.invalidateQueries({ queryKey: ['cstTechPipeline'] });
+      queryClient.invalidateQueries({ queryKey: ['myProjects'] });
     };
 
-    socket.on('client:comment-mention', onMention);
-    return () => socket.off('client:comment-mention', onMention);
-  }, [queryClient]);
+    // Prefer client:comment-new (includes isMention). Mention-only event is
+    // still emitted server-side for older clients, but we ignore it here to
+    // avoid duplicate toasts.
+    const onNew = (payload) => onComment(payload);
+    socket.on('client:comment-new', onNew);
+    return () => {
+      socket.off('client:comment-new', onNew);
+    };
+  }, [queryClient, user?.role]);
 
   const dismiss = (id) => {
     setToasts((prev) => prev.filter((t) => t.id !== id));
@@ -151,8 +187,11 @@ export default function MessageToastBridge() {
 
   const openFromToast = (toast) => {
     dismiss(toast.id);
-    if (toast.kind === 'client_mention' && toast.leadId) {
-      navigate(`/dashboard/cst-manager/client/${toast.leadId}`);
+    if (
+      (toast.kind === 'client_comment' || toast.kind === 'client_mention') &&
+      toast.leadId
+    ) {
+      navigate(clientCommentsPath(user?.role, toast.leadId));
       return;
     }
     openChatWindow(toast.conversationId, toast.contact);
@@ -177,7 +216,9 @@ export default function MessageToastBridge() {
             {toast.preview}
           </p>
           <p className="mt-1.5 text-[10px] font-medium uppercase tracking-wide text-orange-400/90">
-            {toast.kind === 'client_mention' ? 'Open client' : 'Open chat'}
+            {toast.kind === 'client_comment' || toast.kind === 'client_mention'
+              ? 'Open comments'
+              : 'Open chat'}
           </p>
         </button>
       ))}

@@ -134,9 +134,13 @@ export const getHandoverQueue = asyncHandler(async (req, res) => {
     .populate('closedBy', 'fullName username role')
     .sort({ closedAt: 1 });
 
-  res
-    .status(200)
-    .json(new ApiResponse(200, { leads }, 'Handover queue retrieved'));
+  res.status(200).json(
+    new ApiResponse(
+      200,
+      { leads: attachUnreadCommentCount(leads, req.user._id) },
+      'Handover queue retrieved'
+    )
+  );
 });
 
 /**
@@ -342,6 +346,45 @@ const CST_PIPELINE_STATUSES = [
   'in_progress',
   'completed',
 ];
+
+/** Client comments are CST Manager ↔ Tech Team only. */
+const CLIENT_COMMENT_ROLES = new Set(['cst_manager', 'tech_team']);
+
+const commentAuthorId = (comment) => {
+  const by = comment?.createdBy;
+  if (!by) return null;
+  if (typeof by === 'object' && by._id != null) return String(by._id);
+  return String(by);
+};
+
+const unreadCommentCountForUser = (lead, userId) => {
+  const comments = Array.isArray(lead?.handover?.comments)
+    ? lead.handover.comments
+    : [];
+  if (!comments.length || !userId) return 0;
+  const uid = String(userId);
+  const reads = Array.isArray(lead?.handover?.commentReads)
+    ? lead.handover.commentReads
+    : [];
+  const entry = reads.find((r) => String(r.userId) === uid);
+  const lastReadMs = entry?.lastReadAt
+    ? new Date(entry.lastReadAt).getTime()
+    : 0;
+  const watermark = Number.isNaN(lastReadMs) ? 0 : lastReadMs;
+
+  return comments.filter((c) => {
+    if (commentAuthorId(c) === uid) return false;
+    const at = new Date(c.createdAt || 0).getTime();
+    return !Number.isNaN(at) && at > watermark;
+  }).length;
+};
+
+const attachUnreadCommentCount = (leads, userId) =>
+  (Array.isArray(leads) ? leads : []).map((lead) => {
+    const obj = typeof lead?.toObject === 'function' ? lead.toObject() : { ...lead };
+    obj.unreadCommentCount = unreadCommentCountForUser(obj, userId);
+    return obj;
+  });
 
 const populateCstLead = (query) =>
   query
@@ -1174,10 +1217,20 @@ export const addClientUpsell = asyncHandler(async (req, res) => {
 });
 
 /**
- * CST — add a client comment with optional @mentions + file attachments.
+ * CST Manager / Tech Team — shared client comment thread
+ * (@mentions between CST↔Tech + file attachments).
  * multipart: body (text), mentions (JSON array of userIds), files[]
  */
 export const addClientComment = asyncHandler(async (req, res) => {
+  const role = req.user.role;
+  if (
+    role !== 'cst_manager' &&
+    role !== 'tech_team' &&
+    role !== 'super_admin'
+  ) {
+    throw new ApiError(403, 'Only CST Manager and Tech Team can post comments');
+  }
+
   const lead = await Lead.findOne({
     _id: req.params.id,
     stage: 'closed_sale',
@@ -1186,6 +1239,16 @@ export const addClientComment = asyncHandler(async (req, res) => {
 
   if (!lead) {
     throw new ApiError(404, 'Client not found in CST handover pipeline');
+  }
+
+  if (role === 'tech_team') {
+    const assigned = refId(lead.handover?.assignedTechId);
+    if (!assigned || assigned !== String(req.user._id)) {
+      throw new ApiError(
+        403,
+        'You can only comment on clients assigned to you'
+      );
+    }
   }
 
   const body = String(req.body?.body || '').trim();
@@ -1213,9 +1276,11 @@ export const addClientComment = asyncHandler(async (req, res) => {
 
   const mentionUsers =
     mentionIds.length > 0
-      ? await User.find({ _id: { $in: mentionIds }, status: 'approved' }).select(
-          'fullName username role'
-        )
+      ? await User.find({
+          _id: { $in: mentionIds },
+          status: 'approved',
+          role: { $in: [...CLIENT_COMMENT_ROLES] },
+        }).select('fullName username role')
       : [];
 
   const mentions = mentionUsers.map((u) => ({
@@ -1250,44 +1315,288 @@ export const addClientComment = asyncHandler(async (req, res) => {
     lead.handover.comments = [];
   }
   lead.handover.comments.push(comment);
+
+  // Author has read their own thread through the latest comment
+  if (!Array.isArray(lead.handover.commentReads)) {
+    lead.handover.commentReads = [];
+  }
+  const authorReadIdx = lead.handover.commentReads.findIndex(
+    (r) => String(r.userId) === String(req.user._id)
+  );
+  if (authorReadIdx >= 0) {
+    lead.handover.commentReads[authorReadIdx].lastReadAt = comment.createdAt;
+  } else {
+    lead.handover.commentReads.push({
+      userId: req.user._id,
+      lastReadAt: comment.createdAt,
+    });
+  }
+
   await lead.save();
 
   const businessName = lead.businessName || 'Client';
   const authorName =
-    req.user.fullName || req.user.username || 'CST Manager';
+    req.user.fullName ||
+    req.user.username ||
+    (role === 'tech_team' ? 'Tech Team' : 'CST Manager');
+  const authorRole = role === 'super_admin' ? 'cst_manager' : role;
+  const bodyPreview = body.slice(0, 140);
+  const payloadBase = {
+    leadId: String(lead._id),
+    commentId: comment.commentId,
+    businessName,
+    authorName,
+    authorRole,
+    bodyPreview,
+    at: comment.createdAt,
+  };
 
+  const recipientIds = new Set();
   for (const m of mentions) {
-    if (String(m.userId) === String(req.user._id)) continue;
-    emitToUser(m.userId, 'client:comment-mention', {
-      leadId: String(lead._id),
-      commentId: comment.commentId,
-      businessName,
-      authorName,
-      bodyPreview: body.slice(0, 140),
-      at: comment.createdAt,
-    });
+    if (String(m.userId) !== String(req.user._id)) {
+      recipientIds.add(String(m.userId));
+    }
   }
 
-  const updated = await populateCstLead(
-    Lead.findById(lead._id).populate({
-      path: 'handover.comments.createdBy',
-      select: 'fullName username role',
-    })
-  );
+  if (authorRole === 'cst_manager') {
+    const techId = refId(lead.handover?.assignedTechId);
+    if (techId && techId !== String(req.user._id)) {
+      recipientIds.add(techId);
+    }
+  } else if (authorRole === 'tech_team') {
+    const cstManagers = await User.find({
+      role: 'cst_manager',
+      status: 'approved',
+    }).select('_id');
+    for (const u of cstManagers) {
+      if (String(u._id) !== String(req.user._id)) {
+        recipientIds.add(String(u._id));
+      }
+    }
+  }
+
+  const mentionIdSet = new Set(mentions.map((m) => String(m.userId)));
+  for (const uid of recipientIds) {
+    const isMention = mentionIdSet.has(uid);
+    const eventPayload = { ...payloadBase, isMention };
+    emitToUser(uid, 'client:comment-new', eventPayload);
+    if (isMention) {
+      emitToUser(uid, 'client:comment-mention', eventPayload);
+    }
+  }
+
+  const updated = await populateCstLead(Lead.findById(lead._id));
+  const leadObj =
+    typeof updated?.toObject === 'function' ? updated.toObject() : updated;
+  if (leadObj) {
+    leadObj.unreadCommentCount = 0;
+  }
 
   res
     .status(200)
-    .json(new ApiResponse(200, { lead: updated }, 'Comment added'));
+    .json(new ApiResponse(200, { lead: leadObj }, 'Comment added'));
 });
 
 /**
- * Serve a client-comment attachment (CST / mentioned roles / admin).
+ * Mark all client comments as read for the current CST / Tech user.
+ */
+export const markClientCommentsRead = asyncHandler(async (req, res) => {
+  const role = req.user.role;
+  if (
+    role !== 'cst_manager' &&
+    role !== 'tech_team' &&
+    role !== 'super_admin'
+  ) {
+    throw new ApiError(403, 'Only CST Manager and Tech Team can mark comments read');
+  }
+
+  const lead = await Lead.findOne({
+    _id: req.params.id,
+    stage: 'closed_sale',
+    'handover.cstStatus': { $in: CST_PIPELINE_STATUSES },
+  });
+
+  if (!lead) {
+    throw new ApiError(404, 'Client not found in CST handover pipeline');
+  }
+
+  if (role === 'tech_team') {
+    const assigned = refId(lead.handover?.assignedTechId);
+    if (!assigned || assigned !== String(req.user._id)) {
+      throw new ApiError(
+        403,
+        'You can only mark comments read on clients assigned to you'
+      );
+    }
+  }
+
+  if (!lead.handover) lead.handover = {};
+  if (!Array.isArray(lead.handover.commentReads)) {
+    lead.handover.commentReads = [];
+  }
+
+  const now = new Date();
+  const idx = lead.handover.commentReads.findIndex(
+    (r) => String(r.userId) === String(req.user._id)
+  );
+  if (idx >= 0) {
+    lead.handover.commentReads[idx].lastReadAt = now;
+  } else {
+    lead.handover.commentReads.push({
+      userId: req.user._id,
+      lastReadAt: now,
+    });
+  }
+
+  await lead.save();
+
+  res.status(200).json(
+    new ApiResponse(
+      200,
+      { leadId: String(lead._id), unreadCommentCount: 0, lastReadAt: now },
+      'Comments marked as read'
+    )
+  );
+});
+
+/**
+ * Unread client-comment inbox for CST Manager / Tech Team notification bell.
+ */
+export const getCommentNotifications = asyncHandler(async (req, res) => {
+  const role = req.user.role;
+  if (role !== 'cst_manager' && role !== 'tech_team' && role !== 'super_admin') {
+    throw new ApiError(
+      403,
+      'Only CST Manager and Tech Team can view comment notifications'
+    );
+  }
+
+  const filter =
+    role === 'tech_team'
+      ? {
+          stage: 'closed_sale',
+          'handover.assignedTechId': req.user._id,
+          'handover.cstStatus': {
+            $in: ['assigned', 'in_progress', 'completed'],
+          },
+          'handover.comments.0': { $exists: true },
+        }
+      : {
+          stage: 'closed_sale',
+          'handover.cstStatus': { $in: CST_PIPELINE_STATUSES },
+          'handover.comments.0': { $exists: true },
+        };
+
+  const leads = await Lead.find(filter)
+    .select('businessName clientName handover.comments handover.commentReads')
+    .populate({
+      path: 'handover.comments.createdBy',
+      select: 'fullName username role',
+    })
+    .sort({ updatedAt: -1 })
+    .limit(100);
+
+  const uid = String(req.user._id);
+  const notifications = [];
+
+  for (const lead of leads) {
+    const unread = unreadCommentCountForUser(lead, uid);
+    if (unread <= 0) continue;
+
+    const comments = Array.isArray(lead.handover?.comments)
+      ? [...lead.handover.comments]
+      : [];
+    const reads = Array.isArray(lead.handover?.commentReads)
+      ? lead.handover.commentReads
+      : [];
+    const entry = reads.find((r) => String(r.userId) === uid);
+    const lastReadMs = entry?.lastReadAt
+      ? new Date(entry.lastReadAt).getTime()
+      : 0;
+    const watermark = Number.isNaN(lastReadMs) ? 0 : lastReadMs;
+
+    const unreadRows = comments
+      .filter((c) => {
+        if (commentAuthorId(c) === uid) return false;
+        const at = new Date(c.createdAt || 0).getTime();
+        return !Number.isNaN(at) && at > watermark;
+      })
+      .sort(
+        (a, b) =>
+          new Date(b.createdAt || 0).getTime() -
+          new Date(a.createdAt || 0).getTime()
+      );
+
+    const latest = unreadRows[0];
+    if (!latest) continue;
+
+    const author =
+      latest.createdBy?.fullName ||
+      latest.createdBy?.username ||
+      (latest.createdBy?.role === 'tech_team' ? 'Tech Team' : 'CST Manager');
+    const isMention = (latest.mentions || []).some(
+      (m) => String(m.userId) === uid
+    );
+
+    notifications.push({
+      leadId: String(lead._id),
+      businessName: lead.businessName || 'Client',
+      clientName: lead.clientName || null,
+      unreadCount: unread,
+      isMention,
+      latestComment: {
+        commentId: latest.commentId,
+        body: latest.body,
+        authorName: author,
+        authorRole: latest.createdBy?.role || null,
+        createdAt: latest.createdAt,
+      },
+    });
+  }
+
+  notifications.sort((a, b) => {
+    const aAt = new Date(a.latestComment?.createdAt || 0).getTime();
+    const bAt = new Date(b.latestComment?.createdAt || 0).getTime();
+    return bAt - aAt;
+  });
+
+  res.status(200).json(
+    new ApiResponse(
+      200,
+      {
+        notifications,
+        totalUnread: notifications.reduce(
+          (sum, n) => sum + (n.unreadCount || 0),
+          0
+        ),
+      },
+      'Comment notifications retrieved'
+    )
+  );
+});
+
+/**
+ * Serve a client-comment attachment (CST Manager / Tech Team / admin).
  */
 export const serveClientCommentAttachment = asyncHandler(async (req, res) => {
   const lead = await Lead.findById(req.params.id).select(
-    'handover.comments businessName'
+    'handover.comments handover.assignedTechId businessName'
   );
   if (!lead) throw new ApiError(404, 'Client not found');
+
+  const role = req.user.role;
+  if (role === 'tech_team') {
+    const assigned = refId(lead.handover?.assignedTechId);
+    if (!assigned || assigned !== String(req.user._id)) {
+      throw new ApiError(403, 'You can only open attachments on your assigned clients');
+    }
+  } else if (
+    role !== 'cst_manager' &&
+    role !== 'super_admin' &&
+    role !== 'admin'
+  ) {
+    throw new ApiError(403, 'Attachments are limited to CST Manager and Tech Team');
+  }
 
   const comment = (lead.handover?.comments || []).find(
     (c) => String(c.commentId) === String(req.params.commentId)
@@ -1595,9 +1904,13 @@ export const getTechPipeline = asyncHandler(async (req, res) => {
       'handover.assignedAt': -1,
     });
 
-  res
-    .status(200)
-    .json(new ApiResponse(200, { leads }, 'Tech pipeline retrieved'));
+  res.status(200).json(
+    new ApiResponse(
+      200,
+      { leads: attachUnreadCommentCount(leads, req.user._id) },
+      'Tech pipeline retrieved'
+    )
+  );
 });
 
 export const getTechList = asyncHandler(async (req, res) => {
@@ -1733,9 +2046,13 @@ export const getMyProjects = asyncHandler(async (req, res) => {
     )
     .sort({ 'handover.assignedAt': 1 });
 
-  res
-    .status(200)
-    .json(new ApiResponse(200, { leads }, 'My projects retrieved'));
+  res.status(200).json(
+    new ApiResponse(
+      200,
+      { leads: attachUnreadCommentCount(leads, req.user._id) },
+      'My projects retrieved'
+    )
+  );
 });
 
 const MILESTONE_ORDER = {

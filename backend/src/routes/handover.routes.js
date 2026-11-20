@@ -18,6 +18,8 @@ import {
   saveClientPortfolio,
   addClientUpsell,
   addClientComment,
+  markClientCommentsRead,
+  getCommentNotifications,
   serveClientCommentAttachment,
   saveLivePortfolio,
   uploadMonthlyReport,
@@ -55,6 +57,12 @@ router.get(
 );
 
 router.get('/my-projects', restrictTo('tech_team'), getMyProjects);
+
+router.get(
+  '/comment-notifications',
+  restrictTo('cst_manager', 'tech_team', 'super_admin'),
+  getCommentNotifications
+);
 
 router.patch(
   '/:id/onboard',
@@ -108,7 +116,7 @@ router.post(
 
 router.post(
   '/:id/comments',
-  restrictTo('cst_manager', 'super_admin'),
+  restrictTo('cst_manager', 'tech_team', 'super_admin'),
   (req, res, next) => {
     clientCommentUpload.array('files', 5)(req, res, (err) => {
       if (err) {
@@ -123,16 +131,15 @@ router.post(
   addClientComment
 );
 
+router.patch(
+  '/:id/comments/read',
+  restrictTo('cst_manager', 'tech_team', 'super_admin'),
+  markClientCommentsRead
+);
+
 router.get(
   '/:id/comments/:commentId/files/:filename',
-  restrictTo(
-    'cst_manager',
-    'tech_team',
-    'closer',
-    'sales_agent',
-    'super_admin',
-    'admin'
-  ),
+  restrictTo('cst_manager', 'tech_team', 'super_admin', 'admin'),
   serveClientCommentAttachment
 );
 

@@ -487,15 +487,30 @@ export default function HandoverQueuePage() {
                     row.handover?.retention?.at ||
                     retentionAlertAtFromClosedAt(row.closedAt);
 
+                  const unread = Number(row.unreadCommentCount) || 0;
+
                   return (
                     <Link
                       key={row._id}
-                      to={`/dashboard/cst-manager/client/${row._id}`}
+                      to={
+                        unread > 0
+                          ? `/dashboard/cst-manager/client/${row._id}?tab=comments`
+                          : `/dashboard/cst-manager/client/${row._id}`
+                      }
                       className="block rounded-xl border border-white/10 bg-[#111111] px-4 py-3.5 transition hover:border-[#F25E26]/45 hover:bg-[#161616] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#F25E26]/40"
                     >
-                      <h3 className="truncate font-display text-sm font-bold tracking-tight text-white">
-                        {row.businessName?.trim() || '—'}
-                      </h3>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <h3 className="truncate font-display text-sm font-bold tracking-tight text-white">
+                          {row.businessName?.trim() || '—'}
+                        </h3>
+                        {unread > 0 ? (
+                          <span className="inline-flex shrink-0 items-center rounded-full bg-[#F25E26]/15 px-2 py-0.5 text-[10px] font-bold text-[#F25E26] ring-1 ring-[#F25E26]/40">
+                            {unread === 1
+                              ? '1 New Comment'
+                              : `${unread} New Comments`}
+                          </span>
+                        ) : null}
+                      </div>
 
                       <dl className="mt-3 space-y-1.5 text-xs">
                         <div className="flex gap-2">
@@ -615,6 +630,7 @@ export default function HandoverQueuePage() {
                       const statusKey = resolveTechStatus(row);
                       const badge =
                         TECH_BADGE[statusKey] || TECH_BADGE.assigned;
+                      const unread = Number(row.unreadCommentCount) || 0;
 
                       return (
                         <tr
@@ -622,9 +638,18 @@ export default function HandoverQueuePage() {
                           className="border-b border-zinc-800/50 last:border-0 transition-colors hover:bg-zinc-800/25"
                         >
                           <td className="px-4 py-3.5">
-                            <p className="font-medium text-white">
-                              {row.businessName}
-                            </p>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <p className="font-medium text-white">
+                                {row.businessName}
+                              </p>
+                              {unread > 0 ? (
+                                <span className="inline-flex items-center rounded-full bg-[#F25E26]/15 px-2 py-0.5 text-[10px] font-bold text-[#F25E26] ring-1 ring-[#F25E26]/40">
+                                  {unread === 1
+                                    ? '1 New Comment'
+                                    : `${unread} New Comments`}
+                                </span>
+                              ) : null}
+                            </div>
                             <p className="mt-0.5 text-xs text-zinc-500">
                               {row.businessPhone || row.personalPhone || '—'}
                             </p>
@@ -649,13 +674,25 @@ export default function HandoverQueuePage() {
                             )}
                           </td>
                           <td className="px-4 py-3.5">
-                            <button
-                              type="button"
-                              onClick={() => setDetailLead(row)}
-                              className="rounded-lg border border-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-300 hover:bg-zinc-800/60"
-                            >
-                              View details
-                            </button>
+                            <div className="flex flex-wrap gap-2">
+                              <button
+                                type="button"
+                                onClick={() => setDetailLead(row)}
+                                className="rounded-lg border border-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-300 hover:bg-zinc-800/60"
+                              >
+                                View details
+                              </button>
+                              <Link
+                                to={
+                                  unread > 0
+                                    ? `/dashboard/cst-manager/client/${row._id}?tab=comments`
+                                    : `/dashboard/cst-manager/client/${row._id}`
+                                }
+                                className="rounded-lg border border-[#F25E26]/40 px-3 py-1.5 text-xs font-semibold text-[#F25E26] hover:bg-[#F25E26]/10"
+                              >
+                                {unread > 0 ? 'Open Comments' : 'Open Client'}
+                              </Link>
+                            </div>
                           </td>
                         </tr>
                       );

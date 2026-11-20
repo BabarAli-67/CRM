@@ -854,6 +854,10 @@ export const getLeadById = asyncHandler(async (req, res) => {
       select: 'fullName username role',
     })
     .populate({
+      path: 'handover.comments.createdBy',
+      select: 'fullName username role',
+    })
+    .populate({
       path: 'sourceCallbackId',
       select: 'businessName personalPhone businessPhone callbackAt notes status',
     });
@@ -874,7 +878,40 @@ export const getLeadById = asyncHandler(async (req, res) => {
     await lead.save();
   }
 
-  res.status(200).json(new ApiResponse(200, { lead }, 'Lead retrieved'));
+  const leadObj =
+    typeof lead.toObject === 'function' ? lead.toObject() : lead;
+  if (
+    req.user.role === 'cst_manager' ||
+    req.user.role === 'tech_team' ||
+    req.user.role === 'super_admin'
+  ) {
+    const comments = Array.isArray(leadObj?.handover?.comments)
+      ? leadObj.handover.comments
+      : [];
+    const reads = Array.isArray(leadObj?.handover?.commentReads)
+      ? leadObj.handover.commentReads
+      : [];
+    const uid = String(req.user._id);
+    const entry = reads.find((r) => String(r.userId) === uid);
+    const lastReadMs = entry?.lastReadAt
+      ? new Date(entry.lastReadAt).getTime()
+      : 0;
+    const watermark = Number.isNaN(lastReadMs) ? 0 : lastReadMs;
+    leadObj.unreadCommentCount = comments.filter((c) => {
+      const by = c?.createdBy;
+      const authorId =
+        by && typeof by === 'object' && by._id != null
+          ? String(by._id)
+          : by != null
+            ? String(by)
+            : null;
+      if (authorId === uid) return false;
+      const at = new Date(c.createdAt || 0).getTime();
+      return !Number.isNaN(at) && at > watermark;
+    }).length;
+  }
+
+  res.status(200).json(new ApiResponse(200, { lead: leadObj }, 'Lead retrieved'));
 });
 
 export const updateLead = asyncHandler(async (req, res) => {

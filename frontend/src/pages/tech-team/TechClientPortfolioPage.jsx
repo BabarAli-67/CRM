@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import CstClientComments from '../../components/cst-manager/CstClientComments.jsx';
 import LivePortfolioSection, {
   mapChangeRequestsFromLead,
   mapKeywordsFromLead,
@@ -12,12 +13,26 @@ import {
   getClientRevenueTotals,
 } from '../../utils/formatPayment.util.js';
 
+const DETAIL_TABS = [
+  { id: 'portfolio', label: 'Work & Reports' },
+  { id: 'comments', label: 'Comments' },
+];
+
+const DETAIL_TAB_IDS = new Set(DETAIL_TABS.map((t) => t.id));
+const resolveDetailTab = (value) =>
+  DETAIL_TAB_IDS.has(value) ? value : 'portfolio';
+
 /**
- * Tech shared client portfolio — keywords, monthly PDFs, change requests.
+ * Tech shared client portfolio — keywords, monthly PDFs, change requests,
+ * plus the shared CST ↔ Tech Comments thread.
  */
 export default function TechClientPortfolioPage() {
   const { id } = useParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const queryClient = useQueryClient();
+  const [detailTab, setDetailTab] = useState(() =>
+    resolveDetailTab(searchParams.get('tab'))
+  );
   const [keywords, setKeywords] = useState([]);
   const [changeRequests, setChangeRequests] = useState([]);
 
@@ -35,20 +50,42 @@ export default function TechClientPortfolioPage() {
   });
 
   useEffect(() => {
+    setDetailTab(resolveDetailTab(searchParams.get('tab')));
+  }, [searchParams]);
+
+  useEffect(() => {
     if (!lead) return;
     setKeywords(mapKeywordsFromLead(lead));
     setChangeRequests(mapChangeRequestsFromLead(lead));
   }, [lead]);
 
+  const selectDetailTab = (next) => {
+    const idTab = resolveDetailTab(next);
+    setDetailTab(idTab);
+    setSearchParams(
+      (prev) => {
+        const nextParams = new URLSearchParams(prev);
+        if (idTab === 'portfolio') nextParams.delete('tab');
+        else nextParams.set('tab', idTab);
+        return nextParams;
+      },
+      { replace: true }
+    );
+  };
+
   const onLeadUpdated = (updated) => {
     queryClient.setQueryData(['lead', id, 'tech-portfolio'], updated);
     queryClient.setQueryData(['lead', id], updated);
     queryClient.invalidateQueries({ queryKey: ['myProjects'] });
-    setKeywords(mapKeywordsFromLead(updated));
-    setChangeRequests(mapChangeRequestsFromLead(updated));
+    queryClient.invalidateQueries({ queryKey: ['commentNotifications'] });
+    if (updated) {
+      setKeywords(mapKeywordsFromLead(updated));
+      setChangeRequests(mapChangeRequestsFromLead(updated));
+    }
   };
 
   const revenue = lead ? getClientRevenueTotals(lead) : null;
+  const unread = Number(lead?.unreadCommentCount) || 0;
 
   return (
     <TechTeamShell title="Client Portfolio">
@@ -94,20 +131,55 @@ export default function TechClientPortfolioPage() {
               ) : null}
             </div>
 
-            <LivePortfolioSection
-              mode="tech"
-              leadId={id}
-              keywords={keywords}
-              setKeywords={setKeywords}
-              changeRequests={changeRequests}
-              setChangeRequests={setChangeRequests}
-              reports={
-                Array.isArray(lead.handover?.monthlyReports)
-                  ? lead.handover.monthlyReports
-                  : []
-              }
-              onLeadUpdated={onLeadUpdated}
-            />
+            <div
+              role="tablist"
+              aria-label="Client sections"
+              className="flex flex-wrap gap-1 rounded-xl border border-zinc-800/80 bg-[#111111] p-1"
+            >
+              {DETAIL_TABS.map((tab) => {
+                const active = detailTab === tab.id;
+                return (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    role="tab"
+                    aria-selected={active}
+                    onClick={() => selectDetailTab(tab.id)}
+                    className={`inline-flex items-center gap-1.5 rounded-lg px-3.5 py-2 text-sm font-semibold transition ${
+                      active
+                        ? 'bg-[#F25E26]/15 text-[#F25E26] ring-1 ring-[#F25E26]/40'
+                        : 'text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-200'
+                    }`}
+                  >
+                    {tab.label}
+                    {tab.id === 'comments' && unread > 0 ? (
+                      <span className="rounded-full bg-[#F25E26]/20 px-1.5 py-0.5 text-[10px] font-bold text-[#F25E26]">
+                        {unread}
+                      </span>
+                    ) : null}
+                  </button>
+                );
+              })}
+            </div>
+
+            {detailTab === 'comments' ? (
+              <CstClientComments lead={lead} onLeadUpdated={onLeadUpdated} />
+            ) : (
+              <LivePortfolioSection
+                mode="tech"
+                leadId={id}
+                keywords={keywords}
+                setKeywords={setKeywords}
+                changeRequests={changeRequests}
+                setChangeRequests={setChangeRequests}
+                reports={
+                  Array.isArray(lead.handover?.monthlyReports)
+                    ? lead.handover.monthlyReports
+                    : []
+                }
+                onLeadUpdated={onLeadUpdated}
+              />
+            )}
           </>
         )}
       </section>

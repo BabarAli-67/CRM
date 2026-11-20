@@ -91,7 +91,7 @@ export const addClientUpsell = async (leadId, payload) => {
   return response.data.data.lead;
 };
 
-/** CST Client Detail — post a comment with optional mentions + files. */
+/** CST / Tech — post a shared client comment with optional mentions + files. */
 export const addClientComment = async (leadId, { body, mentionIds, files }) => {
   const formData = new FormData();
   formData.append('body', body || '');
@@ -105,10 +105,30 @@ export const addClientComment = async (leadId, { body, mentionIds, files }) => {
   return response.data.data.lead;
 };
 
+/** Mark client comments as read for the current CST / Tech user. */
+export const markClientCommentsRead = async (leadId) => {
+  const response = await api.patch(`/handover/${leadId}/comments/read`);
+  return response.data.data;
+};
+
+/** Unread client-comment inbox for CST / Tech notification bell. */
+export const getCommentNotifications = async () => {
+  const response = await api.get('/handover/comment-notifications');
+  return response.data.data;
+};
+
 export const clientCommentAttachmentUrl = (leadId, commentId, filename) =>
   `/handover/${leadId}/comments/${commentId}/files/${encodeURIComponent(
     filename
   )}`;
+
+/** Deep-link to the shared Comments tab for CST or Tech. */
+export const clientCommentsPath = (role, leadId) => {
+  if (role === 'tech_team') {
+    return `/dashboard/tech-team/client/${leadId}?tab=comments`;
+  }
+  return `/dashboard/cst-manager/client/${leadId}?tab=comments`;
+};
 
 /** CST / Tech — save keywords + change requests (live portfolio). */
 export const saveLivePortfolio = async (leadId, payload) => {

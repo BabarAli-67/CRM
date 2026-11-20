@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   addClientComment,
   clientCommentAttachmentUrl,
+  markClientCommentsRead,
 } from '../../services/handover.service.js';
 import { getUsers } from '../../services/lead.service.js';
 import api from '../../config/api.config.js';
@@ -11,20 +12,11 @@ import useAuth from '../../hooks/useAuth.hook.js';
 const fieldClass =
   'w-full rounded-xl border border-zinc-700 bg-zinc-950/60 px-4 py-2.5 text-sm text-white outline-none transition focus:border-[#F25E26]/50 focus:ring-2 focus:ring-[#F25E26]/20';
 
-const MENTION_ROLES = new Set([
-  'closer',
-  'tech_team',
-  'super_admin',
-  'admin',
-  'sales_agent',
-  'cst_manager',
-]);
+/** Shared CST Manager ↔ Tech Team mentions only. */
+const MENTION_ROLES = new Set(['cst_manager', 'tech_team']);
 
 const roleLabel = (role) => {
   if (role === 'tech_team') return 'Tech';
-  if (role === 'sales_agent') return 'Agent';
-  if (role === 'super_admin' || role === 'admin') return 'Admin';
-  if (role === 'closer') return 'Closer';
   if (role === 'cst_manager') return 'CST';
   return role || 'User';
 };
@@ -43,10 +35,12 @@ const formatPkt = (value) => {
 };
 
 /**
- * Client Detail → Comments (@mentions + PDF/Docs/Images attachments).
+ * Shared client comment thread (CST Manager ↔ Tech Team).
+ * Marks comments as read for the current user while this panel is open.
  */
 export default function CstClientComments({ lead, onLeadUpdated }) {
   const { user } = useAuth();
+  const queryClient = useQueryClient();
   const textareaRef = useRef(null);
   const [body, setBody] = useState('');
   const [files, setFiles] = useState([]);
@@ -57,7 +51,7 @@ export default function CstClientComments({ lead, onLeadUpdated }) {
   const [message, setMessage] = useState('');
 
   const { data: users = [] } = useQuery({
-    queryKey: ['mentionUsers'],
+    queryKey: ['mentionUsers', 'cst-tech'],
     queryFn: () => getUsers({ status: 'approved' }),
     staleTime: 60_000,
   });
@@ -92,6 +86,36 @@ export default function CstClientComments({ lead, onLeadUpdated }) {
     );
   }, [lead?.handover?.comments]);
 
+  // Mark thread as read while the Comments tab is open
+  useEffect(() => {
+    if (!lead?._id) return undefined;
+    let cancelled = false;
+
+    const markRead = async () => {
+      try {
+        await markClientCommentsRead(lead._id);
+        if (cancelled) return;
+        queryClient.invalidateQueries({ queryKey: ['commentNotifications'] });
+        queryClient.invalidateQueries({ queryKey: ['handoverQueue'] });
+        queryClient.invalidateQueries({ queryKey: ['cstTechPipeline'] });
+        queryClient.invalidateQueries({ queryKey: ['myProjects'] });
+        onLeadUpdated?.({
+          ...lead,
+          unreadCommentCount: 0,
+        });
+      } catch {
+        // Non-blocking — user can still read/post
+      }
+    };
+
+    markRead();
+    return () => {
+      cancelled = true;
+    };
+    // Re-run when lead id changes or a new comment arrives while viewing
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional: mark on open + comment count change
+  }, [lead?._id, comments.length]);
+
   useEffect(() => {
     const onKey = (e) => {
       if (e.key === 'Escape') setShowMentions(false);
@@ -116,6 +140,10 @@ export default function CstClientComments({ lead, onLeadUpdated }) {
       setError('');
       setMessage('Comment posted.');
       onLeadUpdated?.(updated);
+      queryClient.invalidateQueries({ queryKey: ['commentNotifications'] });
+      queryClient.invalidateQueries({ queryKey: ['handoverQueue'] });
+      queryClient.invalidateQueries({ queryKey: ['cstTechPipeline'] });
+      queryClient.invalidateQueries({ queryKey: ['myProjects'] });
     },
     onError: (err) => {
       setMessage('');
@@ -182,8 +210,8 @@ export default function CstClientComments({ lead, onLeadUpdated }) {
           Comments
         </h2>
         <p className="mt-1 text-sm text-zinc-500">
-          Type @ to mention Closer, Tech, Admin, or Agent — they get a live
-          alert. Attach PDF, Docs, or Images.
+          Shared CST ↔ Tech thread. Type @ to mention a CST Manager or Tech
+          member. Attach PDF, Docs, or Images.
         </p>
 
         <div className="relative mt-4">
@@ -192,7 +220,7 @@ export default function CstClientComments({ lead, onLeadUpdated }) {
             rows={4}
             value={body}
             onChange={(e) => onBodyChange(e.target.value)}
-            placeholder="Write a comment… use @ to mention teammates"
+            placeholder="Write a comment… use @ to mention CST or Tech"
             className={`${fieldClass} resize-y`}
           />
           {showMentions && filteredMentions.length > 0 ? (
@@ -292,13 +320,21 @@ export default function CstClientComments({ lead, onLeadUpdated }) {
               c.createdBy?.fullName ||
               c.createdBy?.username ||
               'Team member';
+            const authorRole = c.createdBy?.role;
             return (
               <article
                 key={c.commentId}
                 className="rounded-2xl border border-zinc-800/80 bg-[#111111] px-4 py-3.5"
               >
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <p className="text-sm font-semibold text-white">{author}</p>
+                  <p className="text-sm font-semibold text-white">
+                    {author}
+                    {authorRole ? (
+                      <span className="ml-2 text-[11px] font-semibold uppercase tracking-wide text-[#F25E26]">
+                        {roleLabel(authorRole)}
+                      </span>
+                    ) : null}
+                  </p>
                   <p className="text-xs text-zinc-500">
                     {formatPkt(c.createdAt)} PKT
                   </p>

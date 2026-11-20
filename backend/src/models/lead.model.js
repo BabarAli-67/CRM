@@ -645,6 +645,7 @@ const leadSchema = new mongoose.Schema(
         },
         /**
          * Client Detail → Comments tab (@mentions + file attachments).
+         * Shared CST Manager ↔ Tech Team thread only.
          */
         comments: {
           type: [
@@ -687,6 +688,20 @@ const leadSchema = new mongoose.Schema(
             },
           ],
           default: undefined,
+        },
+        /** Per-user last-read watermark for unread comment badges / bell. */
+        commentReads: {
+          type: [
+            {
+              userId: {
+                type: mongoose.Schema.Types.ObjectId,
+                ref: 'User',
+                required: true,
+              },
+              lastReadAt: { type: Date, required: true },
+            },
+          ],
+          default: [],
         },
         /** Tech execution progress (mirrors assigned → in_progress → completed). */
         techStatus: {

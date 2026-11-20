@@ -107,21 +107,38 @@ export default function MyProjectsPage() {
                 >
                   <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
                     <div>
-                      <h3 className="font-display text-lg font-semibold text-white">
-                        {project.businessName}
-                      </h3>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <h3 className="font-display text-lg font-semibold text-white">
+                          {project.businessName}
+                        </h3>
+                        {Number(project.unreadCommentCount) > 0 ? (
+                          <span className="inline-flex items-center rounded-full bg-[#F25E26]/15 px-2.5 py-0.5 text-[11px] font-bold text-[#F25E26] ring-1 ring-[#F25E26]/40">
+                            {Number(project.unreadCommentCount) === 1
+                              ? '1 New Comment'
+                              : `${Number(project.unreadCommentCount)} New Comments`}
+                          </span>
+                        ) : null}
+                      </div>
                       <p className="mt-0.5 text-sm text-zinc-500">
                         Assigned {formatPkt(project.handover?.assignedAt)}
                         {project.businessPhone || project.personalPhone
                           ? ` · ${project.businessPhone || project.personalPhone}`
                           : ''}
                       </p>
-                      <Link
-                        to={`/dashboard/tech-team/client/${project._id}`}
-                        className="mt-2 inline-flex text-sm font-semibold text-orange-400 hover:text-orange-300"
-                      >
-                        Open Live Portfolio →
-                      </Link>
+                      <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1">
+                        <Link
+                          to={`/dashboard/tech-team/client/${project._id}`}
+                          className="inline-flex text-sm font-semibold text-orange-400 hover:text-orange-300"
+                        >
+                          Open Live Portfolio →
+                        </Link>
+                        <Link
+                          to={`/dashboard/tech-team/client/${project._id}?tab=comments`}
+                          className="inline-flex text-sm font-semibold text-[#F25E26] hover:text-orange-300"
+                        >
+                          Comments →
+                        </Link>
+                      </div>
                     </div>
                     {links.length > 0 ? (
                       <div className="flex flex-wrap gap-x-3 gap-y-1 text-sm">
