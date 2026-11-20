@@ -1,16 +1,84 @@
+const moneyOrNull = (value) => {
+  if (value === null || value === undefined || value === '') return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+};
+
 /**
- * Client revenue totals — base paymentOffered/paymentReceived stay separate from upsell ledger.
- * Prefer persisted handover.totalCollectedAmount / totalContractValue when present.
+ * Unified upsell rows: CST ledger + Closer Move-to-CST handover upscale
+ * (when the handoff was never seeded into upsellLedger).
+ */
+export function getUnifiedUpsellLedger(lead) {
+  const rows = Array.isArray(lead?.handover?.upsellLedger)
+    ? lead.handover.upsellLedger.map((row, index) => ({
+        ...row,
+        entryId: row.entryId || `ledger-${index + 1}`,
+        source: row.source || 'cst',
+      }))
+    : [];
+
+  const upscale = lead?.handover?.upscale;
+  if (!upscale?.enabled) return rows;
+
+  const offered = Math.max(
+    0,
+    Number(upscale.offered ?? upscale.price) || 0
+  );
+  const received = Math.min(
+    offered,
+    Math.max(0, Number(upscale.received) || 0)
+  );
+  const title = String(upscale.itemName || '').trim();
+  const already = rows.some((r) => {
+    const sameTitle =
+      String(r.title || '')
+        .trim()
+        .toLowerCase() === title.toLowerCase();
+    const sameTotal =
+      Math.abs((Number(r.totalAmount) || 0) - offered) < 0.009;
+    return sameTitle && sameTotal;
+  });
+
+  if (already) return rows;
+
+  const payMap = {
+    old_card: 'old_card',
+    new_card: 'new_card',
+    via_link: 'link',
+    other: 'others',
+  };
+
+  return [
+    {
+      entryId: 'handover-upscale',
+      title: title || 'Handover Upsell',
+      service: null,
+      serviceOther: null,
+      totalAmount: offered,
+      paidAmount: received,
+      paymentOption: payMap[upscale.paymentMethod] || upscale.paymentMethod || null,
+      selectedCardId: upscale.selectedCardId || null,
+      paymentReference: upscale.paymentReference || null,
+      notes: lead?.handover?.upscaleNotes || null,
+      source: 'handover',
+    },
+    ...rows,
+  ];
+}
+
+/**
+ * Client revenue totals — base paymentOffered/paymentReceived stay separate from upsells.
+ * Never treat Mongo null totals as 0 (Number(null) === 0 would wipe real payments).
  */
 export function getClientRevenueTotals(lead) {
   const baseOffered = Math.max(
     0,
-    Number(lead?.paymentOffered ?? lead?.salesAmount) || 0
+    moneyOrNull(lead?.paymentOffered) ??
+      moneyOrNull(lead?.salesAmount) ??
+      0
   );
-  const baseReceived = Math.max(0, Number(lead?.paymentReceived) || 0);
-  const rows = Array.isArray(lead?.handover?.upsellLedger)
-    ? lead.handover.upsellLedger
-    : [];
+  const baseReceived = Math.max(0, moneyOrNull(lead?.paymentReceived) ?? 0);
+  const rows = getUnifiedUpsellLedger(lead);
   let upsellTotal = 0;
   let upsellPaid = 0;
   for (const row of rows) {
@@ -22,24 +90,35 @@ export function getClientRevenueTotals(lead) {
   }
   const computedCollected = baseReceived + upsellPaid;
   const computedContract = baseOffered + upsellTotal;
-  const storedCollected = Number(lead?.handover?.totalCollectedAmount);
-  const storedContract = Number(lead?.handover?.totalContractValue);
+  const computedPending = Math.max(0, computedContract - computedCollected);
+
+  // Prefer live source fields; only use stored rollups when they are real numbers
+  // AND match/exceed source math within tolerance (avoids stale 0/null wipe).
+  const storedCollected = moneyOrNull(lead?.handover?.totalCollectedAmount);
+  const storedContract = moneyOrNull(lead?.handover?.totalContractValue);
+
+  const totalCollected =
+    storedCollected != null &&
+    Math.abs(storedCollected - computedCollected) < 0.009
+      ? storedCollected
+      : computedCollected;
+  const totalContractValue =
+    storedContract != null &&
+    Math.abs(storedContract - computedContract) < 0.009
+      ? storedContract
+      : computedContract;
 
   return {
     baseAmount: baseOffered,
     baseOffered,
     baseReceived,
+    basePending: Math.max(0, baseOffered - baseReceived),
     upsellTotal,
     upsellPaid,
     upsellPending: Math.max(0, upsellTotal - upsellPaid),
-    totalCollected:
-      Number.isFinite(storedCollected) && storedCollected >= 0
-        ? storedCollected
-        : computedCollected,
-    totalContractValue:
-      Number.isFinite(storedContract) && storedContract >= 0
-        ? storedContract
-        : computedContract,
+    totalCollected,
+    totalContractValue,
+    totalPending: Math.max(0, totalContractValue - totalCollected) || computedPending,
   };
 }
 

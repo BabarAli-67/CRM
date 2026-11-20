@@ -1,4 +1,16 @@
-import { formatPaymentSummary } from '../../utils/formatPayment.util.js';
+import {
+  formatMoneyAmount,
+  formatPaymentSummary,
+} from '../../utils/formatPayment.util.js';
+
+const UPSELL_PAY_LABEL = {
+  old_card: 'Old Card',
+  new_card: 'New Card',
+  via_link: 'Link',
+  link: 'Link',
+  other: 'Others',
+  others: 'Others',
+};
 
 /**
  * Client Context — locked Sales Agent + Closer fields (read-only, deduplicated).
@@ -103,8 +115,23 @@ export default function ClientContextRecord({ lead, formatPktFull }) {
         ? 'Not signed'
         : '—';
 
-  const handoverNotes =
-    lead?.handover?.handoverNotes || lead?.handover?.upscaleNotes || '';
+  const handoverNotes = lead?.handover?.handoverNotes || '';
+  const upscale = lead?.handover?.upscale;
+  const upsellEnabled = Boolean(upscale?.enabled);
+  const upsellOffered = Math.max(
+    0,
+    Number(upscale?.offered ?? upscale?.price) || 0
+  );
+  const upsellReceived = Math.max(0, Number(upscale?.received) || 0);
+  const upsellPending =
+    upscale?.pending != null && upscale?.pending !== ''
+      ? Math.max(0, Number(upscale.pending) || 0)
+      : Math.max(0, upsellOffered - upsellReceived);
+  const upsellPayLabel =
+    UPSELL_PAY_LABEL[upscale?.paymentMethod] ||
+    upscale?.paymentMethod ||
+    '—';
+  const upsellNotes = lead?.handover?.upscaleNotes || '';
 
   const agentName = personLabel(lead?.agentId);
   const closerName =
@@ -219,6 +246,39 @@ export default function ClientContextRecord({ lead, formatPktFull }) {
             <Field label="Closed At (PKT)">
               {formatPktFull(lead.closedAt)} PKT
             </Field>
+          ) : null}
+        </div>
+      </div>
+
+      <div className="mt-6 space-y-3 border-t border-zinc-800/80 pt-5">
+        <p className={sectionTitleClass}>Handover Upsell Details</p>
+        <div className={gridClass}>
+          <Field label="Upsell Status">
+            {upsellEnabled ? 'Yes' : 'No'}
+          </Field>
+          {upsellEnabled ? (
+            <>
+              <Field label="Service Name">
+                {displayOrDash(upscale?.itemName)}
+              </Field>
+              <Field label="Upsell Offered">
+                {formatMoneyAmount(upsellOffered)}
+              </Field>
+              <Field label="Upsell Received">
+                {formatMoneyAmount(upsellReceived)}
+              </Field>
+              <Field label="Upsell Pending">
+                {formatMoneyAmount(upsellPending)}
+              </Field>
+              <Field label="Payment Method">
+                {displayOrDash(upsellPayLabel)}
+              </Field>
+              <div className="md:col-span-2 lg:col-span-3">
+                <Field label="Upsell Notes">
+                  {displayOrDash(upsellNotes)}
+                </Field>
+              </div>
+            </>
           ) : null}
         </div>
       </div>

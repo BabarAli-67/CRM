@@ -126,7 +126,7 @@ export const getHandoverQueue = asyncHandler(async (req, res) => {
     'handover.cstStatus': { $in: ['pending_review', 'onboarded'] },
   })
     .select(
-      'stage status clientName businessName personalPhone businessPhone businessEmail personalEmail yelpLink websiteLink gmbLink serviceAreas servicesOffered niche locationAddress leadSource paymentOffered paymentReceived paymentPending payment handover closedAt closedBy agentId closerId notes createdAt updatedAt'
+      'stage status clientName businessName personalPhone businessPhone businessEmail personalEmail yelpLink websiteLink gmbLink serviceAreas servicesOffered niche locationAddress leadSource salesAmount paymentOffered paymentReceived paymentPending payment savedCards handover closedAt closedBy agentId closerId notes createdAt updatedAt'
     )
     .populate('agentId', 'fullName username role')
     .populate('closerId', 'fullName username role')

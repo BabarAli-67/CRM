@@ -359,7 +359,11 @@ const leadSchema = new mongoose.Schema(
           type: {
             enabled: { type: Boolean, default: false },
             itemName: { type: String, default: null, trim: true },
+            /** @deprecated Prefer offered — kept as alias of offered. */
             price: { type: Number, default: null },
+            offered: { type: Number, default: null, min: 0 },
+            received: { type: Number, default: null, min: 0 },
+            pending: { type: Number, default: null, min: 0 },
             paymentMethod: {
               type: String,
               enum: ['old_card', 'new_card', 'via_link', 'other'],

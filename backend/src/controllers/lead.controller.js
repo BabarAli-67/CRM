@@ -20,6 +20,7 @@ import {
   buildSavedCardEntry,
 } from '../utils/savedCard.util.js';
 import { buildAlertFlagsForSchedule } from '../utils/alertTiming.util.js';
+import { randomUUID } from 'crypto';
 
 const refId = (ref) => {
   if (!ref) return null;
@@ -538,7 +539,9 @@ export const moveLeadToCst = asyncHandler(async (req, res) => {
   }
 
   let upscaleItemName = null;
-  let upscalePrice = null;
+  let upsellOffered = null;
+  let upsellReceived = null;
+  let upsellPending = null;
   let upsellPaymentMethod = null;
   let selectedCardId = null;
   let paymentReference = null;
@@ -550,12 +553,55 @@ export const moveLeadToCst = asyncHandler(async (req, res) => {
     if (!upscaleItemName) {
       throw new ApiError(400, 'Service Name is required when Upsell is Yes');
     }
-    const priceRaw = body.upscalePrice ?? body.upsellPrice;
-    const price = Number(priceRaw);
-    if (priceRaw === '' || priceRaw == null || Number.isNaN(price) || price < 0) {
-      throw new ApiError(400, 'Upsell Price must be a valid non-negative number');
+
+    // Prefer Offered / Received split; fall back to legacy single price
+    const offeredRaw =
+      body.upsellOffered ?? body.upscaleOffered ?? body.upscalePrice ?? body.upsellPrice;
+    const receivedRaw =
+      body.upsellReceived ?? body.upscaleReceived ?? '0';
+
+    const offered = Number(offeredRaw);
+    if (
+      offeredRaw === '' ||
+      offeredRaw == null ||
+      Number.isNaN(offered) ||
+      offered < 0
+    ) {
+      throw new ApiError(
+        400,
+        'Price Offered must be a valid non-negative number'
+      );
     }
-    upscalePrice = price;
+
+    const received = Number(receivedRaw === '' || receivedRaw == null ? 0 : receivedRaw);
+    if (Number.isNaN(received) || received < 0) {
+      throw new ApiError(
+        400,
+        'Price Received must be a valid non-negative number'
+      );
+    }
+    if (received > offered) {
+      throw new ApiError(
+        400,
+        'Price Received cannot exceed Price Offered'
+      );
+    }
+
+    upsellOffered = offered;
+    upsellReceived = received;
+    // Server-authoritative pending (client also sends for clarity)
+    const pendingRaw = body.upsellPending ?? body.upscalePending;
+    const pendingFromClient =
+      pendingRaw === '' || pendingRaw == null ? null : Number(pendingRaw);
+    upsellPending = Math.max(0, offered - received);
+    if (
+      pendingFromClient != null &&
+      !Number.isNaN(pendingFromClient) &&
+      Math.abs(pendingFromClient - upsellPending) > 0.009
+    ) {
+      // Prefer server calc; ignore minor client drift
+      upsellPending = Math.max(0, offered - received);
+    }
 
     upsellPaymentMethod = String(body.upsellPaymentMethod || '').trim();
     const allowedPay = new Set(['old_card', 'new_card', 'via_link', 'other']);
@@ -652,7 +698,10 @@ export const moveLeadToCst = asyncHandler(async (req, res) => {
     ? {
         enabled: true,
         itemName: upscaleItemName,
-        price: upscalePrice,
+        price: upsellOffered,
+        offered: upsellOffered,
+        received: upsellReceived,
+        pending: upsellPending,
         paymentMethod: upsellPaymentMethod,
         selectedCardId,
         paymentReference,
@@ -661,12 +710,55 @@ export const moveLeadToCst = asyncHandler(async (req, res) => {
         enabled: false,
         itemName: null,
         price: null,
+        offered: null,
+        received: null,
+        pending: null,
         paymentMethod: undefined,
         selectedCardId: null,
         paymentReference: null,
       };
   lead.handover.upscaleNotes = upscaleNotes;
   lead.handover.handoverNotes = handoverNotes;
+
+  // Seed CST upsell ledger so Base / Collected / Pending roll up seamlessly
+  if (upscaleEnabled) {
+    const payOptionMap = {
+      old_card: 'old_card',
+      new_card: 'new_card',
+      via_link: 'link',
+      other: 'others',
+    };
+    const ledgerRow = {
+      entryId: randomUUID(),
+      title: upscaleItemName,
+      service: null,
+      serviceOther: null,
+      totalAmount: upsellOffered,
+      paidAmount: upsellReceived,
+      paymentOption: payOptionMap[upsellPaymentMethod] || null,
+      selectedCardId,
+      paymentReference,
+      notes: upscaleNotes,
+    };
+    const existingLedger = Array.isArray(lead.handover.upsellLedger)
+      ? lead.handover.upsellLedger
+      : [];
+    lead.handover.upsellLedger = [...existingLedger, ledgerRow];
+
+    const baseOffered = Math.max(
+      0,
+      Number(lead.paymentOffered ?? lead.salesAmount) || 0
+    );
+    const baseReceived = Math.max(0, Number(lead.paymentReceived) || 0);
+    let upsellTotal = 0;
+    let upsellPaid = 0;
+    for (const row of lead.handover.upsellLedger) {
+      upsellTotal += Math.max(0, Number(row?.totalAmount) || 0);
+      upsellPaid += Math.max(0, Number(row?.paidAmount) || 0);
+    }
+    lead.handover.totalCollectedAmount = baseReceived + upsellPaid;
+    lead.handover.totalContractValue = baseOffered + upsellTotal;
+  }
 
   lead.handover.cstStatus = 'pending_review';
   lead.handover.handedOverAt = new Date();

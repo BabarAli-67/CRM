@@ -99,8 +99,9 @@ export default function ClientDetailPage() {
 
   const revenue = getClientRevenueTotals(lead);
   const baseAmount = revenue.baseOffered;
+  const upsellTotal = revenue.upsellTotal;
   const collected = revenue.totalCollected;
-  const pending = Math.max(0, revenue.totalContractValue - collected);
+  const pending = revenue.totalPending;
   const retentionAt =
     lead?.handover?.retention?.at ||
     retentionAlertAtFromClosedAt(lead?.closedAt);
@@ -160,19 +161,25 @@ export default function ClientDetailPage() {
 
                     <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-sm">
                       <p className="text-zinc-400">
-                        Base:{' '}
+                        Base Amount:{' '}
                         <span className="font-semibold text-white">
                           {formatMoneyAmount(baseAmount)}
                         </span>
                       </p>
                       <p className="text-zinc-400">
-                        Collected:{' '}
+                        Upsell Total:{' '}
+                        <span className="font-semibold text-white">
+                          {formatMoneyAmount(upsellTotal)}
+                        </span>
+                      </p>
+                      <p className="text-zinc-400">
+                        Collected Amount:{' '}
                         <span className="font-semibold text-emerald-300">
                           {formatMoneyAmount(collected)}
                         </span>
                       </p>
                       <p className="text-zinc-400">
-                        Pending:{' '}
+                        Pending Amount:{' '}
                         <span
                           className={`font-semibold ${
                             pending > 0 ? 'text-[#F25E26]' : 'text-zinc-200'

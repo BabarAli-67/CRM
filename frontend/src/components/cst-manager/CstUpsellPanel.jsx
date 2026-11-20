@@ -10,6 +10,7 @@ import {
 import {
   formatMoneyAmount,
   getClientRevenueTotals,
+  getUnifiedUpsellLedger,
 } from '../../utils/formatPayment.util.js';
 
 const fieldClass =
@@ -102,11 +103,9 @@ export default function CstUpsellPanel({ lead, onLeadUpdated }) {
   const baseAmount = revenue.baseOffered;
   const upsellTotal = revenue.upsellTotal;
   const collected = revenue.totalCollected;
-  const pending = Math.max(0, revenue.totalContractValue - collected);
+  const pending = revenue.totalPending;
 
-  const ledger = Array.isArray(lead?.handover?.upsellLedger)
-    ? lead.handover.upsellLedger
-    : [];
+  const ledger = getUnifiedUpsellLedger(lead);
 
   const setField = (key, value) => {
     setError('');
@@ -555,12 +554,19 @@ export default function CstUpsellPanel({ lead, onLeadUpdated }) {
                 >
                   <div className="flex flex-wrap items-start justify-between gap-2">
                     <div>
-                      <p className="text-sm font-semibold text-white">
-                        {row.title ||
-                          SERVICE_OPTIONS.find((s) => s.id === row.service)
-                            ?.label ||
-                          'Upsell'}
-                      </p>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="text-sm font-semibold text-white">
+                          {row.title ||
+                            SERVICE_OPTIONS.find((s) => s.id === row.service)
+                              ?.label ||
+                            'Upsell'}
+                        </p>
+                        {row.source === 'handover' ? (
+                          <span className="rounded-full bg-[#F25E26]/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[#F25E26] ring-1 ring-[#F25E26]/35">
+                            Closer handover
+                          </span>
+                        ) : null}
+                      </div>
                       {row.notes ? (
                         <p className="mt-1 text-xs text-zinc-500 whitespace-pre-wrap">
                           {row.notes}

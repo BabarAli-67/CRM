@@ -75,7 +75,8 @@ export default function MoveToCstModal({
   const [signedFile, setSignedFile] = useState(null);
   const [upsell, setUpsell] = useState(null);
   const [serviceName, setServiceName] = useState('');
-  const [price, setPrice] = useState('');
+  const [priceOffered, setPriceOffered] = useState('');
+  const [priceReceived, setPriceReceived] = useState('0');
   const [payMethod, setPayMethod] = useState('old_card');
   const [selectedCardId, setSelectedCardId] = useState('');
   const [cardNumber, setCardNumber] = useState('');
@@ -94,13 +95,21 @@ export default function MoveToCstModal({
   );
   const cvvMax = detectedBrand.cvvLength || 3;
 
+  const pendingLeft = useMemo(() => {
+    const offered = Number(priceOffered);
+    const received = Number(priceReceived === '' ? 0 : priceReceived);
+    if (Number.isNaN(offered) || Number.isNaN(received)) return 0;
+    return Math.max(0, offered - received);
+  }, [priceOffered, priceReceived]);
+
   useEffect(() => {
     if (!open) return;
     setDocumentSigned(null);
     setSignedFile(null);
     setUpsell(null);
     setServiceName('');
-    setPrice('');
+    setPriceOffered('');
+    setPriceReceived('0');
     setPayMethod(savedCards.length ? 'old_card' : 'new_card');
     setSelectedCardId(savedCards[0]?.cardId || '');
     setCardNumber('');
@@ -124,9 +133,12 @@ export default function MoveToCstModal({
     if (documentSigned === true && !signedFile) return false;
     if (upsell !== true) return true;
     if (!serviceName.trim()) return false;
-    if (price === '' || price == null) return false;
-    const n = Number(price);
-    if (Number.isNaN(n) || n < 0) return false;
+    if (priceOffered === '' || priceOffered == null) return false;
+    const offered = Number(priceOffered);
+    const received = Number(priceReceived === '' ? 0 : priceReceived);
+    if (Number.isNaN(offered) || offered < 0) return false;
+    if (Number.isNaN(received) || received < 0) return false;
+    if (received > offered) return false;
     if (payMethod === 'old_card') {
       return Boolean(selectedCardId && selectedSaved);
     }
@@ -145,7 +157,8 @@ export default function MoveToCstModal({
     signedFile,
     upsell,
     serviceName,
-    price,
+    priceOffered,
+    priceReceived,
     payMethod,
     selectedCardId,
     selectedSaved,
@@ -244,10 +257,33 @@ export default function MoveToCstModal({
       formData.append('signedDocument', signedFile);
     }
     if (upsell) {
+      const offered = Number(priceOffered);
+      const received = Number(priceReceived === '' ? 0 : priceReceived);
+      if (Number.isNaN(offered) || offered < 0) {
+        setError('Price Offered must be a valid non-negative number.');
+        return;
+      }
+      if (Number.isNaN(received) || received < 0) {
+        setError('Price Received must be a valid non-negative number.');
+        return;
+      }
+      if (received > offered) {
+        setError('Price Received cannot exceed Price Offered.');
+        return;
+      }
+      const pending = Math.max(0, offered - received);
+
       formData.append('upscaleItemName', serviceName.trim());
       formData.append('upsellServiceName', serviceName.trim());
-      formData.append('upscalePrice', String(price));
-      formData.append('upsellPrice', String(price));
+      formData.append('upsellOffered', String(offered));
+      formData.append('upscaleOffered', String(offered));
+      formData.append('upsellReceived', String(received));
+      formData.append('upscaleReceived', String(received));
+      formData.append('upsellPending', String(pending));
+      formData.append('upscalePending', String(pending));
+      // Legacy single-price aliases (offered)
+      formData.append('upscalePrice', String(offered));
+      formData.append('upsellPrice', String(offered));
       formData.append('upsellPaymentMethod', payMethod);
 
       if (payMethod === 'old_card') {
@@ -373,45 +409,92 @@ export default function MoveToCstModal({
                 onChange={setUpsell}
               />
               {upsell === true ? (
-                <div className="space-y-3">
-                  <label className="block space-y-1.5 text-sm text-zinc-300">
-                    <span className="font-medium">
-                      Service Name <span className="text-red-400">*</span>
-                    </span>
-                    <input
-                      value={serviceName}
-                      onChange={(e) => setServiceName(e.target.value)}
-                      className={fieldClass}
-                      placeholder="e.g. SEO package"
-                    />
-                  </label>
-                  <label className="block space-y-1.5 text-sm text-zinc-300">
-                    <span className="font-medium">
-                      Price <span className="text-red-400">*</span>
-                    </span>
-                    <div className="relative">
-                      <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-zinc-500">
-                        $
-                      </span>
-                      <input
-                        type="number"
-                        min="0"
-                        step="0.01"
-                        value={price}
-                        onChange={(e) => setPrice(e.target.value)}
-                        className={`${fieldClass} pl-7`}
-                        placeholder="0.00"
-                      />
-                    </div>
-                  </label>
-                </div>
+                <label className="block space-y-1.5 text-sm text-zinc-300">
+                  <span className="font-medium">
+                    Service Name <span className="text-red-400">*</span>
+                  </span>
+                  <input
+                    value={serviceName}
+                    onChange={(e) => setServiceName(e.target.value)}
+                    className={fieldClass}
+                    placeholder="e.g. SEO package"
+                  />
+                </label>
               ) : null}
             </section>
           </div>
 
           {upsell === true ? (
-            <section className="space-y-3 rounded-xl border border-zinc-800 bg-zinc-950/40 p-4">
-              <h3 className="text-sm font-semibold text-white">
+            <section className="space-y-4 rounded-xl border border-zinc-800 bg-zinc-950/40 p-4">
+              <div>
+                <h3 className="text-sm font-semibold text-white">
+                  Upsell Pricing
+                </h3>
+                <p className="mt-0.5 text-xs text-zinc-500">
+                  Offered, Received, and Pending (auto-calculated).
+                </p>
+              </div>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                <label className="block space-y-1.5 text-sm text-zinc-300">
+                  <span className="font-medium">
+                    Price Offered <span className="text-red-400">*</span>
+                  </span>
+                  <div className="relative">
+                    <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-zinc-500">
+                      $
+                    </span>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={priceOffered}
+                      onChange={(e) => setPriceOffered(e.target.value)}
+                      className={`${fieldClass} pl-7`}
+                      placeholder="0.00"
+                    />
+                  </div>
+                </label>
+                <label className="block space-y-1.5 text-sm text-zinc-300">
+                  <span className="font-medium">
+                    Price Received <span className="text-red-400">*</span>
+                  </span>
+                  <div className="relative">
+                    <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-zinc-500">
+                      $
+                    </span>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={priceReceived}
+                      onChange={(e) => setPriceReceived(e.target.value)}
+                      className={`${fieldClass} pl-7`}
+                      placeholder="0"
+                    />
+                  </div>
+                </label>
+                <label className="block space-y-1.5 text-sm text-zinc-300">
+                  <span className="font-medium">Pending Amount (Left)</span>
+                  <div className="relative">
+                    <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-zinc-500">
+                      $
+                    </span>
+                    <input
+                      type="text"
+                      readOnly
+                      tabIndex={-1}
+                      value={pendingLeft.toLocaleString('en-US', {
+                        minimumFractionDigits: 0,
+                        maximumFractionDigits: 2,
+                      })}
+                      className={`${fieldClass} cursor-default pl-7 opacity-90`}
+                      aria-readonly="true"
+                    />
+                  </div>
+                </label>
+              </div>
+
+              <h3 className="border-t border-zinc-800 pt-4 text-sm font-semibold text-white">
                 Payment Method <span className="text-red-400">*</span>
               </h3>
               <div className="flex flex-wrap gap-2">

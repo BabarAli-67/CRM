@@ -479,9 +479,10 @@ export default function HandoverQueuePage() {
               <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                 {filteredOnboardRows.map((row) => {
                   const revenue = getClientRevenueTotals(row);
-                  const base = revenue.totalContractValue;
+                  // Base = deal paymentOffered; Collected/Pending include upsells
+                  const base = revenue.baseOffered;
                   const collected = revenue.totalCollected;
-                  const pending = Math.max(0, base - collected);
+                  const pending = revenue.totalPending;
                   const retentionAt =
                     row.handover?.retention?.at ||
                     retentionAlertAtFromClosedAt(row.closedAt);
