@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
+import HorizontalScrollArea from '../HorizontalScrollArea.component.jsx';
 import CloseSaleModal from './CloseSaleModal.jsx';
 import DisqualifyModal from './DisqualifyModal.jsx';
 import CloserScheduleCallbackModal from '../callbacks/CloserScheduleCallbackModal.jsx';
@@ -197,7 +198,7 @@ export default function LeadTable({
             : emptyMessage}
         </p>
       ) : (
-        <div className="overflow-x-auto rounded-xl border border-zinc-800/60">
+        <HorizontalScrollArea className="rounded-xl border border-zinc-800/60">
           <table className="min-w-full text-left text-sm text-zinc-200">
             <thead className="border-b border-zinc-800 bg-zinc-950/40 text-xs uppercase tracking-wide text-zinc-500">
               <tr>
@@ -484,7 +485,7 @@ export default function LeadTable({
               })}
             </tbody>
           </table>
-        </div>
+        </HorizontalScrollArea>
       )}
 
       <CloserScheduleCallbackModal

@@ -37,13 +37,25 @@ const formatPkt = (value) => {
   });
 };
 
-const TABS = [
-  { id: 'pending', label: 'Pending Review' },
-  { id: 'onboard', label: 'Onboard' },
-  { id: 'tech', label: 'Tech Status' },
-];
+const TAB_META = {
+  pending: {
+    id: 'pending',
+    title: 'Pending Review',
+    subtitle: 'Review new handovers and send welcome emails',
+  },
+  onboard: {
+    id: 'onboard',
+    title: 'Onboard',
+    subtitle: 'Active onboarded clients · retention & context',
+  },
+  tech: {
+    id: 'tech',
+    title: 'Tech Status',
+    subtitle: 'Live Tech delivery status for onboarded clients',
+  },
+};
 
-const TAB_IDS = new Set(TABS.map((t) => t.id));
+const TAB_IDS = new Set(Object.keys(TAB_META));
 
 const resolveTab = (value) =>
   TAB_IDS.has(value) ? value : 'pending';
@@ -213,12 +225,7 @@ export default function HandoverQueuePage() {
     return { onboarded, assigned, inProgress, completed };
   }, [techLeads]);
 
-  const tabCount = (id) => {
-    if (id === 'pending') return pendingRows.length;
-    if (id === 'onboard') return onboardRows.length;
-    if (id === 'tech') return techLeads.length;
-    return 0;
-  };
+  const activeMeta = TAB_META[tab] || TAB_META.pending;
 
   const onboardMutation = useMutation({
     mutationFn: (id) => markClientOnboarded(id),
@@ -288,55 +295,16 @@ export default function HandoverQueuePage() {
   });
 
   return (
-    <CstManagerShell title="Handover Queue">
+    <CstManagerShell title={activeMeta.title}>
       <section className="w-full rounded-2xl border border-zinc-800/80 bg-zinc-900/50 p-6 shadow-xl sm:p-8">
         <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
           <div>
             <h2 className="font-display text-xl font-semibold text-white">
-              Client handovers
+              {activeMeta.title}
             </h2>
-            <p className="mt-1 text-sm text-zinc-500">
-              Onboard new clients · track live Tech delivery status
-            </p>
+            <p className="mt-1 text-sm text-zinc-500">{activeMeta.subtitle}</p>
           </div>
         </div>
-
-        <nav
-          className="mb-6 flex flex-wrap gap-2 rounded-2xl border border-zinc-800/80 bg-zinc-950/50 p-1.5"
-          aria-label="Handover sections"
-        >
-          {TABS.map((t) => {
-            const active = tab === t.id;
-            const count = tabCount(t.id);
-            return (
-              <button
-                key={t.id}
-                type="button"
-                onClick={() => setTab(t.id)}
-                className={`relative flex-1 rounded-full px-4 py-2.5 font-display text-sm font-semibold transition sm:flex-none ${
-                  active
-                    ? 'bg-orange-600 text-white shadow-lg shadow-orange-600/25'
-                    : 'text-zinc-400 hover:bg-zinc-800/60 hover:text-white'
-                }`}
-              >
-                <span className="inline-flex items-center justify-center gap-2">
-                  {t.label}
-                  <span
-                    className={`inline-flex min-w-[1.25rem] items-center justify-center rounded-full px-1.5 py-0.5 text-[11px] font-bold tabular-nums ${
-                      active
-                        ? 'bg-white/20 text-white'
-                        : count > 0
-                          ? 'bg-orange-600/20 text-orange-300'
-                          : 'bg-zinc-800 text-zinc-500'
-                    }`}
-                  >
-                    {count}
-                  </span>
-                </span>
-              </button>
-            );
-          })}
-        </nav>
 
         {message ? (
           <p
@@ -483,8 +451,8 @@ export default function HandoverQueuePage() {
                       key={row._id}
                       to={
                         unread > 0
-                          ? `/dashboard/cst-manager/client/${row._id}?tab=comments`
-                          : `/dashboard/cst-manager/client/${row._id}?tab=retention`
+                          ? `/dashboard/cst-manager/client/${row._id}?tab=comments&from=onboard`
+                          : `/dashboard/cst-manager/client/${row._id}?from=onboard`
                       }
                       className="block rounded-xl border border-white/10 bg-[#111111] px-4 py-3.5 transition hover:border-[#F25E26]/45 hover:bg-[#161616] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#F25E26]/40"
                     >
@@ -493,7 +461,10 @@ export default function HandoverQueuePage() {
                           {row.businessName?.trim() || '—'}
                         </h3>
                         {contractBadge ? (
-                          <span className="inline-flex shrink-0 items-center rounded-full bg-sky-500/15 px-2 py-0.5 text-[10px] font-bold text-sky-300 ring-1 ring-sky-500/40">
+                          <span
+                            className="inline-flex max-w-[14rem] shrink-0 truncate items-center rounded-full bg-sky-500/15 px-2 py-0.5 text-[10px] font-bold text-sky-300 ring-1 ring-sky-500/40"
+                            title={contractBadge}
+                          >
                             {contractBadge}
                           </span>
                         ) : null}
@@ -692,8 +663,8 @@ export default function HandoverQueuePage() {
                               <Link
                                 to={
                                   unread > 0
-                                    ? `/dashboard/cst-manager/client/${row._id}?tab=comments`
-                                    : `/dashboard/cst-manager/client/${row._id}`
+                                    ? `/dashboard/cst-manager/client/${row._id}?tab=comments&from=tech`
+                                    : `/dashboard/cst-manager/client/${row._id}?from=tech`
                                 }
                                 className="rounded-lg border border-[#F25E26]/40 px-3 py-1.5 text-xs font-semibold text-[#F25E26] hover:bg-[#F25E26]/10"
                               >

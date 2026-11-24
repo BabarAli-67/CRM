@@ -14,7 +14,6 @@ import {
 } from '../../utils/cardBrand.util.js';
 import {
   formatMoneyAmount,
-  getClientRevenueTotals,
   getUnifiedUpsellLedger,
 } from '../../utils/formatPayment.util.js';
 import { getAggregatedSavedCards } from '../../utils/savedCards.util.js';
@@ -115,28 +114,13 @@ export default function CstUpsellPanel({ lead, onLeadUpdated }) {
     [savedCards, form.selectedCardId]
   );
 
-  const revenue = getClientRevenueTotals(lead);
-  const baseAmount = revenue.baseOffered;
-  const basePending = revenue.basePending;
-  const upsellTotal = revenue.upsellTotal;
-  const collected = revenue.totalCollected;
-  const pending = revenue.totalPending;
-
   const ledger = getUnifiedUpsellLedger(lead);
 
-  const [basePendingDraft, setBasePendingDraft] = useState('');
-  const [totalPendingDraft, setTotalPendingDraft] = useState('');
   const [rowPendingDrafts, setRowPendingDrafts] = useState({});
   const [balanceError, setBalanceError] = useState('');
   const [balanceMessage, setBalanceMessage] = useState('');
 
   useEffect(() => {
-    setBasePendingDraft(
-      basePending === 0 ? '' : String(Number(basePending.toFixed(2)))
-    );
-    setTotalPendingDraft(
-      pending === 0 ? '' : String(Number(pending.toFixed(2)))
-    );
     const next = {};
     for (const row of ledger) {
       const rowPending = Math.max(
@@ -151,7 +135,12 @@ export default function CstUpsellPanel({ lead, onLeadUpdated }) {
     setBalanceMessage('');
     // Sync drafts when lead balances change
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lead?._id, basePending, pending, lead?.handover?.upsellLedger, lead?.handover?.upscale, lead?.paymentReceived]);
+  }, [
+    lead?._id,
+    lead?.handover?.upsellLedger,
+    lead?.handover?.upscale,
+    lead?.paymentReceived,
+  ]);
 
   const setField = (key, value) => {
     setError('');
@@ -190,24 +179,6 @@ export default function CstUpsellPanel({ lead, onLeadUpdated }) {
       );
     },
   });
-
-  const saveBasePending = (raw) => {
-    const value = raw === '' || raw == null ? 0 : Number(raw);
-    if (!Number.isFinite(value) || value < 0) {
-      setBalanceError('Base Pending must be a valid non-negative number.');
-      return;
-    }
-    balanceMutation.mutate({ basePending: value });
-  };
-
-  const saveTotalPending = (raw) => {
-    const value = raw === '' || raw == null ? 0 : Number(raw);
-    if (!Number.isFinite(value) || value < 0) {
-      setBalanceError('Pending Amount must be a valid non-negative number.');
-      return;
-    }
-    balanceMutation.mutate({ totalPending: value });
-  };
 
   const saveRowPending = (entryId, raw) => {
     const value = raw === '' || raw == null ? 0 : Number(raw);
@@ -306,68 +277,6 @@ export default function CstUpsellPanel({ lead, onLeadUpdated }) {
 
   return (
     <div className="space-y-4">
-      <div className="space-y-3 rounded-2xl border border-zinc-800/80 bg-[#111111] p-4">
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <SummaryStat
-            label="Base Amount"
-            value={formatMoneyAmount(baseAmount)}
-          />
-          <SummaryStat
-            label="Upsell Total"
-            value={formatMoneyAmount(upsellTotal)}
-          />
-          <SummaryStat
-            label="Collected Amount"
-            value={formatMoneyAmount(collected)}
-            accent="text-emerald-300"
-          />
-          <SummaryStat
-            label="Pending Amount"
-            value={formatMoneyAmount(pending)}
-            accent={pending > 0 ? 'text-[#F25E26]' : 'text-zinc-200'}
-          />
-        </div>
-
-        <div className="grid gap-3 border-t border-zinc-800/80 pt-3 lg:grid-cols-2">
-          <PendingEditor
-            label="Base Pending"
-            hint={`Max ${formatMoneyAmount(baseAmount)} · Collected = Base − Pending`}
-            value={basePendingDraft}
-            placeholder="0"
-            disabled={balanceMutation.isPending}
-            onChange={setBasePendingDraft}
-            onSave={() => saveBasePending(basePendingDraft)}
-            onMarkPaid={() => {
-              setBasePendingDraft('');
-              saveBasePending(0);
-            }}
-          />
-          <PendingEditor
-            label="Total Pending (quick update)"
-            hint="Distributes payment across Base first, then Upsells"
-            value={totalPendingDraft}
-            placeholder="0"
-            disabled={balanceMutation.isPending}
-            onChange={setTotalPendingDraft}
-            onSave={() => saveTotalPending(totalPendingDraft)}
-            onMarkPaid={() => {
-              setTotalPendingDraft('');
-              saveTotalPending(0);
-            }}
-          />
-        </div>
-        {balanceError ? (
-          <p className="text-sm text-red-400" role="alert">
-            {balanceError}
-          </p>
-        ) : null}
-        {balanceMessage ? (
-          <p className="text-sm text-emerald-400" role="status">
-            {balanceMessage}
-          </p>
-        ) : null}
-      </div>
-
       <form
         onSubmit={handleSubmit}
         className="space-y-4 rounded-2xl border border-zinc-800/80 bg-[#111111] p-4 sm:p-5"
@@ -687,6 +596,16 @@ export default function CstUpsellPanel({ lead, onLeadUpdated }) {
         <h3 className="font-display text-base font-semibold text-white">
           Upsell Ledger
         </h3>
+        {balanceError ? (
+          <p className="mt-2 text-sm text-red-400" role="alert">
+            {balanceError}
+          </p>
+        ) : null}
+        {balanceMessage ? (
+          <p className="mt-2 text-sm text-emerald-400" role="status">
+            {balanceMessage}
+          </p>
+        ) : null}
         {ledger.length === 0 ? (
           <p className="mt-3 text-sm text-zinc-500">No upsells yet.</p>
         ) : (
@@ -738,27 +657,33 @@ export default function CstUpsellPanel({ lead, onLeadUpdated }) {
                         </span>
                       </div>
                     </div>
-                    <PendingEditor
-                      label="Upsell Pending"
-                      compact
-                      value={draft}
-                      placeholder="0"
-                      disabled={balanceMutation.isPending}
-                      onChange={(next) =>
-                        setRowPendingDrafts((prev) => ({
-                          ...prev,
-                          [row.entryId]: next,
-                        }))
-                      }
-                      onSave={() => saveRowPending(row.entryId, draft)}
-                      onMarkPaid={() => {
-                        setRowPendingDrafts((prev) => ({
-                          ...prev,
-                          [row.entryId]: '',
-                        }));
-                        saveRowPending(row.entryId, 0);
-                      }}
-                    />
+                    {rowPending > 0 ? (
+                      <PendingEditor
+                        label="Upsell Pending"
+                        compact
+                        value={draft}
+                        placeholder="0"
+                        disabled={balanceMutation.isPending}
+                        onChange={(next) =>
+                          setRowPendingDrafts((prev) => ({
+                            ...prev,
+                            [row.entryId]: next,
+                          }))
+                        }
+                        onSave={() => saveRowPending(row.entryId, draft)}
+                        onMarkPaid={() => {
+                          setRowPendingDrafts((prev) => ({
+                            ...prev,
+                            [row.entryId]: '',
+                          }));
+                          saveRowPending(row.entryId, 0);
+                        }}
+                      />
+                    ) : (
+                      <span className="inline-flex shrink-0 items-center rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2.5 py-1 text-[11px] font-semibold text-emerald-300">
+                        Paid ✓
+                      </span>
+                    )}
                   </div>
                 </div>
               );
@@ -766,19 +691,6 @@ export default function CstUpsellPanel({ lead, onLeadUpdated }) {
           </div>
         )}
       </div>
-    </div>
-  );
-}
-
-function SummaryStat({ label, value, accent = 'text-white' }) {
-  return (
-    <div className="rounded-xl border border-white/10 bg-black/30 px-3 py-3">
-      <p className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
-        {label}
-      </p>
-      <p className={`mt-1 font-display text-lg font-semibold ${accent}`}>
-        {value}
-      </p>
     </div>
   );
 }

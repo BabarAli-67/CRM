@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { sortCallbacksChronologically } from '../../utils/callbackListTabs.js';
 
 const formatPkt = (value) => {
   if (!value) return '—';
@@ -24,10 +25,7 @@ export default function CallbackTable({
   const navigate = useNavigate();
 
   const rows = useMemo(
-    () =>
-      [...callbacks].sort(
-        (a, b) => new Date(a.callbackAt) - new Date(b.callbackAt)
-      ),
+    () => sortCallbacksChronologically(callbacks),
     [callbacks]
   );
 

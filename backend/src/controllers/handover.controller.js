@@ -595,8 +595,8 @@ const formatPktMonthLabel = (date) =>
 
 /**
  * CST — Mark Retention Paid for the current billing cycle.
- * Body: { amount, note?, paidAt? }
- * - Appends retentionHistory entry (monthLabel, amount, paidAt, previousAmount, delta)
+ * Body: { amount, serviceName?, note?, paidAt? }
+ * - Appends retentionHistory entry (monthLabel, serviceName, amount, paidAt, previousAmount, delta)
  * - Rolls amount into totalCollected / contract via retention history (base untouched)
  * - Advances retention.at by +30 days and re-arms the exact-time alert
  */
@@ -604,6 +604,16 @@ export const markRetentionPaid = asyncHandler(async (req, res) => {
   const amount = Number(req.body?.amount);
   if (!Number.isFinite(amount) || amount < 0) {
     throw new ApiError(400, 'amount must be a non-negative number');
+  }
+
+  const serviceNameRaw =
+    typeof req.body?.serviceName === 'string'
+      ? req.body.serviceName.trim()
+      : typeof req.body?.product === 'string'
+        ? req.body.product.trim()
+        : '';
+  if (!serviceNameRaw) {
+    throw new ApiError(400, 'Product / Service is required');
   }
 
   const lead = await Lead.findOne({
@@ -651,6 +661,7 @@ export const markRetentionPaid = asyncHandler(async (req, res) => {
   const entry = {
     entryId: randomUUID(),
     monthLabel: formatPktMonthLabel(paidAt),
+    serviceName: serviceNameRaw,
     amount,
     paidAt,
     previousAmount,
@@ -785,6 +796,38 @@ const normalizeUpsellRow = (row, index) => {
     ? paymentOptionRaw
     : null;
 
+  const createdAtRaw = row.createdAt ? new Date(row.createdAt) : new Date();
+  const createdAt = Number.isNaN(createdAtRaw.getTime())
+    ? new Date()
+    : createdAtRaw;
+
+  let paymentEvents = Array.isArray(row.paymentEvents)
+    ? row.paymentEvents
+        .map((ev) => {
+          const amount = Math.max(0, Number(ev?.amount) || 0);
+          if (amount <= 0) return null;
+          const atRaw = ev?.at ? new Date(ev.at) : createdAt;
+          const at = Number.isNaN(atRaw.getTime()) ? createdAt : atRaw;
+          return { amount, at };
+        })
+        .filter(Boolean)
+    : [];
+
+  // New row with an initial payment and no events yet — seed one.
+  if (paymentEvents.length === 0 && paidAmount > 0 && !row.createdAt) {
+    paymentEvents = [{ amount: paidAmount, at: createdAt }];
+  }
+
+  let paidAt = null;
+  if (row.paidAt) {
+    const d = new Date(row.paidAt);
+    if (!Number.isNaN(d.getTime())) paidAt = d;
+  } else if (paymentEvents.length > 0) {
+    paidAt = paymentEvents[paymentEvents.length - 1].at;
+  } else if (paidAmount > 0) {
+    paidAt = createdAt;
+  }
+
   return {
     entryId,
     title:
@@ -807,6 +850,9 @@ const normalizeUpsellRow = (row, index) => {
       typeof row.notes === 'string' && row.notes.trim()
         ? row.notes.trim()
         : null,
+    createdAt,
+    paidAt,
+    paymentEvents,
   };
 };
 
@@ -1402,8 +1448,30 @@ export const updateClientBalances = asyncHandler(async (req, res) => {
         return sameTitle && sameTotal;
       });
       if (matchIdx >= 0) {
+        const oldPaid = Math.max(0, Number(ledger[matchIdx].paidAmount) || 0);
+        const delta = received - oldPaid;
         ledger[matchIdx].totalAmount = offered;
         ledger[matchIdx].paidAmount = received;
+        if (delta > 0.009) {
+          if (!Array.isArray(ledger[matchIdx].paymentEvents)) {
+            ledger[matchIdx].paymentEvents = [];
+          }
+          if (
+            ledger[matchIdx].paymentEvents.length === 0 &&
+            oldPaid > 0.009
+          ) {
+            ledger[matchIdx].paymentEvents.push({
+              amount: oldPaid,
+              at:
+                ledger[matchIdx].paidAt ||
+                ledger[matchIdx].createdAt ||
+                new Date(),
+            });
+          }
+          const now = new Date();
+          ledger[matchIdx].paymentEvents.push({ amount: delta, at: now });
+          ledger[matchIdx].paidAt = now;
+        }
       }
       lead.handover.upsellLedger = ledger;
       return;
@@ -1413,7 +1481,24 @@ export const updateClientBalances = asyncHandler(async (req, res) => {
     if (idx < 0) throw new ApiError(404, 'Upsell row not found');
     const total = Math.max(0, Number(ledger[idx].totalAmount) || 0);
     const pending = parsePending(pendingRaw, 'Upsell Pending', total);
-    ledger[idx].paidAmount = Math.max(0, total - pending);
+    const oldPaid = Math.max(0, Number(ledger[idx].paidAmount) || 0);
+    const newPaid = Math.max(0, total - pending);
+    const delta = newPaid - oldPaid;
+    ledger[idx].paidAmount = newPaid;
+    if (delta > 0.009) {
+      if (!Array.isArray(ledger[idx].paymentEvents)) {
+        ledger[idx].paymentEvents = [];
+      }
+      if (ledger[idx].paymentEvents.length === 0 && oldPaid > 0.009) {
+        ledger[idx].paymentEvents.push({
+          amount: oldPaid,
+          at: ledger[idx].paidAt || ledger[idx].createdAt || new Date(),
+        });
+      }
+      const now = new Date();
+      ledger[idx].paymentEvents.push({ amount: delta, at: now });
+      ledger[idx].paidAt = now;
+    }
     lead.handover.upsellLedger = ledger;
 
     // Keep mirrored handover upscale in sync when titles/totals match

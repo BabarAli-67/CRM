@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import CstManagerShell from '../../components/cst-manager/CstManagerShell.jsx';
 import ClientContextRecord from '../../components/cst-manager/ClientContextRecord.jsx';
 import CstUpsellPanel from '../../components/cst-manager/CstUpsellPanel.jsx';
@@ -10,12 +10,11 @@ import LivePortfolioSection, {
   mapChangeRequestsFromLead,
   mapKeywordsFromLead,
 } from '../../components/portfolio/LivePortfolioSection.jsx';
-import { updateClientBalances } from '../../services/handover.service.js';
 import { getLeadById } from '../../services/lead.service.js';
 import {
   formatMoneyAmount,
   formatPaymentSummary,
-  getClientRevenueTotals,
+  getClientDetailSummaryTotals,
 } from '../../utils/formatPayment.util.js';
 import {
   formatContractBadgeLabel,
@@ -34,6 +33,24 @@ const DETAIL_TABS = [
 const DETAIL_TAB_IDS = new Set(DETAIL_TABS.map((t) => t.id));
 const resolveDetailTab = (value) =>
   DETAIL_TAB_IDS.has(value) ? value : 'context';
+
+const BACK_FROM = {
+  pending: {
+    label: 'Pending Review',
+    to: '/dashboard/cst-manager/handover',
+  },
+  onboard: {
+    label: 'Onboard',
+    to: '/dashboard/cst-manager/handover?tab=onboard',
+  },
+  tech: {
+    label: 'Tech Status',
+    to: '/dashboard/cst-manager/handover?tab=tech',
+  },
+};
+
+const resolveBackFrom = (value) =>
+  BACK_FROM[value] || BACK_FROM.onboard;
 
 const cardClass =
   'rounded-2xl border border-zinc-800/80 bg-[#111111] p-4 shadow-xl sm:p-5';
@@ -61,13 +78,12 @@ export default function ClientDetailPage() {
   const { id } = useParams();
   const [searchParams, setSearchParams] = useSearchParams();
   const queryClient = useQueryClient();
+  const backFrom = resolveBackFrom(searchParams.get('from'));
   const [detailTab, setDetailTab] = useState(() =>
     resolveDetailTab(searchParams.get('tab'))
   );
   const [keywords, setKeywords] = useState([]);
   const [changeRequests, setChangeRequests] = useState([]);
-  const [headerPendingDraft, setHeaderPendingDraft] = useState('');
-  const [headerBalanceError, setHeaderBalanceError] = useState('');
 
   useEffect(() => {
     setDetailTab(resolveDetailTab(searchParams.get('tab')));
@@ -131,7 +147,7 @@ export default function ClientDetailPage() {
     queryClient.invalidateQueries({ queryKey: ['retentionReminders'] });
   };
 
-  const revenue = getClientRevenueTotals(lead);
+  const revenue = getClientDetailSummaryTotals(lead);
   const baseAmount = revenue.baseOffered;
   const upsellTotal = revenue.upsellTotal;
   const collected = revenue.totalCollected;
@@ -139,46 +155,15 @@ export default function ClientDetailPage() {
   const retentionBadge = getRetentionBadge(lead);
   const contractBadge = formatContractBadgeLabel(lead);
 
-  useEffect(() => {
-    if (!lead) return;
-    setHeaderPendingDraft(
-      pending === 0 ? '' : String(Number(pending.toFixed(2)))
-    );
-    setHeaderBalanceError('');
-  }, [lead?._id, pending, lead]);
-
-  const headerBalanceMutation = useMutation({
-    mutationFn: (totalPending) =>
-      updateClientBalances(id, { totalPending }),
-    onSuccess: (updated) => {
-      setHeaderBalanceError('');
-      syncLeadCaches(updated);
-    },
-    onError: (err) => {
-      setHeaderBalanceError(
-        err?.response?.data?.message || 'Failed to update pending amount.'
-      );
-    },
-  });
-
-  const saveHeaderPending = (raw) => {
-    const value = raw === '' || raw == null ? 0 : Number(raw);
-    if (!Number.isFinite(value) || value < 0) {
-      setHeaderBalanceError('Pending must be a valid non-negative number.');
-      return;
-    }
-    headerBalanceMutation.mutate(value);
-  };
-
   return (
     <CstManagerShell title="Client Detail">
       <section className="mx-auto w-full max-w-7xl space-y-4">
         <div>
           <Link
-            to="/dashboard/cst-manager/handover?tab=onboard"
+            to={backFrom.to}
             className="inline-flex items-center gap-1.5 text-sm font-medium text-[#F25E26] transition hover:text-orange-300"
           >
-            ← Back to Handover Queue
+            ← Back to {backFrom.label}
           </Link>
         </div>
 
@@ -196,6 +181,7 @@ export default function ClientDetailPage() {
           <>
             <div className="shrink-0 space-y-3">
               <div className={`${cardClass} !py-4`}>
+                {/* Top: title + right-side badges */}
                 <div className="flex flex-wrap items-start justify-between gap-4">
                   <div className="min-w-0 flex-1">
                     <p className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500">
@@ -207,110 +193,15 @@ export default function ClientDetailPage() {
                     <p className="mt-1 text-sm text-zinc-400">
                       {lead.clientName?.trim() || '—'}
                     </p>
-
-                    <div className="mt-3 grid gap-2 text-sm sm:grid-cols-2 lg:grid-cols-3">
-                      <SummaryLine
-                        label="Personal Email"
-                        value={lead.personalEmail?.trim() || '—'}
-                      />
-                      <SummaryLine
-                        label="Business Email"
-                        value={lead.businessEmail?.trim() || '—'}
-                      />
-                      <SummaryLine
-                        label="Payment Method"
-                        value={formatPaymentSummary(lead.payment)}
-                      />
-                    </div>
-
-                    <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-sm">
-                      <p className="text-zinc-400">
-                        Base Amount:{' '}
-                        <span className="font-semibold text-white">
-                          {formatMoneyAmount(baseAmount)}
-                        </span>
-                      </p>
-                      <p className="text-zinc-400">
-                        Upsell Total:{' '}
-                        <span className="font-semibold text-white">
-                          {formatMoneyAmount(upsellTotal)}
-                        </span>
-                      </p>
-                      <p className="text-zinc-400">
-                        Collected Amount:{' '}
-                        <span className="font-semibold text-emerald-300">
-                          {formatMoneyAmount(collected)}
-                        </span>
-                      </p>
-                      <p className="text-zinc-400">
-                        Pending Amount:{' '}
-                        <span
-                          className={`font-semibold ${
-                            pending > 0 ? 'text-[#F25E26]' : 'text-zinc-200'
-                          }`}
-                        >
-                          {formatMoneyAmount(pending)}
-                        </span>
-                      </p>
-                    </div>
-
-                    <div className="mt-3 flex flex-wrap items-end gap-2 rounded-xl border border-white/10 bg-black/20 p-3">
-                      <label className="min-w-[9rem] flex-1">
-                        <span className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
-                          Quick update · Pending
-                        </span>
-                        <div className="relative mt-1">
-                          <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-zinc-500">
-                            $
-                          </span>
-                          <input
-                            type="number"
-                            min="0"
-                            step="0.01"
-                            inputMode="decimal"
-                            value={headerPendingDraft}
-                            placeholder="0"
-                            disabled={headerBalanceMutation.isPending}
-                            onChange={(e) =>
-                              setHeaderPendingDraft(e.target.value)
-                            }
-                            className="w-full rounded-lg border border-zinc-700 bg-zinc-950/60 py-2 pl-7 pr-3 text-sm text-white outline-none focus:border-[#F25E26]/50 focus:ring-2 focus:ring-[#F25E26]/20"
-                          />
-                        </div>
-                      </label>
-                      <button
-                        type="button"
-                        disabled={headerBalanceMutation.isPending}
-                        onClick={() => saveHeaderPending(headerPendingDraft)}
-                        className="rounded-lg bg-[#F25E26] px-3 py-2 text-xs font-semibold text-white hover:bg-[#ff6a36] disabled:opacity-60"
-                      >
-                        {headerBalanceMutation.isPending
-                          ? 'Saving…'
-                          : 'Update'}
-                      </button>
-                      <button
-                        type="button"
-                        disabled={headerBalanceMutation.isPending}
-                        onClick={() => {
-                          setHeaderPendingDraft('');
-                          saveHeaderPending(0);
-                        }}
-                        className="rounded-lg border border-emerald-500/40 px-3 py-2 text-xs font-semibold text-emerald-300 hover:bg-emerald-500/10 disabled:opacity-60"
-                      >
-                        Mark Paid
-                      </button>
-                      {headerBalanceError ? (
-                        <p className="w-full text-sm text-red-400" role="alert">
-                          {headerBalanceError}
-                        </p>
-                      ) : null}
-                    </div>
                   </div>
 
-                  <div className="flex shrink-0 flex-col items-end gap-2">
+                  <div className="flex max-w-full shrink-0 flex-col items-end gap-2.5 sm:max-w-[22rem]">
                     {contractBadge ? (
-                      <div className="rounded-xl border border-sky-500/40 bg-sky-500/10 px-3 py-2 text-right">
-                        <p className="text-[10px] font-semibold uppercase tracking-wide text-sky-300">
+                      <div
+                        className="max-w-full rounded-xl border border-sky-500/40 bg-sky-500/10 px-3 py-2 text-right"
+                        title={contractBadge}
+                      >
+                        <p className="text-[11px] font-semibold leading-snug tracking-wide text-sky-300">
                           {contractBadge}
                         </p>
                       </div>
@@ -332,12 +223,60 @@ export default function ClientDetailPage() {
                         >
                           {retentionBadge.label}
                         </p>
-                        <p className="mt-0.5 text-xs font-medium text-white">
+                        <p className="mt-0.5 whitespace-nowrap text-xs font-medium text-white">
                           {formatPktDateTimeLong(retentionBadge.at)} PKT
                         </p>
                       </div>
                     ) : null}
                   </div>
+                </div>
+
+                {/* Full-width contact & payment — no overlap / no truncation */}
+                <div className="mt-3 grid w-full grid-cols-1 gap-x-8 gap-y-2.5 border-t border-white/10 pt-3 text-sm sm:grid-cols-2">
+                  <SummaryLine
+                    label="Personal Email"
+                    value={lead.personalEmail?.trim() || '—'}
+                  />
+                  <SummaryLine
+                    label="Business Email"
+                    value={lead.businessEmail?.trim() || '—'}
+                  />
+                  <SummaryLine
+                    label="Payment Method"
+                    value={formatPaymentSummary(lead.payment)}
+                  />
+                </div>
+
+                {/* Full-width financial row */}
+                <div className="mt-3 flex w-full flex-wrap items-center gap-x-8 gap-y-2 border-t border-white/10 pt-3 text-sm">
+                  <p className="whitespace-nowrap text-zinc-400">
+                    Base Amount:{' '}
+                    <span className="font-semibold text-white">
+                      {formatMoneyAmount(baseAmount)}
+                    </span>
+                  </p>
+                  <p className="whitespace-nowrap text-zinc-400">
+                    Upsell Total:{' '}
+                    <span className="font-semibold text-white">
+                      {formatMoneyAmount(upsellTotal)}
+                    </span>
+                  </p>
+                  <p className="whitespace-nowrap text-zinc-400">
+                    Collected Amount:{' '}
+                    <span className="font-semibold text-emerald-300">
+                      {formatMoneyAmount(collected)}
+                    </span>
+                  </p>
+                  <p className="whitespace-nowrap text-zinc-400">
+                    Pending Amount:{' '}
+                    <span
+                      className={`font-semibold ${
+                        pending > 0 ? 'text-[#F25E26]' : 'text-zinc-200'
+                      }`}
+                    >
+                      {formatMoneyAmount(pending)}
+                    </span>
+                  </p>
                 </div>
               </div>
 
@@ -443,9 +382,11 @@ export default function ClientDetailPage() {
 
 function SummaryLine({ label, value }) {
   return (
-    <p className="min-w-0 text-zinc-400">
-      <span className="text-zinc-500">{label}: </span>
-      <span className="break-all font-medium text-zinc-200">{value}</span>
-    </p>
+    <div className="flex min-w-0 flex-col gap-0.5 text-zinc-400">
+      <span className="shrink-0 text-xs text-zinc-500">{label}</span>
+      <span className="break-all font-medium text-zinc-200 sm:break-words">
+        {value}
+      </span>
+    </div>
   );
 }

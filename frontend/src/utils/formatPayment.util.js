@@ -2,6 +2,7 @@ import {
   formatCardBrandLabel,
   resolveCardBrandId,
 } from './cardBrand.util.js';
+import { currentPktMonth, pktMonthKey } from './pktMonth.util.js';
 
 const moneyOrNull = (value) => {
   if (value === null || value === undefined || value === '') return null;
@@ -52,6 +53,7 @@ export function getUnifiedUpsellLedger(lead) {
     other: 'others',
   };
 
+  const closedAt = lead?.closedAt || null;
   return [
     {
       entryId: 'handover-upscale',
@@ -65,6 +67,12 @@ export function getUnifiedUpsellLedger(lead) {
       paymentReference: upscale.paymentReference || null,
       notes: lead?.handover?.upscaleNotes || null,
       source: 'handover',
+      createdAt: closedAt,
+      paidAt: received > 0 ? closedAt : null,
+      paymentEvents:
+        received > 0 && closedAt
+          ? [{ amount: received, at: closedAt }]
+          : [],
     },
     ...rows,
   ];
@@ -132,6 +140,96 @@ export function getClientRevenueTotals(lead) {
     totalCollected,
     totalContractValue,
     totalPending: Math.max(0, totalContractValue - totalCollected) || computedPending,
+  };
+}
+
+/**
+ * CLIENT SUMMARY header totals (CST Client Detail only):
+ * - Upsell Total / Collected Amount → current PKT calendar month
+ * - Pending Amount → all-time unpaid base + upsell balances
+ * - Base Amount → original deal (unchanged)
+ * Does not mutate Mongo; historical ledger / retention rows stay intact.
+ */
+export function getClientDetailSummaryTotals(lead, monthKey = currentPktMonth()) {
+  const inMonth = (value) => {
+    const key = pktMonthKey(value);
+    return Boolean(key) && key === monthKey;
+  };
+
+  const baseOffered = Math.max(
+    0,
+    moneyOrNull(lead?.paymentOffered) ??
+      moneyOrNull(lead?.salesAmount) ??
+      0
+  );
+  const baseReceived = Math.max(0, moneyOrNull(lead?.paymentReceived) ?? 0);
+  const basePending = Math.max(0, baseOffered - baseReceived);
+
+  // Base collected this PKT month (use closedAt as the collection stamp).
+  const baseCollectedThisMonth =
+    baseReceived > 0 && inMonth(lead?.closedAt) ? baseReceived : 0;
+
+  const rows = getUnifiedUpsellLedger(lead);
+  let upsellTotalMonth = 0;
+  let upsellPaidMonth = 0;
+  let upsellPendingAll = 0;
+
+  for (const row of rows) {
+    const total = Math.max(0, Number(row?.totalAmount) || 0);
+    let paid = Math.max(0, Number(row?.paidAmount) || 0);
+    if (paid > total) paid = total;
+    upsellPendingAll += Math.max(0, total - paid);
+
+    const createdAt =
+      row?.createdAt ||
+      row?.at ||
+      (row?.source === 'handover' ? lead?.closedAt : null);
+
+    if (inMonth(createdAt)) {
+      upsellTotalMonth += total;
+    }
+
+    const events = Array.isArray(row?.paymentEvents)
+      ? row.paymentEvents
+      : null;
+    if (events && events.length > 0) {
+      for (const ev of events) {
+        if (inMonth(ev?.at)) {
+          upsellPaidMonth += Math.max(0, Number(ev?.amount) || 0);
+        }
+      }
+    } else if (paid > 0 && (inMonth(createdAt) || inMonth(row?.paidAt))) {
+      // Legacy rows without paymentEvents — attribute paid to create/pay month.
+      upsellPaidMonth += paid;
+    }
+  }
+
+  const retentionHistory = Array.isArray(lead?.handover?.retention?.history)
+    ? lead.handover.retention.history
+    : [];
+  let retentionPaidMonth = 0;
+  for (const row of retentionHistory) {
+    if (inMonth(row?.paidAt)) {
+      retentionPaidMonth += Math.max(0, Number(row?.amount) || 0);
+    }
+  }
+
+  const totalCollected =
+    baseCollectedThisMonth + upsellPaidMonth + retentionPaidMonth;
+  const totalPending = basePending + upsellPendingAll;
+
+  return {
+    baseAmount: baseOffered,
+    baseOffered,
+    baseReceived,
+    basePending,
+    upsellTotal: upsellTotalMonth,
+    upsellPaid: upsellPaidMonth,
+    upsellPending: upsellPendingAll,
+    retentionPaid: retentionPaidMonth,
+    totalCollected,
+    totalPending,
+    monthKey,
   };
 }
 

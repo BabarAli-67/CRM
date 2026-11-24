@@ -1,18 +1,19 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
-import {
-  markRetentionPaid,
-  setRetention,
-} from '../../services/handover.service.js';
+import useAuth from '../../hooks/useAuth.hook.js';
+import { markRetentionPaid } from '../../services/handover.service.js';
+import { stripContractLabel } from '../../utils/contract.util.js';
 import { formatMoneyAmount } from '../../utils/formatPayment.util.js';
 import {
+  currentPktMonth,
+  pktMonthKey,
+  previousPktMonth,
+} from '../../utils/pktMonth.util.js';
+import {
   describeRetentionDelta,
-  formatContractBadgeLabel,
   formatPktDateTimeLong,
   fromPktDatetimeLocal,
-  getRetentionBadge,
   getRetentionComparisonBaseline,
-  hasActiveContract,
   resolveRetentionAt,
   toPktDatetimeLocal,
 } from '../../utils/retention.util.js';
@@ -20,14 +21,30 @@ import {
 const inputClass =
   'w-full rounded-lg border border-zinc-700 bg-zinc-950/60 px-3 py-2 text-sm text-white outline-none transition [color-scheme:dark] focus:border-[#F25E26]/50 focus:ring-2 focus:ring-[#F25E26]/20';
 
+/** Fixed Mark Retention Paid product pills (no dynamic client strings). */
+const RETENTION_SERVICE_OPTIONS = [
+  'Citation Pages',
+  'Web SEO',
+  'SEO',
+  'Others',
+];
+
+/** History fallback when an older entry has no saved serviceName. */
+const getPrimaryBaseService = (lead) => {
+  const raw = stripContractLabel(lead?.servicesOffered || '').trim();
+  if (!raw) return '';
+  return raw.split(',')[0].trim() || raw;
+};
+
+const defaultRetentionServicePill = () => 'SEO';
+
 /**
  * CST Client Detail — Retention tab:
- * editable next alert schedule, Mark Retention Paid, history + chart.
+ * Mark Retention Paid (+30 day auto advance) and history.
  */
 export default function CstRetentionPanel({ lead, onLeadUpdated }) {
+  const { user } = useAuth();
   const retention = lead?.handover?.retention;
-  const badge = getRetentionBadge(lead);
-  const contractBadge = formatContractBadgeLabel(lead);
   const nextAt = resolveRetentionAt(lead);
   const history = useMemo(() => {
     const rows = Array.isArray(retention?.history) ? [...retention.history] : [];
@@ -36,14 +53,26 @@ export default function CstRetentionPanel({ lead, onLeadUpdated }) {
     );
   }, [retention?.history]);
 
+  // Admin / Super Admin: full audit trail.
+  // CST Manager: strict PKT calendar months — current + previous only (+ Next cycle).
+  // All entries remain in MongoDB either way (no deletes / no rolling day window).
+  const canViewFullHistory =
+    user?.role === 'super_admin' || user?.role === 'admin';
+  const visibleHistory = useMemo(() => {
+    if (canViewFullHistory) return [...history].reverse();
+    const currentYYYYMM = currentPktMonth();
+    const prevYYYYMM = previousPktMonth(currentYYYYMM);
+    const allowed = new Set([currentYYYYMM, prevYYYYMM]);
+    return history
+      .filter((row) => allowed.has(pktMonthKey(row?.paidAt)))
+      .reverse();
+  }, [history, canViewFullHistory]);
+
   const baseline = getRetentionComparisonBaseline(lead);
+  const primaryService = useMemo(() => getPrimaryBaseService(lead), [lead]);
 
-  const [scheduleDraft, setScheduleDraft] = useState(() =>
-    toPktDatetimeLocal(nextAt)
-  );
-  const [scheduleMsg, setScheduleMsg] = useState('');
-  const [scheduleErr, setScheduleErr] = useState('');
-
+  const [servicePill, setServicePill] = useState(defaultRetentionServicePill);
+  const [othersText, setOthersText] = useState('');
   const [amountDraft, setAmountDraft] = useState('');
   const [noteDraft, setNoteDraft] = useState('');
   const [paidAtDraft, setPaidAtDraft] = useState(() =>
@@ -53,13 +82,11 @@ export default function CstRetentionPanel({ lead, onLeadUpdated }) {
   const [payErr, setPayErr] = useState('');
 
   useEffect(() => {
-    setScheduleDraft(toPktDatetimeLocal(resolveRetentionAt(lead)));
-    setScheduleMsg('');
-    setScheduleErr('');
-  }, [lead?._id, lead?.handover?.retention?.at, lead?.closedAt]);
-
-  useEffect(() => {
     setPaidAtDraft(toPktDatetimeLocal(new Date()));
+    setServicePill(defaultRetentionServicePill());
+    setOthersText('');
+    // Reset after a successful pay / lead change — don't fight mid-edit
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lead?._id, history.length]);
 
   const enteredAmount =
@@ -69,21 +96,6 @@ export default function CstRetentionPanel({ lead, onLeadUpdated }) {
       ? describeRetentionDelta(enteredAmount, baseline)
       : null;
 
-  const scheduleMutation = useMutation({
-    mutationFn: (iso) => setRetention(lead._id, iso),
-    onSuccess: (updated) => {
-      setScheduleMsg('Retention schedule saved.');
-      setScheduleErr('');
-      onLeadUpdated?.(updated);
-    },
-    onError: (err) => {
-      setScheduleErr(
-        err?.response?.data?.message || 'Failed to save retention schedule.'
-      );
-      setScheduleMsg('');
-    },
-  });
-
   const payMutation = useMutation({
     mutationFn: (payload) => markRetentionPaid(lead._id, payload),
     onSuccess: (updated) => {
@@ -92,6 +104,8 @@ export default function CstRetentionPanel({ lead, onLeadUpdated }) {
       setAmountDraft('');
       setNoteDraft('');
       setPaidAtDraft(toPktDatetimeLocal(new Date()));
+      setServicePill(defaultRetentionServicePill());
+      setOthersText('');
       onLeadUpdated?.(updated);
     },
     onError: (err) => {
@@ -102,16 +116,19 @@ export default function CstRetentionPanel({ lead, onLeadUpdated }) {
     },
   });
 
-  const saveSchedule = () => {
-    const when = fromPktDatetimeLocal(scheduleDraft);
-    if (!when) {
-      setScheduleErr('Pick a valid date and time (PKT).');
+  const submitPaid = () => {
+    const serviceName =
+      servicePill === 'Others'
+        ? String(othersText || '').trim()
+        : String(servicePill || '').trim();
+    if (!serviceName) {
+      setPayErr(
+        servicePill === 'Others'
+          ? 'Enter a product / service name for Others.'
+          : 'Select a Product / Service.'
+      );
       return;
     }
-    scheduleMutation.mutate(when.toISOString());
-  };
-
-  const submitPaid = () => {
     const amount = Number(amountDraft);
     if (!Number.isFinite(amount) || amount < 0) {
       setPayErr('Enter a valid retention amount paid.');
@@ -120,97 +137,20 @@ export default function CstRetentionPanel({ lead, onLeadUpdated }) {
     const paidAt = fromPktDatetimeLocal(paidAtDraft) || new Date();
     payMutation.mutate({
       amount,
+      serviceName,
       note: noteDraft.trim() || undefined,
       paidAt: paidAt.toISOString(),
     });
   };
 
-  const chartMax = Math.max(
-    1,
-    ...history.map((row) => Math.max(0, Number(row.amount) || 0))
-  );
+  const resolveHistoryProduct = (row) => {
+    const saved = String(row?.serviceName || '').trim();
+    if (saved) return saved;
+    return primaryService || '—';
+  };
 
   return (
     <div className="space-y-4">
-      {/* Status badge + next schedule */}
-      <section className="rounded-2xl border border-zinc-800/80 bg-[#111111] p-4 shadow-xl sm:p-5">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <h3 className="font-display text-lg font-semibold text-white">
-              Retention
-            </h3>
-            <p className="mt-1 text-sm text-zinc-500">
-              Monthly recurring retention · audio / popup alerts fire at the
-              saved Next Retention Date (PKT)
-              {hasActiveContract(lead)
-                ? ' · deferred for the active contract period'
-                : ''}
-            </p>
-          </div>
-          <div className="flex flex-col items-end gap-2">
-            {contractBadge ? (
-              <span className="inline-flex rounded-xl border border-sky-500/40 bg-sky-500/10 px-3 py-2 text-[10px] font-semibold uppercase tracking-wide text-sky-300">
-                {contractBadge}
-              </span>
-            ) : null}
-            {badge ? (
-              <span
-                className={`inline-flex flex-col items-end rounded-xl border px-3 py-2 text-right ${
-                  badge.kind === 'paid'
-                    ? 'border-emerald-500/40 bg-emerald-500/10'
-                    : 'border-[#F25E26]/40 bg-[#F25E26]/10'
-                }`}
-              >
-                <span
-                  className={`text-[10px] font-semibold uppercase tracking-wide ${
-                    badge.kind === 'paid' ? 'text-emerald-300' : 'text-[#F25E26]'
-                  }`}
-                >
-                  {badge.label}
-                </span>
-                <span className="mt-0.5 text-xs font-medium text-white">
-                  Next · {formatPktDateTimeLong(badge.at)} PKT
-                </span>
-              </span>
-            ) : (
-              <span className="rounded-xl border border-zinc-700 px-3 py-2 text-xs text-zinc-500">
-                No schedule yet
-              </span>
-            )}
-          </div>
-        </div>
-
-        <div className="mt-5 grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
-          <label className="space-y-1.5 text-xs font-medium text-zinc-400">
-            <span>Next Retention Date &amp; Time (PKT)</span>
-            <input
-              type="datetime-local"
-              value={scheduleDraft}
-              onChange={(e) => setScheduleDraft(e.target.value)}
-              disabled={scheduleMutation.isPending}
-              className={inputClass}
-              aria-label="Next retention date and time in PKT"
-            />
-          </label>
-          <button
-            type="button"
-            disabled={scheduleMutation.isPending}
-            onClick={saveSchedule}
-            className="rounded-lg bg-[#F25E26] px-4 py-2.5 text-sm font-semibold text-white shadow-md shadow-[#F25E26]/20 transition hover:bg-[#ff6a33] disabled:opacity-60"
-          >
-            {scheduleMutation.isPending ? 'Saving…' : 'Save Schedule'}
-          </button>
-        </div>
-        {scheduleMsg ? (
-          <p className="mt-2 text-sm text-emerald-300">{scheduleMsg}</p>
-        ) : null}
-        {scheduleErr ? (
-          <p className="mt-2 text-sm text-red-400" role="alert">
-            {scheduleErr}
-          </p>
-        ) : null}
-      </section>
-
       {/* Mark Retention Paid */}
       <section className="rounded-2xl border border-emerald-500/25 bg-emerald-500/[0.04] p-4 shadow-xl sm:p-5">
         <h3 className="font-display text-base font-semibold text-white">
@@ -222,69 +162,111 @@ export default function CstRetentionPanel({ lead, onLeadUpdated }) {
           untouched).
         </p>
 
-        <div className="mt-4 grid gap-3 sm:grid-cols-2">
-          <label className="space-y-1.5 text-xs font-medium text-zinc-400">
-            <span>Retention Amount Paid</span>
-            <div className="relative">
-              <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-zinc-500">
-                $
-              </span>
-              <input
-                type="number"
-                min="0"
-                step="0.01"
-                inputMode="decimal"
-                value={amountDraft}
-                placeholder="0"
-                disabled={payMutation.isPending}
-                onChange={(e) => setAmountDraft(e.target.value)}
-                className={`${inputClass} pl-7`}
-              />
+        <div className="mt-4 space-y-3">
+          <div className="space-y-1.5">
+            <p className="text-xs font-medium text-zinc-400">
+              Product / Service <span className="text-red-400">*</span>
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {RETENTION_SERVICE_OPTIONS.map((opt) => {
+                const active = servicePill === opt;
+                return (
+                  <button
+                    key={opt}
+                    type="button"
+                    disabled={payMutation.isPending}
+                    onClick={() => {
+                      setServicePill(opt);
+                      setPayErr('');
+                    }}
+                    className={`rounded-full px-3 py-1.5 text-xs font-semibold transition ${
+                      active
+                        ? 'bg-emerald-500/25 text-emerald-200 ring-1 ring-emerald-400/50'
+                        : 'border border-zinc-700 text-zinc-300 hover:bg-zinc-800/80'
+                    }`}
+                  >
+                    {opt}
+                  </button>
+                );
+              })}
             </div>
-            {liveDelta ? (
-              <span
-                className={`mt-1 inline-flex items-center gap-1 text-xs font-semibold ${
-                  liveDelta.kind === 'up'
-                    ? 'text-emerald-300'
-                    : liveDelta.kind === 'down'
-                      ? 'text-red-400'
-                      : 'text-zinc-400'
-                }`}
-              >
-                <span aria-hidden>{liveDelta.arrow}</span>
-                {liveDelta.kind === 'same'
-                  ? 'Same as last month'
-                  : `${liveDelta.label} vs last month`}
-              </span>
-            ) : (
-              <span className="mt-1 block text-xs text-zinc-600">
-                Baseline · {formatMoneyAmount(baseline)}
-              </span>
-            )}
-          </label>
+            {servicePill === 'Others' ? (
+              <input
+                type="text"
+                value={othersText}
+                onChange={(e) => setOthersText(e.target.value)}
+                disabled={payMutation.isPending}
+                placeholder="Enter product / service name"
+                className={`${inputClass} mt-2`}
+                aria-label="Other product or service name"
+              />
+            ) : null}
+          </div>
 
-          <label className="space-y-1.5 text-xs font-medium text-zinc-400">
-            <span>Payment Date &amp; Time (PKT)</span>
-            <input
-              type="datetime-local"
-              value={paidAtDraft}
-              onChange={(e) => setPaidAtDraft(e.target.value)}
-              disabled={payMutation.isPending}
-              className={inputClass}
-            />
-          </label>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="space-y-1.5 text-xs font-medium text-zinc-400">
+              <span>Retention Amount Paid</span>
+              <div className="relative">
+                <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-zinc-500">
+                  $
+                </span>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  inputMode="decimal"
+                  value={amountDraft}
+                  placeholder="0"
+                  disabled={payMutation.isPending}
+                  onChange={(e) => setAmountDraft(e.target.value)}
+                  className={`${inputClass} pl-7`}
+                />
+              </div>
+              {liveDelta ? (
+                <span
+                  className={`mt-1 inline-flex items-center gap-1 text-xs font-semibold ${
+                    liveDelta.kind === 'up'
+                      ? 'text-emerald-300'
+                      : liveDelta.kind === 'down'
+                        ? 'text-red-400'
+                        : 'text-zinc-400'
+                  }`}
+                >
+                  <span aria-hidden>{liveDelta.arrow}</span>
+                  {liveDelta.kind === 'same'
+                    ? 'Same as last month'
+                    : `${liveDelta.label} vs last month`}
+                </span>
+              ) : (
+                <span className="mt-1 block text-xs text-zinc-600">
+                  Baseline · {formatMoneyAmount(baseline)}
+                </span>
+              )}
+            </label>
 
-          <label className="space-y-1.5 text-xs font-medium text-zinc-400 sm:col-span-2">
-            <span>Note (optional)</span>
-            <input
-              type="text"
-              value={noteDraft}
-              onChange={(e) => setNoteDraft(e.target.value)}
-              disabled={payMutation.isPending}
-              placeholder="e.g. Card ending 4242 · renewed SEO package"
-              className={inputClass}
-            />
-          </label>
+            <label className="space-y-1.5 text-xs font-medium text-zinc-400">
+              <span>Payment Date &amp; Time (PKT)</span>
+              <input
+                type="datetime-local"
+                value={paidAtDraft}
+                onChange={(e) => setPaidAtDraft(e.target.value)}
+                disabled={payMutation.isPending}
+                className={inputClass}
+              />
+            </label>
+
+            <label className="space-y-1.5 text-xs font-medium text-zinc-400 sm:col-span-2">
+              <span>Note (optional)</span>
+              <input
+                type="text"
+                value={noteDraft}
+                onChange={(e) => setNoteDraft(e.target.value)}
+                disabled={payMutation.isPending}
+                placeholder="e.g. Card ending 4242 · renewed SEO package"
+                className={inputClass}
+              />
+            </label>
+          </div>
         </div>
 
         <div className="mt-4 flex flex-wrap items-center gap-3">
@@ -307,63 +289,6 @@ export default function CstRetentionPanel({ lead, onLeadUpdated }) {
         </div>
       </section>
 
-      {/* Chart */}
-      <section className="rounded-2xl border border-zinc-800/80 bg-[#111111] p-4 shadow-xl sm:p-5">
-        <h3 className="font-display text-base font-semibold text-white">
-          Monthly Retention Chart
-        </h3>
-        <p className="mt-1 text-sm text-zinc-500">
-          Paid amounts by billing cycle
-        </p>
-        {history.length === 0 ? (
-          <p className="mt-6 py-6 text-center text-sm text-zinc-500">
-            No retention payments yet.
-          </p>
-        ) : (
-          <div className="mt-5 flex h-44 items-end gap-2 overflow-x-auto pb-1">
-            {history.map((row) => {
-              const amount = Math.max(0, Number(row.amount) || 0);
-              const heightPct = Math.max(8, (amount / chartMax) * 100);
-              const delta = describeRetentionDelta(
-                amount,
-                row.previousAmount ?? 0
-              );
-              return (
-                <div
-                  key={row.entryId || `${row.monthLabel}-${row.paidAt}`}
-                  className="flex h-full min-w-[3.5rem] flex-1 flex-col items-center"
-                  title={`${row.monthLabel}: ${formatMoneyAmount(amount)}`}
-                >
-                  <span
-                    className={`mb-1 text-[10px] font-semibold ${
-                      delta.kind === 'up'
-                        ? 'text-emerald-300'
-                        : delta.kind === 'down'
-                          ? 'text-red-400'
-                          : 'text-zinc-500'
-                    }`}
-                  >
-                    {delta.arrow}
-                  </span>
-                  <div className="flex w-full flex-1 items-end justify-center">
-                    <div
-                      className="w-full max-w-[2.5rem] rounded-t-md bg-gradient-to-t from-[#C92000] to-[#F25E26]"
-                      style={{ height: `${heightPct}%` }}
-                    />
-                  </div>
-                  <span className="mt-1 max-w-[4.5rem] truncate text-center text-[10px] text-zinc-500">
-                    {(row.monthLabel || '').split(' ')[0] || '—'}
-                  </span>
-                  <span className="text-[10px] font-medium text-zinc-300">
-                    {formatMoneyAmount(amount)}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </section>
-
       {/* History table */}
       <section className="rounded-2xl border border-zinc-800/80 bg-[#111111] p-4 shadow-xl sm:p-5">
         <h3 className="font-display text-base font-semibold text-white">
@@ -383,19 +308,16 @@ export default function CstRetentionPanel({ lead, onLeadUpdated }) {
               <thead className="border-b border-zinc-800 bg-zinc-950/40 text-xs uppercase tracking-wide text-zinc-500">
                 <tr>
                   <th className="px-4 py-3 font-medium">Month</th>
+                  <th className="px-4 py-3 font-medium">Product</th>
                   <th className="px-4 py-3 font-medium">Status</th>
                   <th className="px-4 py-3 font-medium">Amount</th>
-                  <th className="px-4 py-3 font-medium">Vs. Last Month</th>
                   <th className="px-4 py-3 font-medium">Date &amp; Time (PKT)</th>
                 </tr>
               </thead>
               <tbody>
-                {[...history].reverse().map((row) => {
+                {visibleHistory.map((row) => {
                   const amount = Math.max(0, Number(row.amount) || 0);
-                  const delta = describeRetentionDelta(
-                    amount,
-                    row.previousAmount ?? 0
-                  );
+                  const product = resolveHistoryProduct(row);
                   return (
                     <tr
                       key={row.entryId || `${row.monthLabel}-${row.paidAt}`}
@@ -405,26 +327,21 @@ export default function CstRetentionPanel({ lead, onLeadUpdated }) {
                         {row.monthLabel || '—'}
                       </td>
                       <td className="px-4 py-3">
+                        {product && product !== '—' ? (
+                          <span className="inline-flex max-w-[12rem] truncate rounded-full border border-sky-500/35 bg-sky-500/10 px-2 py-0.5 text-[11px] font-semibold text-sky-300">
+                            {product}
+                          </span>
+                        ) : (
+                          <span className="text-zinc-500">—</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3">
                         <span className="inline-flex rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 text-[11px] font-semibold text-emerald-300">
                           Paid
                         </span>
                       </td>
                       <td className="px-4 py-3 text-zinc-200">
                         {formatMoneyAmount(amount)}
-                      </td>
-                      <td className="px-4 py-3">
-                        <span
-                          className={`inline-flex items-center gap-1 text-xs font-semibold ${
-                            delta.kind === 'up'
-                              ? 'text-emerald-300'
-                              : delta.kind === 'down'
-                                ? 'text-red-400'
-                                : 'text-zinc-400'
-                          }`}
-                        >
-                          <span aria-hidden>{delta.arrow}</span>
-                          {delta.kind === 'same' ? 'Same' : delta.label}
-                        </span>
                       </td>
                       <td className="px-4 py-3 whitespace-nowrap text-zinc-400">
                         {formatPktDateTimeLong(row.paidAt)} PKT
@@ -439,11 +356,19 @@ export default function CstRetentionPanel({ lead, onLeadUpdated }) {
                       Next cycle
                     </td>
                     <td className="px-4 py-3">
+                      {primaryService ? (
+                        <span className="inline-flex max-w-[12rem] truncate rounded-full border border-zinc-600/50 bg-zinc-800/60 px-2 py-0.5 text-[11px] font-semibold text-zinc-300">
+                          {primaryService}
+                        </span>
+                      ) : (
+                        <span className="text-zinc-500">—</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3">
                       <span className="inline-flex rounded-full border border-[#F25E26]/40 bg-[#F25E26]/10 px-2 py-0.5 text-[11px] font-semibold text-[#F25E26]">
                         Pending
                       </span>
                     </td>
-                    <td className="px-4 py-3 text-zinc-500">—</td>
                     <td className="px-4 py-3 text-zinc-500">—</td>
                     <td className="px-4 py-3 whitespace-nowrap text-zinc-400">
                       Due · {formatPktDateTimeLong(nextAt)} PKT

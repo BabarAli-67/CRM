@@ -69,11 +69,12 @@ export const markRetentionDone = async (leadId) => {
 /**
  * Mark Retention Paid for the current cycle.
  * @param {string} leadId
- * @param {{ amount: number, note?: string, paidAt?: string }} payload
+ * @param {{ amount: number, serviceName: string, note?: string, paidAt?: string }} payload
  */
 export const markRetentionPaid = async (leadId, payload) => {
   const response = await api.patch(`/handover/${leadId}/retention/paid`, {
     amount: Number(payload?.amount) || 0,
+    serviceName: String(payload?.serviceName || '').trim(),
     ...(payload?.note != null ? { note: payload.note } : {}),
     ...(payload?.paidAt != null ? { paidAt: payload.paidAt } : {}),
   });
@@ -166,7 +167,7 @@ export const clientCommentsPath = (role, leadId) => {
   if (role === 'tech_team') {
     return `/dashboard/tech-team/client/${leadId}?tab=comments`;
   }
-  return `/dashboard/cst-manager/client/${leadId}?tab=comments`;
+  return `/dashboard/cst-manager/client/${leadId}?tab=comments&from=onboard`;
 };
 
 /** CST / Tech — save keywords + change requests (live portfolio). */

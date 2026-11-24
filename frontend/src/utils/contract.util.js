@@ -77,9 +77,41 @@ export const retentionAlertAtFromDeal = (closedAt, leadOrMonths) => {
   return new Date(closed.getTime() + 30 * 24 * 60 * 60 * 1000);
 };
 
+/** Short PKT calendar date e.g. "23 Nov 2026". */
+export const formatPktDateShort = (value) => {
+  if (!value) return '';
+  const d = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleDateString('en-GB', {
+    timeZone: 'Asia/Karachi',
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+  });
+};
+
+/**
+ * Contract pill: sold product + duration + exact PKT date range.
+ * e.g. "SEO Contract • 6 Months (23 Nov 2026 – 23 May 2027)"
+ */
 export const formatContractBadgeLabel = (lead) => {
   if (!hasActiveContract(lead)) return null;
   const m = Math.floor(Number(lead.contractMonths) || 0);
   const unit = m === 1 ? 'Month' : 'Months';
-  return `Active Contract · ${m} ${unit}`;
+  const base = stripContractLabel(lead.servicesOffered || '');
+  const product = base ? `${base} Contract` : 'Contract';
+
+  const startRaw = lead.closedAt || lead.contractStartedAt || null;
+  const start = startRaw ? new Date(startRaw) : null;
+  if (!start || Number.isNaN(start.getTime())) {
+    return `${product} • ${m} ${unit}`;
+  }
+
+  const end = addMonthsToDate(start, m);
+  const startLabel = formatPktDateShort(start);
+  const endLabel = formatPktDateShort(end);
+  if (!startLabel || !endLabel) {
+    return `${product} • ${m} ${unit}`;
+  }
+  return `${product} • ${m} ${unit} (${startLabel} – ${endLabel})`;
 };

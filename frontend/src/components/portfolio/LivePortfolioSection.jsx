@@ -268,8 +268,9 @@ export default function LivePortfolioSection({
           Live Portfolio, Keywords & Tech Monthly Reports
         </h2>
         <p className="mt-1 text-sm text-zinc-500">
-          Shared CST ↔ Tech workspace for keywords, monthly PDFs, and client
-          change requests.
+          {isTech
+            ? 'Shared CST ↔ Tech workspace for keywords, monthly PDFs, and client change requests.'
+            : 'Shared CST ↔ Tech workspace for keywords and monthly PDFs.'}
         </p>
       </div>
 
@@ -529,76 +530,76 @@ export default function LivePortfolioSection({
       </div>
       </div>
 
-      {/* Change Request Log */}
-      <div className="rounded-xl border border-zinc-800 bg-zinc-950/40 p-4">
-        <h3 className="text-sm font-semibold text-white">
-          Client Change Request Log
-        </h3>
-        <p className="mt-1 text-xs text-zinc-500">
-          Log client change requests. Tech updates status in real time.
-        </p>
+      {/* Change Request Log — Tech portfolio only (hidden on CST Client Detail) */}
+      {isTech ? (
+        <div className="rounded-xl border border-zinc-800 bg-zinc-950/40 p-4">
+          <h3 className="text-sm font-semibold text-white">
+            Client Change Request Log
+          </h3>
+          <p className="mt-1 text-xs text-zinc-500">
+            Log client change requests. Tech updates status in real time.
+          </p>
 
-        <div className="mt-3 grid gap-3 sm:grid-cols-[10rem_1fr_auto]">
-          <select
-            value={crCategory}
-            onChange={(e) => setCrCategory(e.target.value)}
-            className={fieldClass}
-          >
-            {CATEGORY_OPTIONS.map((opt) => (
-              <option key={opt.id} value={opt.id}>
-                {opt.label}
-              </option>
-            ))}
-          </select>
-          <textarea
-            value={crDescription}
-            onChange={(e) => setCrDescription(e.target.value)}
-            rows={2}
-            placeholder="Describe the client change request…"
-            className={`${fieldClass} resize-y`}
-          />
-          <button
-            type="button"
-            disabled={busy || !crDescription.trim()}
-            onClick={addChangeRequest}
-            className="self-start rounded-xl bg-orange-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-orange-500 disabled:opacity-50"
-          >
-            Log Request
-          </button>
-        </div>
+          <div className="mt-3 grid gap-3 sm:grid-cols-[10rem_1fr_auto]">
+            <select
+              value={crCategory}
+              onChange={(e) => setCrCategory(e.target.value)}
+              className={fieldClass}
+            >
+              {CATEGORY_OPTIONS.map((opt) => (
+                <option key={opt.id} value={opt.id}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+            <textarea
+              value={crDescription}
+              onChange={(e) => setCrDescription(e.target.value)}
+              rows={2}
+              placeholder="Describe the client change request…"
+              className={`${fieldClass} resize-y`}
+            />
+            <button
+              type="button"
+              disabled={busy || !crDescription.trim()}
+              onClick={addChangeRequest}
+              className="self-start rounded-xl bg-orange-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-orange-500 disabled:opacity-50"
+            >
+              Log Request
+            </button>
+          </div>
 
-        <div className="mt-4 space-y-2">
-          {changeRequests.length === 0 ? (
-            <p className="text-sm text-zinc-500">No change requests logged.</p>
-          ) : (
-            changeRequests.map((row) => (
-              <div
-                key={row.requestId}
-                className="rounded-lg border border-zinc-800 bg-zinc-900/50 px-3 py-3"
-              >
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
-                        {categoryLabel(row.category)}
-                      </span>
-                      <span
-                        className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold ring-1 ${
-                          STATUS_BADGE[row.status] || STATUS_BADGE.pending
-                        }`}
-                      >
-                        {STATUS_OPTIONS.find((s) => s.id === row.status)
-                          ?.label || row.status}
-                      </span>
+          <div className="mt-4 space-y-2">
+            {changeRequests.length === 0 ? (
+              <p className="text-sm text-zinc-500">No change requests logged.</p>
+            ) : (
+              changeRequests.map((row) => (
+                <div
+                  key={row.requestId}
+                  className="rounded-lg border border-zinc-800 bg-zinc-900/50 px-3 py-3"
+                >
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
+                          {categoryLabel(row.category)}
+                        </span>
+                        <span
+                          className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold ring-1 ${
+                            STATUS_BADGE[row.status] || STATUS_BADGE.pending
+                          }`}
+                        >
+                          {STATUS_OPTIONS.find((s) => s.id === row.status)
+                            ?.label || row.status}
+                        </span>
+                      </div>
+                      <p className="mt-1 text-sm text-zinc-200 whitespace-pre-wrap">
+                        {row.description}
+                      </p>
+                      <p className="mt-1 text-xs text-zinc-500">
+                        Logged {formatPkt(row.loggedAt)} PKT
+                      </p>
                     </div>
-                    <p className="mt-1 text-sm text-zinc-200 whitespace-pre-wrap">
-                      {row.description}
-                    </p>
-                    <p className="mt-1 text-xs text-zinc-500">
-                      Logged {formatPkt(row.loggedAt)} PKT
-                    </p>
-                  </div>
-                  {isTech ? (
                     <select
                       value={row.status || 'pending'}
                       disabled={busy}
@@ -613,13 +614,13 @@ export default function LivePortfolioSection({
                         </option>
                       ))}
                     </select>
-                  ) : null}
+                  </div>
                 </div>
-              </div>
-            ))
-          )}
+              ))
+            )}
+          </div>
         </div>
-      </div>
+      ) : null}
       </div>
     </div>
   );

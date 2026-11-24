@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { updateCloserCallback } from '../../services/callback.service.js';
+import { sortCallbacksChronologically } from '../../utils/callbackListTabs.js';
 import CloserScheduleCallbackModal from './CloserScheduleCallbackModal.jsx';
 
 const DUE_SOON_MS = 15 * 60 * 1000;
@@ -113,10 +114,7 @@ export default function CloserCallbackTable({
   }, []);
 
   const rows = useMemo(
-    () =>
-      [...callbacks].sort(
-        (a, b) => new Date(a.callbackAt) - new Date(b.callbackAt)
-      ),
+    () => sortCallbacksChronologically(callbacks),
     [callbacks]
   );
 

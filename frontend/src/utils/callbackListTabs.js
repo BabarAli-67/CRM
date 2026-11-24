@@ -3,6 +3,52 @@
  * Completed and Attended are independent finished statuses.
  */
 
+/**
+ * Resolve a callback's scheduled instant (ms). Prefers `callbackAt`;
+ * falls back to legacy `callbackDate` + `callbackTime` when present.
+ * @returns {number} epoch ms, or NaN when unscheduled / invalid
+ */
+export function getCallbackScheduledTimeMs(row) {
+  if (!row) return NaN;
+
+  if (row.callbackAt != null && row.callbackAt !== '') {
+    const fromAt = new Date(row.callbackAt).getTime();
+    if (Number.isFinite(fromAt)) return fromAt;
+  }
+
+  const datePart = String(row.callbackDate || '').trim();
+  const timePart = String(row.callbackTime || '').trim();
+  if (datePart) {
+    const combined = timePart
+      ? `${datePart}T${timePart}`
+      : datePart;
+    const fromParts = new Date(combined).getTime();
+    if (Number.isFinite(fromParts)) return fromParts;
+  }
+
+  return NaN;
+}
+
+/**
+ * Ascending chronological compare (earliest first).
+ * Invalid / missing schedules sort to the bottom.
+ */
+export function compareCallbacksByScheduledAt(a, b) {
+  const ta = getCallbackScheduledTimeMs(a);
+  const tb = getCallbackScheduledTimeMs(b);
+  const aOk = Number.isFinite(ta);
+  const bOk = Number.isFinite(tb);
+  if (!aOk && !bOk) return 0;
+  if (!aOk) return 1;
+  if (!bOk) return -1;
+  return ta - tb;
+}
+
+/** Stable copy sorted earliest → latest (PKT schedule via callbackAt). */
+export function sortCallbacksChronologically(callbacks = []) {
+  return [...callbacks].sort(compareCallbacksByScheduledAt);
+}
+
 export const CALLBACK_LIST_TABS = [
   { id: 'all', label: 'All' },
   { id: 'upcoming', label: 'Upcoming' },

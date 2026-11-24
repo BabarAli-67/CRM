@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
+import HorizontalScrollArea from '../../components/HorizontalScrollArea.component.jsx';
 import LeadDetailModal from '../../components/leads/LeadDetailModal.jsx';
 import LeadTable from '../../components/leads/LeadTable.jsx';
 import CloseSaleModal from '../../components/leads/CloseSaleModal.jsx';
@@ -24,6 +25,7 @@ import { formatUserRef } from '../../utils/formatUserRef.util.js';
 import {
   formatPaymentSummary,
 } from '../../utils/formatPayment.util.js';
+import { sortCallbacksChronologically } from '../../utils/callbackListTabs.js';
 import {
   currentPktMonth,
   formatPktMonthLabel,
@@ -389,32 +391,34 @@ export default function AssignedLeadsPage() {
     const nameQ = teamBusinessFilter.trim().toLowerCase();
     const emailQ = teamEmailFilter.trim().toLowerCase();
     const dateQ = teamDateFilter.trim();
-    if (!nameQ && !emailQ && !dateQ) return teamCallbacks;
-
-    return teamCallbacks.filter((row) => {
-      if (nameQ) {
-        const name = String(row.businessName || '').toLowerCase();
-        if (!name.includes(nameQ)) return false;
-      }
-      if (emailQ) {
-        const personal = String(row.personalEmail || '').toLowerCase();
-        const business = String(row.businessEmail || '').toLowerCase();
-        const combined = String(row.email || '').toLowerCase();
-        if (
-          !personal.includes(emailQ) &&
-          !business.includes(emailQ) &&
-          !combined.includes(emailQ)
-        ) {
-          return false;
-        }
-      }
-      if (dateQ) {
-        const cbKey = pktDateKey(row.callbackAt);
-        const createdKey = pktDateKey(row.createdAt);
-        if (cbKey !== dateQ && createdKey !== dateQ) return false;
-      }
-      return true;
-    });
+    const filtered =
+      !nameQ && !emailQ && !dateQ
+        ? teamCallbacks
+        : teamCallbacks.filter((row) => {
+            if (nameQ) {
+              const name = String(row.businessName || '').toLowerCase();
+              if (!name.includes(nameQ)) return false;
+            }
+            if (emailQ) {
+              const personal = String(row.personalEmail || '').toLowerCase();
+              const business = String(row.businessEmail || '').toLowerCase();
+              const combined = String(row.email || '').toLowerCase();
+              if (
+                !personal.includes(emailQ) &&
+                !business.includes(emailQ) &&
+                !combined.includes(emailQ)
+              ) {
+                return false;
+              }
+            }
+            if (dateQ) {
+              const cbKey = pktDateKey(row.callbackAt);
+              const createdKey = pktDateKey(row.createdAt);
+              if (cbKey !== dateQ && createdKey !== dateQ) return false;
+            }
+            return true;
+          });
+    return sortCallbacksChronologically(filtered);
   }, [
     teamCallbacks,
     teamBusinessFilter,
@@ -539,7 +543,7 @@ export default function AssignedLeadsPage() {
                       : `No sales awaiting CST handover in ${formatPktMonthLabel(closedMonth)}.`}
                   </p>
                 ) : (
-                  <div className="overflow-x-auto rounded-xl border border-zinc-800/60">
+                  <HorizontalScrollArea className="rounded-xl border border-zinc-800/60">
                     <table className="min-w-full text-sm text-zinc-200">
                       <thead className="border-b border-zinc-800 bg-zinc-950/40">
                         <tr>
@@ -679,7 +683,7 @@ export default function AssignedLeadsPage() {
                         })}
                       </tbody>
                     </table>
-                  </div>
+                  </HorizontalScrollArea>
                 )}
               </div>
             )}

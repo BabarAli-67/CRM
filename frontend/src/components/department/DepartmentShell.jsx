@@ -48,11 +48,16 @@ const searchOf = (to) => {
 
 function isItemActive(item, pathname, search) {
   const extras = item.alsoMatch || [];
-  if (
-    extras.some(
-      (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`)
-    )
-  ) {
+  const onAlsoMatch = extras.some(
+    (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`)
+  );
+  if (onAlsoMatch) {
+    // Optional: only one of several alsoMatch items stays active (e.g. CST client detail).
+    if (item.matchFrom) {
+      const from =
+        new URLSearchParams(search).get('from') || item.defaultFrom || 'onboard';
+      return from === item.matchFrom;
+    }
     return true;
   }
 
@@ -412,7 +417,20 @@ export default function DepartmentShell({
                   aria-hidden
                 />
               )}
-              <span className="truncate">{item.label}</span>
+              <span className="min-w-0 flex-1 truncate">{item.label}</span>
+              {item.badge != null ? (
+                <span
+                  className={`inline-flex min-w-[1.25rem] shrink-0 items-center justify-center rounded-full px-1.5 py-0.5 text-[11px] font-bold tabular-nums ${
+                    active
+                      ? 'bg-white/20 text-white'
+                      : Number(item.badge) > 0
+                        ? 'bg-[#F25E26]/20 text-[#F25E26]'
+                        : 'bg-white/10 text-[#A3A3A3]'
+                  }`}
+                >
+                  {item.badge}
+                </span>
+              ) : null}
             </NavLink>
           );
         })}

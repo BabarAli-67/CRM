@@ -485,6 +485,8 @@ const leadSchema = new mongoose.Schema(
                 {
                   entryId: { type: String, required: true, trim: true },
                   monthLabel: { type: String, default: '', trim: true },
+                  /** Product / service renewed this cycle (e.g. SEO, GMB). */
+                  serviceName: { type: String, default: null, trim: true },
                   amount: { type: Number, default: 0, min: 0 },
                   paidAt: { type: Date, default: null },
                   previousAmount: { type: Number, default: null },
@@ -591,6 +593,29 @@ const leadSchema = new mongoose.Schema(
                 type: String,
                 default: null,
                 trim: true,
+              },
+              /** When this upsell row was added (PKT month scoping). */
+              createdAt: {
+                type: Date,
+                default: Date.now,
+              },
+              /** Last payment logged against this upsell. */
+              paidAt: {
+                type: Date,
+                default: null,
+              },
+              /**
+               * Incremental payment log for month-scoped Collected Amount.
+               * [{ amount, at }]
+               */
+              paymentEvents: {
+                type: [
+                  {
+                    amount: { type: Number, default: 0, min: 0 },
+                    at: { type: Date, default: Date.now },
+                  },
+                ],
+                default: undefined,
               },
             },
           ],
