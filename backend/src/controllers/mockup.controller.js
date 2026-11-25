@@ -57,10 +57,24 @@ const toPublicMockup = (doc) => {
     assignedAt: obj.assignedAt,
     submittedAt: obj.submittedAt,
     deliveredAt: obj.deliveredAt,
+    requesterViewedAt: obj.requesterViewedAt || null,
+    unreadForRequester:
+      obj.status === 'delivered' &&
+      obj.deliveredAt &&
+      (!obj.requesterViewedAt ||
+        new Date(obj.requesterViewedAt).getTime() <
+          new Date(obj.deliveredAt).getTime()),
     createdAt: obj.createdAt,
     updatedAt: obj.updatedAt,
   };
 };
+
+const isUnreadDeliveredForRequester = (mockup) =>
+  mockup?.status === 'delivered' &&
+  mockup?.deliveredAt &&
+  (!mockup.requesterViewedAt ||
+    new Date(mockup.requesterViewedAt).getTime() <
+      new Date(mockup.deliveredAt).getTime());
 
 const buildFileAsset = (file, folderId) => {
   if (!file) return null;
@@ -276,8 +290,135 @@ export const getMockupBadges = asyncHandler(async (req, res) => {
     );
   }
 
+  if (role === 'closer' || role === 'cst_manager') {
+    const deliveredUnread = await MockupRequest.countDocuments({
+      'requestedBy.userId': req.user._id,
+      status: 'delivered',
+      deliveredAt: { $ne: null },
+      $or: [
+        { requesterViewedAt: null },
+        { requesterViewedAt: { $exists: false } },
+        { $expr: { $lt: ['$requesterViewedAt', '$deliveredAt'] } },
+      ],
+    });
+    return res.status(200).json(
+      new ApiResponse(
+        200,
+        {
+          deliveredUnread,
+          actionable: deliveredUnread,
+        },
+        'Mockup badges retrieved'
+      )
+    );
+  }
+
   res.status(200).json(
-    new ApiResponse(200, { actionable: 0, assignedActive: 0 }, 'Mockup badges')
+    new ApiResponse(
+      200,
+      { actionable: 0, assignedActive: 0, deliveredUnread: 0 },
+      'Mockup badges'
+    )
+  );
+});
+
+/**
+ * GET /mockups/notifications — unread delivered mockups for CST / Closer bell.
+ */
+export const getMockupNotifications = asyncHandler(async (req, res) => {
+  const role = req.user.role;
+  if (role !== 'closer' && role !== 'cst_manager') {
+    throw new ApiError(403, 'Only Closer and CST Manager can view mockup notifications');
+  }
+
+  const rows = await MockupRequest.find({
+    'requestedBy.userId': req.user._id,
+    status: 'delivered',
+    deliveredAt: { $ne: null },
+  })
+    .sort({ deliveredAt: -1 })
+    .limit(50);
+
+  const notifications = rows
+    .filter((m) => isUnreadDeliveredForRequester(m))
+    .map((m) => ({
+      mockupId: String(m._id),
+      businessName: m.businessName || 'Business',
+      mockupUrl: m.mockupUrl || null,
+      deliveredAt: m.deliveredAt,
+      preview: `Mockup ready for ${m.businessName || 'Business'} — click to view`,
+    }));
+
+  res.status(200).json(
+    new ApiResponse(
+      200,
+      {
+        notifications,
+        totalUnread: notifications.length,
+      },
+      'Mockup notifications retrieved'
+    )
+  );
+});
+
+/**
+ * PATCH /mockups/:id/viewed — mark a delivered mockup as viewed by requester.
+ */
+export const markMockupViewed = asyncHandler(async (req, res) => {
+  const mockup = await MockupRequest.findById(req.params.id);
+  if (!mockup) throw new ApiError(404, 'Mockup request not found');
+
+  if (!assertCanViewMockup(mockup, req.user)) {
+    throw new ApiError(403, 'You can only mark your own mockups as viewed');
+  }
+
+  const role = req.user.role;
+  if (role !== 'closer' && role !== 'cst_manager') {
+    throw new ApiError(403, 'Only the original requester can mark a mockup viewed');
+  }
+
+  mockup.requesterViewedAt = new Date();
+  await mockup.save();
+
+  res.status(200).json(
+    new ApiResponse(
+      200,
+      { mockup: toPublicMockup(mockup) },
+      'Mockup marked as viewed'
+    )
+  );
+});
+
+/**
+ * PATCH /mockups/mine/viewed — mark all of requester's delivered mockups viewed.
+ */
+export const markMyMockupsViewed = asyncHandler(async (req, res) => {
+  const role = req.user.role;
+  if (role !== 'closer' && role !== 'cst_manager') {
+    throw new ApiError(403, 'Only Closer and CST Manager can mark mockups viewed');
+  }
+
+  const now = new Date();
+  const result = await MockupRequest.updateMany(
+    {
+      'requestedBy.userId': req.user._id,
+      status: 'delivered',
+      deliveredAt: { $ne: null },
+      $or: [
+        { requesterViewedAt: null },
+        { requesterViewedAt: { $exists: false } },
+        { $expr: { $lt: ['$requesterViewedAt', '$deliveredAt'] } },
+      ],
+    },
+    { $set: { requesterViewedAt: now } }
+  );
+
+  res.status(200).json(
+    new ApiResponse(
+      200,
+      { modifiedCount: result.modifiedCount || 0 },
+      'Delivered mockups marked as viewed'
+    )
   );
 });
 
@@ -410,15 +551,18 @@ export const forwardMockupToSender = asyncHandler(async (req, res) => {
   mockup.mockupUrl = nextUrl;
   mockup.status = 'delivered';
   mockup.deliveredAt = new Date();
+  // Re-open unread state for the original CST / Closer requester
+  mockup.requesterViewedAt = null;
   await mockup.save();
 
   const requesterId = mockup.requestedBy?.userId;
   if (requesterId) {
     emitToUser(String(requesterId), 'mockup:delivered', {
       mockupId: String(mockup._id),
-      businessName: mockup.businessName,
+      businessName: mockup.businessName || 'Business',
       mockupUrl: mockup.mockupUrl,
       at: mockup.deliveredAt,
+      preview: `Mockup ready for ${mockup.businessName || 'Business'} — click to view`,
     });
   }
 

@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Bell, Clock3, LogOut, Menu, X } from 'lucide-react';
 import AttendanceBanner from '../AttendanceBanner.component.jsx';
 import ClientCommentNotificationBell from '../ClientCommentNotificationBell.component.jsx';
+import MockupDeliveryNotificationBell from '../MockupDeliveryNotificationBell.component.jsx';
 import DockedChatWindowsHost from '../DockedChatWindowsHost.component.jsx';
 import GracefulExitModal from '../GracefulExitModal.component.jsx';
 import GlobalRemindersBridge from '../alerts/GlobalRemindersBridge.component.jsx';
@@ -520,6 +521,7 @@ export default function DepartmentShell({
           </div>
           <div className="flex min-w-0 items-center gap-2 sm:gap-3">
             <ClientCommentNotificationBell />
+            <MockupDeliveryNotificationBell />
             <HeaderPulseDot enabled={pulseEnabled} />
             <SessionIdentityBadge user={user} roleLabel={displayRole} />
           </div>

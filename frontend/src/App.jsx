@@ -31,6 +31,7 @@ import TechHeadAssignedPage from './pages/tech-head/TechHeadAssignedPage.jsx';
 import TechHeadCompletedPage from './pages/tech-head/TechHeadCompletedPage.jsx';
 import TechHeadTeamPage from './pages/tech-head/TechHeadTeamPage.jsx';
 import TechHeadEscalationsPage from './pages/tech-head/TechHeadEscalationsPage.jsx';
+import TechHeadTeamCommentsPage from './pages/tech-head/TechHeadTeamCommentsPage.jsx';
 import TechHeadInternActivityPage from './pages/tech-head/TechHeadInternActivityPage.jsx';
 import TechHeadClientPage from './pages/tech-head/TechHeadClientPage.jsx';
 import TechHeadMockupPage from './pages/tech-head/TechHeadMockupPage.jsx';
@@ -249,6 +250,14 @@ function App() {
         element={
           <RoleRoute allowedRoles={['tech_head']}>
             <TechHeadEscalationsPage />
+          </RoleRoute>
+        }
+      />
+      <Route
+        path="/dashboard/tech-head/team-comments"
+        element={
+          <RoleRoute allowedRoles={['tech_head']}>
+            <TechHeadTeamCommentsPage />
           </RoleRoute>
         }
       />

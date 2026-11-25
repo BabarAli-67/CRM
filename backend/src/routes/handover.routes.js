@@ -160,7 +160,7 @@ router.post(
 
 router.post(
   '/:id/comments',
-  restrictTo('cst_manager', 'tech_team', 'super_admin'),
+  restrictTo('cst_manager', 'tech_team', 'tech_head', 'super_admin'),
   (req, res, next) => {
     clientCommentUpload.array('files', 5)(req, res, (err) => {
       if (err) {
@@ -177,13 +177,13 @@ router.post(
 
 router.patch(
   '/:id/comments/read',
-  restrictTo('cst_manager', 'tech_team', 'super_admin'),
+  restrictTo('cst_manager', 'tech_team', 'tech_head', 'super_admin'),
   markClientCommentsRead
 );
 
 router.get(
   '/:id/comments/:commentId/files/:filename',
-  restrictTo('cst_manager', 'tech_team', 'super_admin', 'admin'),
+  restrictTo('cst_manager', 'tech_team', 'tech_head', 'super_admin', 'admin'),
   serveClientCommentAttachment
 );
 

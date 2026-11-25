@@ -10,9 +10,12 @@ import {
   createMockupRequest,
   forwardMockupToSender,
   getMockupBadges,
+  getMockupNotifications,
   listAssignedMockups,
   listMyMockups,
   listTechHeadMockups,
+  markMockupViewed,
+  markMyMockupsViewed,
   serveMockupFile,
   submitMockupUrl,
 } from '../controllers/mockup.controller.js';
@@ -45,6 +48,18 @@ router.post(
 router.get('/mine', restrictTo('closer', 'cst_manager'), listMyMockups);
 
 router.get(
+  '/notifications',
+  restrictTo('closer', 'cst_manager'),
+  getMockupNotifications
+);
+
+router.patch(
+  '/mine/viewed',
+  restrictTo('closer', 'cst_manager'),
+  markMyMockupsViewed
+);
+
+router.get(
   '/tech-head',
   restrictTo('tech_head', 'super_admin'),
   listTechHeadMockups
@@ -64,6 +79,12 @@ router.patch(
   '/:id/forward',
   restrictTo('tech_head', 'super_admin'),
   forwardMockupToSender
+);
+
+router.patch(
+  '/:id/viewed',
+  restrictTo('closer', 'cst_manager'),
+  markMockupViewed
 );
 
 router.get(

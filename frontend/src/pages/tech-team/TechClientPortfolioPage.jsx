@@ -90,9 +90,6 @@ export default function TechClientPortfolioPage() {
   };
 
   const unread = Number(lead?.unreadCommentCount) || 0;
-  const taskNotes = Array.isArray(lead?.handover?.techTaskNotes)
-    ? lead.handover.techTaskNotes
-    : [];
 
   return (
     <TechTeamShell title="Client Portfolio">
@@ -142,30 +139,8 @@ export default function TechClientPortfolioPage() {
               <OpsStatusBadges handover={lead.handover} className="mt-3" />
               <p className="mt-2 text-xs text-zinc-500">
                 Work fields only · billing hidden from Tech · statuses set by
-                Tech Head
+                Tech Head · forwards appear in Comments
               </p>
-              {taskNotes.length > 0 && workspaceJd === 'SEO Expert' ? (
-                <div className="mt-4 space-y-2 border-t border-zinc-800 pt-4">
-                  <p className="text-[11px] font-medium uppercase tracking-wide text-zinc-500">
-                    Task notes from Tech Head
-                  </p>
-                  {taskNotes.map((note) => (
-                    <div
-                      key={note.noteId}
-                      className="rounded-lg border border-orange-500/25 bg-orange-500/5 px-3 py-2.5"
-                    >
-                      <p className="whitespace-pre-wrap text-sm text-zinc-200">
-                        {note.body}
-                      </p>
-                      {note.guidance ? (
-                        <p className="mt-1.5 text-xs text-orange-200/90">
-                          Guidance: {note.guidance}
-                        </p>
-                      ) : null}
-                    </div>
-                  ))}
-                </div>
-              ) : null}
             </div>
 
             <div

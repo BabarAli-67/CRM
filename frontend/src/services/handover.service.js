@@ -162,13 +162,13 @@ export const clientCommentAttachmentUrl = (leadId, commentId, filename) =>
     filename
   )}`;
 
-/** Deep-link to the shared Comments tab for CST or Tech. */
+/** Deep-link to the shared Comments tab for CST / Tech Head / Tech Team. */
 export const clientCommentsPath = (role, leadId) => {
   if (role === 'tech_team') {
     return `/dashboard/tech-team/client/${leadId}?tab=comments`;
   }
   if (role === 'tech_head') {
-    return `/dashboard/tech-head/escalations`;
+    return `/dashboard/tech-head/client/${leadId}?tab=comments`;
   }
   return `/dashboard/cst-manager/client/${leadId}?tab=comments&from=onboard`;
 };

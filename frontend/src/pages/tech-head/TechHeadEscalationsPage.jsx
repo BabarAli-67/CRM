@@ -1,12 +1,15 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { MessageSquare } from 'lucide-react';
 import ProjectNumberBadge from '../../components/tech/ProjectNumberBadge.jsx';
 import TechProjectsFilterBar from '../../components/tech/TechProjectsFilterBar.jsx';
 import TechHeadShell from '../../components/tech-head/TechHeadShell.jsx';
 import {
   forwardEscalation,
   getCstEscalations,
+  listTechTeam,
+  TECH_JD_OPTIONS,
 } from '../../services/techHead.service.js';
 import { matchesTechSearch } from '../../utils/techProjectFilters.util.js';
 
@@ -44,17 +47,54 @@ export default function TechHeadEscalationsPage() {
     refetchInterval: 20_000,
   });
 
+  const { data: team = [] } = useQuery({
+    queryKey: ['techHeadTeam'],
+    queryFn: listTechTeam,
+    staleTime: 60_000,
+  });
+
+  const teamByJd = useMemo(() => {
+    const map = {};
+    for (const jd of TECH_JD_OPTIONS) map[jd] = [];
+    for (const member of team) {
+      const jd = member.jd || 'Other';
+      if (!map[jd]) map[jd] = [];
+      map[jd].push(member);
+    }
+    return map;
+  }, [team]);
+
+  const [forwardingKey, setForwardingKey] = useState(null);
+
   const mutation = useMutation({
     mutationFn: ({ leadId, commentId, assignToUserId, guidance }) =>
       forwardEscalation(leadId, { commentId, assignToUserId, guidance }),
-    onSuccess: () => {
-      setMessage('Forwarded to specialist.');
+    onSuccess: (_data, vars) => {
+      setMessage('Forwarded to specialist Comments thread.');
       setError('');
+      setForwardingKey(null);
+      if (vars) {
+        const key = `${vars.leadId}:${vars.commentId}`;
+        setDrafts((prev) => ({
+          ...prev,
+          [key]: {
+            ...(prev[key] || {}),
+            assignToUserId: '',
+            department: '',
+            guidance: '',
+          },
+        }));
+      }
       queryClient.invalidateQueries({ queryKey: ['techHeadEscalations'] });
+      queryClient.invalidateQueries({ queryKey: ['techHeadBadges'] });
       queryClient.invalidateQueries({ queryKey: ['myProjects'] });
+      queryClient.invalidateQueries({ queryKey: ['techHeadAssigned'] });
+      queryClient.invalidateQueries({ queryKey: ['techHeadQueue'] });
+      queryClient.invalidateQueries({ queryKey: ['commentNotifications'] });
     },
     onError: (err) => {
       setMessage('');
+      setForwardingKey(null);
       setError(err?.response?.data?.message || 'Failed to forward.');
     },
   });
@@ -72,15 +112,15 @@ export default function TechHeadEscalationsPage() {
   };
 
   return (
-    <TechHeadShell title="CST Escalations">
+    <TechHeadShell title="CST Comments">
       <section className="w-full rounded-2xl border border-zinc-800/80 bg-zinc-900/50 p-6 shadow-xl sm:p-8">
         <div className="mb-6">
           <h2 className="font-display text-xl font-semibold text-white">
-            CST Escalations / Comments
+            CST Comments
           </h2>
           <p className="mt-1 text-sm text-zinc-500">
-            Comments where CST mentioned @Tech Head — forward to an assigned
-            specialist with optional guidance.
+            All CST client comments — reply in the thread or forward to a
+            department specialist with optional guidance.
           </p>
         </div>
 
@@ -107,21 +147,22 @@ export default function TechHeadEscalationsPage() {
           <p className="py-12 text-center text-sm text-zinc-500">Loading…</p>
         ) : isError ? (
           <p className="py-12 text-center text-sm text-red-400">
-            {loadError?.response?.data?.message || 'Failed to load escalations.'}
+            {loadError?.response?.data?.message || 'Failed to load CST comments.'}
           </p>
         ) : rows.length === 0 ? (
           <p className="py-12 text-center text-sm text-zinc-500">
             {items.length === 0
-              ? 'No @Tech Head escalations yet.'
-              : 'No escalations match the current filters.'}
+              ? 'No CST comments yet.'
+              : 'No CST comments match the current filters.'}
           </p>
         ) : (
           <ul className="space-y-4">
             {rows.map((item) => {
               const key = `${item.leadId}:${item.commentId}`;
               const draft = drafts[key] || {};
-              const assignees = Array.isArray(item.assignees)
-                ? item.assignees
+              const selectedJd = draft.department || '';
+              const specialists = selectedJd
+                ? teamByJd[selectedJd] || []
                 : [];
               return (
                 <li
@@ -133,7 +174,7 @@ export default function TechHeadEscalationsPage() {
                       <div className="flex flex-wrap items-center gap-2">
                         <ProjectNumberBadge lead={item} />
                         <Link
-                          to={`/dashboard/tech-head/client/${item.leadId}`}
+                          to={`/dashboard/tech-head/client/${item.leadId}?tab=comments&from=cst-comments`}
                           className="font-display font-semibold text-white hover:text-orange-300"
                         >
                           {item.businessName}
@@ -144,12 +185,22 @@ export default function TechHeadEscalationsPage() {
                       </p>
                     </div>
                     <span className="rounded-full bg-[#F25E26]/15 px-2.5 py-0.5 text-[11px] font-semibold text-[#F25E26] ring-1 ring-[#F25E26]/35">
-                      @Tech Head
+                      CST
                     </span>
                   </div>
                   <p className="mt-3 whitespace-pre-wrap text-sm text-zinc-200">
                     {item.body}
                   </p>
+
+                  <div className="mt-3">
+                    <Link
+                      to={`/dashboard/tech-head/client/${item.leadId}?tab=comments&from=cst-comments`}
+                      className="inline-flex items-center gap-2 rounded-xl bg-orange-600/90 px-4 py-2 text-sm font-semibold text-white transition hover:bg-orange-500"
+                    >
+                      <MessageSquare className="h-4 w-4" aria-hidden />
+                      Open Comments & Reply
+                    </Link>
+                  </div>
 
                   {Array.isArray(item.forwards) && item.forwards.length > 0 ? (
                     <div className="mt-3 space-y-1.5">
@@ -169,24 +220,45 @@ export default function TechHeadEscalationsPage() {
                     </div>
                   ) : null}
 
-                  <div className="mt-4 grid gap-2 sm:grid-cols-[1fr_1fr_auto]">
+                  <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-[1fr_1fr_1fr_auto]">
+                    <select
+                      value={selectedJd}
+                      onChange={(e) =>
+                        setDraft(key, {
+                          department: e.target.value,
+                          assignToUserId: '',
+                        })
+                      }
+                      className={fieldClass}
+                    >
+                      <option value="">Department…</option>
+                      {TECH_JD_OPTIONS.map((jd) => (
+                        <option key={jd} value={jd}>
+                          {jd}
+                          {teamByJd[jd]?.length
+                            ? ` (${teamByJd[jd].length})`
+                            : ''}
+                        </option>
+                      ))}
+                    </select>
                     <select
                       value={draft.assignToUserId || ''}
                       onChange={(e) =>
                         setDraft(key, { assignToUserId: e.target.value })
                       }
                       className={fieldClass}
-                      disabled={assignees.length === 0}
+                      disabled={!selectedJd}
                     >
                       <option value="">
-                        {assignees.length
-                          ? 'Assign to specialist…'
-                          : 'No assignees on this client'}
+                        {!selectedJd
+                          ? 'Select department first…'
+                          : specialists.length
+                            ? 'Specialist…'
+                            : 'No specialists in this department'}
                       </option>
-                      {assignees.map((a) => (
+                      {specialists.map((a) => (
                         <option key={a._id} value={a._id}>
-                          {a.fullName || a._id}
-                          {a.jd ? ` · ${a.jd}` : ''}
+                          {a.fullName || a.username || a._id}
                         </option>
                       ))}
                     </select>
@@ -203,20 +275,25 @@ export default function TechHeadEscalationsPage() {
                       type="button"
                       disabled={
                         mutation.isPending ||
+                        forwardingKey === key ||
                         !draft.assignToUserId ||
-                        assignees.length === 0
+                        !selectedJd
                       }
-                      onClick={() =>
+                      onClick={() => {
+                        if (mutation.isPending || forwardingKey) return;
+                        setForwardingKey(key);
                         mutation.mutate({
                           leadId: item.leadId,
                           commentId: item.commentId,
                           assignToUserId: draft.assignToUserId,
                           guidance: draft.guidance,
-                        })
-                      }
+                        });
+                      }}
                       className="rounded-xl bg-orange-600 px-4 py-2 text-sm font-semibold text-white hover:bg-orange-500 disabled:opacity-50"
                     >
-                      Forward to Specialist
+                      {forwardingKey === key
+                        ? 'Forwarding…'
+                        : 'Forward to Specialist'}
                     </button>
                   </div>
                 </li>

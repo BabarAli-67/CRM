@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   createMockupRequest,
   listMyMockups,
+  markMyMockupsViewed,
 } from '../../services/mockup.service.js';
 import MockupLogoPreview from './MockupLogoPreview.jsx';
 import MockupStatusBadge from './MockupStatusBadge.jsx';
@@ -47,6 +48,26 @@ export default function MockupRequesterPanel() {
     queryFn: listMyMockups,
     refetchInterval: 20_000,
   });
+
+  // Opening the Mockup tab clears unread delivery badges / bell items
+  useEffect(() => {
+    let cancelled = false;
+    const markViewed = async () => {
+      try {
+        await markMyMockupsViewed();
+        if (cancelled) return;
+        queryClient.invalidateQueries({ queryKey: ['mockupNotifications'] });
+        queryClient.invalidateQueries({ queryKey: ['mockupBadges'] });
+        queryClient.invalidateQueries({ queryKey: ['myMockups'] });
+      } catch {
+        // Non-blocking
+      }
+    };
+    markViewed();
+    return () => {
+      cancelled = true;
+    };
+  }, [queryClient]);
 
   const createMutation = useMutation({
     mutationFn: createMockupRequest,

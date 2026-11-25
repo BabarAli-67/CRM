@@ -68,6 +68,75 @@ export const isUserAssignedTech = (lead, userId) => {
   return getAssignedTechIdList(lead).includes(uid);
 };
 
+export const commentAuthorRole = (comment) => {
+  const by = comment?.createdBy;
+  if (by && typeof by === 'object' && by.role) return by.role;
+  return null;
+};
+
+export const isTechForwardHandoffComment = (comment) =>
+  /^\[Forwarded from CST/i.test(String(comment?.body || '').trim());
+
+/**
+ * Resolve comment lane. Explicit `visibility` wins; legacy rows are inferred.
+ * - cst: CST ↔ Tech Head only
+ * - tech: Tech Head ↔ specialists (incl. forwards)
+ * - both: visible on both lanes
+ */
+export const resolveCommentVisibility = (comment) => {
+  const explicit = comment?.visibility;
+  if (explicit === 'cst' || explicit === 'tech' || explicit === 'both') {
+    return explicit;
+  }
+
+  const r = commentAuthorRole(comment);
+  if (r === 'tech_team') return 'tech';
+  if (r === 'cst_manager') return 'cst';
+  if (r === 'super_admin' || r === 'admin') {
+    if (isTechForwardHandoffComment(comment)) return 'tech';
+    return 'cst';
+  }
+  if (r === 'tech_head') {
+    if (isTechForwardHandoffComment(comment)) return 'tech';
+    const mentions = Array.isArray(comment?.mentions) ? comment.mentions : [];
+    const hasTech = mentions.some((m) => m?.role === 'tech_team');
+    const hasCst = mentions.some((m) => m?.role === 'cst_manager');
+    if (hasTech && hasCst) return 'both';
+    if (hasTech) return 'tech';
+    // Plain Tech Head replies default to the CST lane
+    return 'cst';
+  }
+  return 'both';
+};
+
+/**
+ * Department privacy filter for client project comments.
+ * - CST: CST ↔ Tech Head only (never forwards / Tech Team)
+ * - Tech Team: Tech Head↔Tech only (never raw CST / CST-lane Tech Head chats)
+ * - Tech Head / SA / Admin: full thread
+ */
+export const filterCommentsForViewerRole = (comments, role) => {
+  const rows = Array.isArray(comments) ? comments : [];
+  if (role === 'cst_manager') {
+    return rows.filter((c) => {
+      if (commentAuthorRole(c) === 'tech_team') return false;
+      if (isTechForwardHandoffComment(c)) return false;
+      const v = resolveCommentVisibility(c);
+      return v === 'cst' || v === 'both';
+    });
+  }
+  if (role === 'tech_team') {
+    return rows.filter((c) => {
+      const r = commentAuthorRole(c);
+      if (r === 'cst_manager') return false;
+      if (r === 'tech_team') return true;
+      const v = resolveCommentVisibility(c);
+      return v === 'tech' || v === 'both';
+    });
+  }
+  return rows;
+};
+
 /**
  * Strip contact + GMB + ALL financial / payment / retention data for
  * Tech Head + Tech Specialist.

@@ -771,6 +771,15 @@ const leadSchema = new mongoose.Schema(
             {
               commentId: { type: String, required: true, trim: true },
               body: { type: String, required: true, trim: true },
+              /**
+               * Lane privacy: cst = CST↔Tech Head, tech = Tech Head↔Specialists,
+               * both = visible to CST and Tech Team.
+               */
+              visibility: {
+                type: String,
+                enum: ['cst', 'tech', 'both'],
+                default: 'both',
+              },
               mentions: {
                 type: [
                   {
@@ -866,6 +875,8 @@ const leadSchema = new mongoose.Schema(
             {
               noteId: { type: String, required: true, trim: true },
               commentId: { type: String, default: null, trim: true },
+              /** Links to the single Comments-thread handoff bubble (prevents duplicates). */
+              forwardCommentId: { type: String, default: null, trim: true },
               body: { type: String, required: true, trim: true },
               guidance: { type: String, default: null, trim: true },
               assignedToUserId: {

@@ -6,6 +6,7 @@ import {
   LayoutTemplate,
   Users,
   FolderKanban,
+  MessageSquare,
   MessageSquareWarning,
   UserRound,
 } from 'lucide-react';
@@ -60,9 +61,15 @@ export default function TechHeadShell({ title, children }) {
       },
       {
         to: '/dashboard/tech-head/escalations',
-        label: 'CST Escalations',
+        label: 'CST Comments',
         icon: MessageSquareWarning,
         badge: badges?.escalationUnread ?? 0,
+      },
+      {
+        to: '/dashboard/tech-head/team-comments',
+        label: 'Team Comments',
+        icon: MessageSquare,
+        badge: badges?.teamCommentUnread ?? 0,
       },
       {
         to: '/dashboard/tech-head/intern-activity',

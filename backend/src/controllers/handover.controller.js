@@ -16,6 +16,8 @@ import {
   appendInternActivityIfNeeded,
   applyDeveloperToSeoHandover,
   emitToAllTechHeads,
+  filterCommentsForViewerRole,
+  getAssignedTechIdList,
   isUserAssignedTech,
   toTechSafeClient,
   canUseSeoPortfolioTools,
@@ -151,7 +153,13 @@ export const getHandoverQueue = asyncHandler(async (req, res) => {
   res.status(200).json(
     new ApiResponse(
       200,
-      { leads: attachUnreadCommentCount(leads, req.user._id) },
+      {
+        leads: attachUnreadCommentCount(
+          leads,
+          req.user._id,
+          req.user.role === 'cst_manager' ? 'cst_manager' : null
+        ),
+      },
       'Handover queue retrieved'
     )
   );
@@ -395,10 +403,13 @@ const commentAuthorId = (comment) => {
   return String(by);
 };
 
-const unreadCommentCountForUser = (lead, userId) => {
-  const comments = Array.isArray(lead?.handover?.comments)
+const unreadCommentCountForUser = (lead, userId, viewerRole = null) => {
+  const raw = Array.isArray(lead?.handover?.comments)
     ? lead.handover.comments
     : [];
+  const comments = viewerRole
+    ? filterCommentsForViewerRole(raw, viewerRole)
+    : raw;
   if (!comments.length || !userId) return 0;
   const uid = String(userId);
   const reads = Array.isArray(lead?.handover?.commentReads)
@@ -417,10 +428,23 @@ const unreadCommentCountForUser = (lead, userId) => {
   }).length;
 };
 
-const attachUnreadCommentCount = (leads, userId) =>
+const attachUnreadCommentCount = (leads, userId, viewerRole = null) =>
   (Array.isArray(leads) ? leads : []).map((lead) => {
     const obj = typeof lead?.toObject === 'function' ? lead.toObject() : { ...lead };
-    obj.unreadCommentCount = unreadCommentCountForUser(obj, userId);
+    obj.unreadCommentCount = unreadCommentCountForUser(
+      obj,
+      userId,
+      viewerRole
+    );
+    if (viewerRole && obj.handover) {
+      obj.handover = {
+        ...obj.handover,
+        comments: filterCommentsForViewerRole(
+          obj.handover.comments,
+          viewerRole
+        ),
+      };
+    }
     return obj;
   });
 
@@ -1894,11 +1918,13 @@ export const addClientComment = asyncHandler(async (req, res) => {
     throw new ApiError(400, 'Invalid mentions payload');
   }
 
-  // CST may only @mention Tech Head (never individual specialists).
+  // Mentions by role — Tech Team never pings CST (department privacy).
   const allowedMentionRoles =
     role === 'cst_manager'
       ? ['tech_head']
-      : [...CLIENT_COMMENT_ROLES];
+      : role === 'tech_team'
+        ? ['tech_head']
+        : [...CLIENT_COMMENT_ROLES];
 
   const mentionUsers =
     mentionIds.length > 0
@@ -1936,9 +1962,24 @@ export const addClientComment = asyncHandler(async (req, res) => {
       .replace(/\\/g, '/'),
   }));
 
+  // Lane privacy for CST ↔ Tech Head vs Tech Head ↔ Specialists
+  let visibility = 'both';
+  if (role === 'cst_manager' || role === 'super_admin') {
+    visibility = 'cst';
+  } else if (role === 'tech_team') {
+    visibility = 'tech';
+  } else if (role === 'tech_head') {
+    const hasTechMention = mentions.some((m) => m.role === 'tech_team');
+    const hasCstMention = mentions.some((m) => m.role === 'cst_manager');
+    if (hasTechMention && hasCstMention) visibility = 'both';
+    else if (hasTechMention) visibility = 'tech';
+    else visibility = 'cst';
+  }
+
   const comment = {
     commentId: randomUUID(),
     body,
+    visibility,
     mentions,
     attachments,
     createdAt: new Date(),
@@ -1973,7 +2014,11 @@ export const addClientComment = asyncHandler(async (req, res) => {
   const authorName =
     req.user.fullName ||
     req.user.username ||
-    (role === 'tech_team' ? 'Tech Team' : 'CST Manager');
+    (role === 'tech_team'
+      ? 'Tech Team'
+      : role === 'tech_head'
+        ? 'Tech Head'
+        : 'CST Manager');
   const authorRole = role === 'super_admin' ? 'cst_manager' : role;
   const bodyPreview = body.slice(0, 140);
   const payloadBase = {
@@ -1994,18 +2039,46 @@ export const addClientComment = asyncHandler(async (req, res) => {
   }
 
   if (authorRole === 'cst_manager') {
-    // Only escalate when @Tech Head is mentioned — never ping individual specialists.
-    for (const m of mentions) {
-      if (m.role === 'tech_head') recipientIds.add(String(m.userId));
-    }
-  } else if (authorRole === 'tech_team' || authorRole === 'tech_head') {
-    const cstManagers = await User.find({
-      role: 'cst_manager',
+    // Always notify every Tech Head (with or without @Tech Head).
+    // Never ping individual specialists from CST.
+    const techHeads = await User.find({
+      role: 'tech_head',
       status: 'approved',
     }).select('_id');
-    for (const u of cstManagers) {
+    for (const u of techHeads) {
       if (String(u._id) !== String(req.user._id)) {
         recipientIds.add(String(u._id));
+      }
+    }
+  } else if (authorRole === 'tech_team') {
+    // Always notify every Tech Head — never expose Tech Team replies to CST.
+    const techHeads = await User.find({
+      role: 'tech_head',
+      status: 'approved',
+    }).select('_id');
+    for (const u of techHeads) {
+      if (String(u._id) !== String(req.user._id)) {
+        recipientIds.add(String(u._id));
+      }
+    }
+  } else if (authorRole === 'tech_head') {
+    // Notify by lane: CST-facing vs Tech-facing (or both).
+    if (visibility === 'cst' || visibility === 'both') {
+      const cstManagers = await User.find({
+        role: 'cst_manager',
+        status: 'approved',
+      }).select('_id');
+      for (const u of cstManagers) {
+        if (String(u._id) !== String(req.user._id)) {
+          recipientIds.add(String(u._id));
+        }
+      }
+    }
+    if (visibility === 'tech' || visibility === 'both') {
+      for (const techId of getAssignedTechIdList(lead)) {
+        if (techId !== String(req.user._id)) {
+          recipientIds.add(techId);
+        }
       }
     }
   }
@@ -2025,6 +2098,12 @@ export const addClientComment = asyncHandler(async (req, res) => {
     typeof updated?.toObject === 'function' ? updated.toObject() : updated;
   if (leadObj) {
     leadObj.unreadCommentCount = 0;
+    if (leadObj.handover) {
+      leadObj.handover.comments = filterCommentsForViewerRole(
+        leadObj.handover.comments,
+        role === 'super_admin' ? 'tech_head' : role
+      );
+    }
   }
 
   res
@@ -2139,15 +2218,17 @@ export const getCommentNotifications = asyncHandler(async (req, res) => {
     .limit(100);
 
   const uid = String(req.user._id);
+  const viewerRole = role === 'super_admin' ? 'tech_head' : role;
   const notifications = [];
 
   for (const lead of leads) {
-    const unread = unreadCommentCountForUser(lead, uid);
+    const unread = unreadCommentCountForUser(lead, uid, viewerRole);
     if (unread <= 0) continue;
 
-    const comments = Array.isArray(lead.handover?.comments)
-      ? [...lead.handover.comments]
-      : [];
+    const comments = filterCommentsForViewerRole(
+      Array.isArray(lead.handover?.comments) ? lead.handover.comments : [],
+      viewerRole
+    );
     const reads = Array.isArray(lead.handover?.commentReads)
       ? lead.handover.commentReads
       : [];
@@ -2682,7 +2763,13 @@ export const getTechPipeline = asyncHandler(async (req, res) => {
   res.status(200).json(
     new ApiResponse(
       200,
-      { leads: attachUnreadCommentCount(leads, req.user._id) },
+      {
+        leads: attachUnreadCommentCount(
+          leads,
+          req.user._id,
+          req.user.role === 'cst_manager' ? 'cst_manager' : null
+        ),
+      },
       'Tech pipeline retrieved'
     )
   );
@@ -2830,10 +2917,14 @@ export const getMyProjects = asyncHandler(async (req, res) => {
     )
     .sort({ 'handover.assignedAt': 1 });
 
-  const withUnread = attachUnreadCommentCount(leads, req.user._id);
+  const withUnread = attachUnreadCommentCount(
+    leads,
+    req.user._id,
+    'tech_team'
+  );
   const safe = withUnread.map((lead) => {
     const client = toTechSafeClient(lead);
-    // Specialist only sees task notes assigned to them (never internActivity).
+    // Historical forwards still available inside Comments (not on project cards).
     const notes = Array.isArray(lead?.handover?.techTaskNotes)
       ? lead.handover.techTaskNotes
       : [];

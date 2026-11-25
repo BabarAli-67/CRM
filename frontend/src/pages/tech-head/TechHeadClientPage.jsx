@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import CstClientComments from '../../components/cst-manager/CstClientComments.jsx';
 import LivePortfolioSection, {
   mapKeywordsFromLead,
 } from '../../components/portfolio/LivePortfolioSection.jsx';
@@ -12,8 +13,27 @@ import { projectTitle } from '../../utils/projectNumber.util.js';
 
 export default function TechHeadClientPage() {
   const { id } = useParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const [keywords, setKeywords] = useState([]);
+  const tabParam = searchParams.get('tab');
+  const detailTab = tabParam === 'comments' ? 'comments' : 'work';
+  const fromParam = searchParams.get('from');
+  const backNav =
+    fromParam === 'team-comments'
+      ? {
+          to: '/dashboard/tech-head/team-comments',
+          label: 'Back to Team Comments',
+        }
+      : fromParam === 'cst-comments'
+        ? {
+            to: '/dashboard/tech-head/escalations',
+            label: 'Back to CST Comments',
+          }
+        : {
+            to: '/dashboard/tech-head/assigned',
+            label: 'Back to Assigned Projects',
+          };
 
   const {
     data: lead,
@@ -33,15 +53,36 @@ export default function TechHeadClientPage() {
     setKeywords(mapKeywordsFromLead(lead));
   }, [lead]);
 
+  const selectTab = (next) => {
+    setSearchParams(
+      (prev) => {
+        const nextParams = new URLSearchParams(prev);
+        if (next === 'comments') nextParams.set('tab', 'comments');
+        else nextParams.delete('tab');
+        return nextParams;
+      },
+      { replace: true }
+    );
+  };
+
+  const onLeadUpdated = () => {
+    // Always re-fetch tech-safe client (comment POST returns a full lead payload).
+    queryClient.invalidateQueries({ queryKey: ['techHeadClient', id] });
+    queryClient.invalidateQueries({ queryKey: ['commentNotifications'] });
+    queryClient.invalidateQueries({ queryKey: ['techHeadBadges'] });
+    queryClient.invalidateQueries({ queryKey: ['techHeadTeamComments'] });
+    queryClient.invalidateQueries({ queryKey: ['techHeadEscalations'] });
+  };
+
   return (
     <TechHeadShell title="Client Work & Reports">
       <section className="mx-auto w-full max-w-4xl space-y-6">
         <div>
           <Link
-            to="/dashboard/tech-head/assigned"
+            to={backNav.to}
             className="inline-flex items-center gap-1.5 text-sm font-medium text-orange-400 transition hover:text-orange-300"
           >
-            ← Back to Assigned Projects
+            ← {backNav.label}
           </Link>
         </div>
 
@@ -60,7 +101,7 @@ export default function TechHeadClientPage() {
             <div className="rounded-2xl border border-zinc-800/80 bg-zinc-900/50 px-6 py-5 shadow-xl">
               <div className="flex flex-wrap items-center gap-2">
                 <p className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500">
-                  Tech Head · Work & Reports
+                  Tech Head · Client
                 </p>
                 <ProjectNumberBadge lead={lead} size="lg" />
               </div>
@@ -70,29 +111,60 @@ export default function TechHeadClientPage() {
               <p className="mt-1 text-sm text-zinc-400">
                 Status: {lead.statusLabel || lead.handover?.techStatus || '—'}
               </p>
+
+              <div className="mt-4 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => selectTab('work')}
+                  className={`rounded-lg px-3 py-1.5 text-sm font-semibold ring-1 ${
+                    detailTab === 'work'
+                      ? 'bg-[#F25E26]/15 text-[#F25E26] ring-[#F25E26]/40'
+                      : 'bg-zinc-900 text-zinc-400 ring-zinc-700 hover:text-zinc-200'
+                  }`}
+                >
+                  Work & Reports
+                </button>
+                <button
+                  type="button"
+                  onClick={() => selectTab('comments')}
+                  className={`rounded-lg px-3 py-1.5 text-sm font-semibold ring-1 ${
+                    detailTab === 'comments'
+                      ? 'bg-[#F25E26]/15 text-[#F25E26] ring-[#F25E26]/40'
+                      : 'bg-zinc-900 text-zinc-400 ring-zinc-700 hover:text-zinc-200'
+                  }`}
+                >
+                  Comments
+                </button>
+              </div>
             </div>
 
-            <OpsStatusEditor
-              leadId={lead._id}
-              handover={lead.handover}
-              onUpdated={(updated) => {
-                if (updated) {
-                  queryClient.setQueryData(['techHeadClient', id], updated);
-                }
-              }}
-            />
+            {detailTab === 'comments' ? (
+              <CstClientComments lead={lead} onLeadUpdated={onLeadUpdated} />
+            ) : (
+              <>
+                <OpsStatusEditor
+                  leadId={lead._id}
+                  handover={lead.handover}
+                  onUpdated={(updated) => {
+                    if (updated) {
+                      queryClient.setQueryData(['techHeadClient', id], updated);
+                    }
+                  }}
+                />
 
-            <LivePortfolioSection
-              mode="cst"
-              leadId={lead._id}
-              keywords={keywords}
-              setKeywords={setKeywords}
-              reports={
-                Array.isArray(lead.handover?.monthlyReports)
-                  ? lead.handover.monthlyReports
-                  : []
-              }
-            />
+                <LivePortfolioSection
+                  mode="cst"
+                  leadId={lead._id}
+                  keywords={keywords}
+                  setKeywords={setKeywords}
+                  reports={
+                    Array.isArray(lead.handover?.monthlyReports)
+                      ? lead.handover.monthlyReports
+                      : []
+                  }
+                />
+              </>
+            )}
           </>
         )}
       </section>

@@ -88,6 +88,8 @@ const mockupRequestSchema = new mongoose.Schema(
     assignedAt: { type: Date, default: null },
     submittedAt: { type: Date, default: null },
     deliveredAt: { type: Date, default: null },
+    /** Cleared on each delivery; set when CST/Closer views the delivered mockup. */
+    requesterViewedAt: { type: Date, default: null },
   },
   { timestamps: true }
 );

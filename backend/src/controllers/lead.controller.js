@@ -23,7 +23,10 @@ import {
 import { buildAlertFlagsForSchedule } from '../utils/alertTiming.util.js';
 import { resolvePktMonthRange } from '../utils/shiftTime.util.js';
 import { applyContractFieldsToLead } from '../utils/contract.util.js';
-import { toTechSafeClient } from '../utils/techTeam.util.js';
+import {
+  filterCommentsForViewerRole,
+  toTechSafeClient,
+} from '../utils/techTeam.util.js';
 import { randomUUID } from 'crypto';
 
 /** Parse ?month=YYYY-MM for closed-sales scoping. Defaults to current PKT month. */
@@ -999,9 +1002,15 @@ export const getLeadById = asyncHandler(async (req, res) => {
     req.user.role === 'tech_head' ||
     req.user.role === 'super_admin'
   ) {
-    const comments = Array.isArray(leadObj?.handover?.comments)
+    const viewerRole =
+      req.user.role === 'super_admin' ? 'tech_head' : req.user.role;
+    const rawComments = Array.isArray(leadObj?.handover?.comments)
       ? leadObj.handover.comments
       : [];
+    const comments = filterCommentsForViewerRole(rawComments, viewerRole);
+    if (leadObj.handover) {
+      leadObj.handover.comments = comments;
+    }
     const reads = Array.isArray(leadObj?.handover?.commentReads)
       ? leadObj.handover.commentReads
       : [];
@@ -1030,6 +1039,7 @@ export const getLeadById = asyncHandler(async (req, res) => {
   if (req.user.role === 'tech_team' || req.user.role === 'tech_head') {
     const safe = toTechSafeClient(leadObj);
     // Specialists only see task notes assigned to them; never internActivity.
+    // Notes are shown inside Comments (not My Projects cards).
     if (req.user.role === 'tech_team') {
       const notes = Array.isArray(leadObj?.handover?.techTaskNotes)
         ? leadObj.handover.techTaskNotes

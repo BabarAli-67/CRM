@@ -269,34 +269,6 @@ export default function MyProjectsPage() {
                     </div>
                   ) : null}
 
-                  {Array.isArray(project.handover?.techTaskNotes) &&
-                  project.handover.techTaskNotes.length > 0 ? (
-                    <div className="mb-4 space-y-2">
-                      <p className="text-[11px] font-medium uppercase tracking-wide text-zinc-500">
-                        Task notes from Tech Head
-                      </p>
-                      {project.handover.techTaskNotes.map((note) => (
-                        <div
-                          key={note.noteId}
-                          className="rounded-lg border border-orange-500/25 bg-orange-500/5 px-3 py-2.5"
-                        >
-                          <p className="whitespace-pre-wrap text-sm text-zinc-200">
-                            {note.body}
-                          </p>
-                          {note.guidance ? (
-                            <p className="mt-1.5 text-xs text-orange-200/90">
-                              Guidance: {note.guidance}
-                            </p>
-                          ) : null}
-                          <p className="mt-1 text-[11px] text-zinc-500">
-                            From {note.createdByName || 'Tech Head'} ·{' '}
-                            {formatPkt(note.createdAt)}
-                          </p>
-                        </div>
-                      ))}
-                    </div>
-                  ) : null}
-
                   <MilestoneStepper
                     leadId={project._id}
                     status={

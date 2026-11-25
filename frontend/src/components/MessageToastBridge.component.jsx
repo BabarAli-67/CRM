@@ -19,6 +19,10 @@ import { getSocket } from '../utils/socketClient.util.js';
 
 const TOAST_TTL_MS = 7000;
 const COMMENT_ROLES = new Set(['cst_manager', 'tech_team', 'tech_head']);
+const MOCKUP_REQUESTER_ROLES = new Set(['closer', 'cst_manager']);
+
+const mockupPathForRole = (role) =>
+  role === 'closer' ? '/dashboard/closer/mockup' : '/dashboard/cst-manager/mockup';
 
 /**
  * Global chat + CST↔Tech client-comment notifications:
@@ -173,6 +177,7 @@ export default function MessageToastBridge() {
       queryClient.invalidateQueries({ queryKey: ['myProjects'] });
       queryClient.invalidateQueries({ queryKey: ['techHeadBadges'] });
       queryClient.invalidateQueries({ queryKey: ['techHeadEscalations'] });
+      queryClient.invalidateQueries({ queryKey: ['techHeadTeamComments'] });
     };
 
     // Prefer client:comment-new (includes isMention). Mention-only event is
@@ -182,6 +187,60 @@ export default function MessageToastBridge() {
     socket.on('client:comment-new', onNew);
     return () => {
       socket.off('client:comment-new', onNew);
+    };
+  }, [queryClient, user?.role]);
+
+  // Mockup delivery → original CST / Closer requester
+  useEffect(() => {
+    const role = user?.role;
+    if (!MOCKUP_REQUESTER_ROLES.has(role)) return undefined;
+
+    const socket = getSocket();
+    const seen = new Set();
+
+    const onDelivered = (payload) => {
+      if (!payload?.mockupId) return;
+      const toastId = `mockup-${payload.mockupId}-${payload.at || Date.now()}`;
+      if (seen.has(toastId)) return;
+      seen.add(toastId);
+      window.setTimeout(() => seen.delete(toastId), TOAST_TTL_MS + 500);
+
+      playMessageChime();
+      const businessName = payload.businessName || 'Business';
+      const preview =
+        payload.preview ||
+        `Mockup ready for ${businessName} — click to view`;
+
+      setToasts((prev) => [
+        ...prev.filter((t) => t.id !== toastId),
+        {
+          id: toastId,
+          kind: 'mockup_delivered',
+          mockupId: payload.mockupId,
+          senderName: 'Mockup ready',
+          preview,
+          path: mockupPathForRole(role),
+        },
+      ]);
+
+      showBrowserNotification({
+        title: `Mockup · ${businessName}`,
+        body: preview,
+        tag: toastId,
+      });
+
+      window.setTimeout(() => {
+        setToasts((prev) => prev.filter((t) => t.id !== toastId));
+      }, TOAST_TTL_MS);
+
+      queryClient.invalidateQueries({ queryKey: ['mockupNotifications'] });
+      queryClient.invalidateQueries({ queryKey: ['mockupBadges'] });
+      queryClient.invalidateQueries({ queryKey: ['myMockups'] });
+    };
+
+    socket.on('mockup:delivered', onDelivered);
+    return () => {
+      socket.off('mockup:delivered', onDelivered);
     };
   }, [queryClient, user?.role]);
 
@@ -242,9 +301,10 @@ export default function MessageToastBridge() {
         preview: payload.guidance
           ? `${payload.businessName || 'Client'} — ${payload.guidance}`
           : `${payload.businessName || 'Client'} — ${payload.bodyPreview || 'New task note'}`,
-        path: `/dashboard/tech-team/client/${payload.leadId}`,
+        path: `/dashboard/tech-team/client/${payload.leadId}?tab=comments`,
       });
       queryClient.invalidateQueries({ queryKey: ['myProjects'] });
+      queryClient.invalidateQueries({ queryKey: ['commentNotifications'] });
       queryClient.invalidateQueries({
         queryKey: ['lead', payload.leadId, 'tech-portfolio'],
       });
@@ -344,7 +404,9 @@ export default function MessageToastBridge() {
                 ? 'Open queue'
                 : toast.kind === 'tech_task'
                   ? 'Open project'
-                  : 'Open chat'}
+                  : toast.kind === 'mockup_delivered'
+                    ? 'Open Mockup'
+                    : 'Open chat'}
           </p>
         </button>
       ))}

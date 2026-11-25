@@ -37,8 +37,29 @@ export const getMockupBadges = async () => {
       pendingAssignment: 0,
       readyForReview: 0,
       assignedActive: 0,
+      deliveredUnread: 0,
     }
   );
+};
+
+export const getMockupNotifications = async () => {
+  const response = await api.get('/mockups/notifications');
+  return (
+    response.data.data || {
+      notifications: [],
+      totalUnread: 0,
+    }
+  );
+};
+
+export const markMockupViewed = async (mockupId) => {
+  const response = await api.patch(`/mockups/${mockupId}/viewed`);
+  return response.data.data.mockup;
+};
+
+export const markMyMockupsViewed = async () => {
+  const response = await api.patch('/mockups/mine/viewed');
+  return response.data.data;
 };
 
 export const assignMockup = async (mockupId, techId) => {

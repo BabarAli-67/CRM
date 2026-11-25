@@ -14,14 +14,27 @@ const fieldClass =
 
 /** CST Manager may only @mention Tech Head (never individual specialists). */
 const CST_MENTION_ROLES = new Set(['tech_head']);
-/** Tech Head / Tech Team may mention CST or Tech Head on the shared thread. */
-const TECH_MENTION_ROLES = new Set(['cst_manager', 'tech_head']);
+/** Tech Team may only @mention Tech Head (never CST — privacy). */
+const TECH_TEAM_MENTION_ROLES = new Set(['tech_head']);
+/** Tech Head may mention CST or assigned specialists. */
+const TECH_HEAD_MENTION_ROLES = new Set(['cst_manager', 'tech_team']);
 
 const roleLabel = (role) => {
-  if (role === 'tech_team') return 'Tech';
-  if (role === 'tech_head') return 'Tech Head';
+  if (role === 'tech_team') return 'TECH';
+  if (role === 'tech_head') return 'TECH HEAD';
   if (role === 'cst_manager') return 'CST';
-  return role || 'User';
+  if (role === 'super_admin') return 'ADMIN';
+  if (role === 'admin') return 'ADMIN';
+  if (role === 'closer') return 'CLOSER';
+  if (role === 'sales_agent') return 'AGENT';
+  return String(role || 'USER').replace(/_/g, ' ').toUpperCase();
+};
+
+const commentAuthorId = (comment) => {
+  const by = comment?.createdBy;
+  if (!by) return null;
+  if (typeof by === 'object' && by._id != null) return String(by._id);
+  return String(by);
 };
 
 const formatPkt = (value) => {
@@ -54,24 +67,52 @@ export default function CstClientComments({ lead, onLeadUpdated }) {
   const [message, setMessage] = useState('');
 
   const isCstAuthor = user?.role === 'cst_manager';
+  const isTechHead = user?.role === 'tech_head';
   const allowedMentionRoles = isCstAuthor
     ? CST_MENTION_ROLES
-    : TECH_MENTION_ROLES;
+    : isTechHead
+      ? TECH_HEAD_MENTION_ROLES
+      : TECH_TEAM_MENTION_ROLES;
+
+  const assignedSpecialistIds = useMemo(() => {
+    const ids = new Set();
+    const multi = Array.isArray(lead?.handover?.assignedTechIds)
+      ? lead.handover.assignedTechIds
+      : [];
+    for (const t of multi) {
+      const id = typeof t === 'object' ? t?._id : t;
+      if (id) ids.add(String(id));
+    }
+    const legacy = lead?.handover?.assignedTechId;
+    const legacyId = typeof legacy === 'object' ? legacy?._id : legacy;
+    if (legacyId) ids.add(String(legacyId));
+    return ids;
+  }, [lead?.handover?.assignedTechIds, lead?.handover?.assignedTechId]);
 
   const { data: users = [] } = useQuery({
-    queryKey: ['mentionUsers', isCstAuthor ? 'cst-tech-head' : 'tech-cst'],
+    queryKey: [
+      'mentionUsers',
+      isCstAuthor
+        ? 'cst-tech-head'
+        : isTechHead
+          ? 'tech-head-cst-team'
+          : 'tech-team-tech-head',
+    ],
     queryFn: () => getUsers({ status: 'approved' }),
     staleTime: 60_000,
   });
 
   const mentionable = useMemo(
     () =>
-      (users || []).filter(
-        (u) =>
-          allowedMentionRoles.has(u.role) &&
-          String(u._id) !== String(user?._id || user?.id)
-      ),
-    [users, user, allowedMentionRoles]
+      (users || []).filter((u) => {
+        if (String(u._id) === String(user?._id || user?.id)) return false;
+        if (!allowedMentionRoles.has(u.role)) return false;
+        if (isTechHead && u.role === 'tech_team') {
+          return assignedSpecialistIds.has(String(u._id));
+        }
+        return true;
+      }),
+    [users, user, allowedMentionRoles, isTechHead, assignedSpecialistIds]
   );
 
   const filteredMentions = useMemo(() => {
@@ -85,14 +126,59 @@ export default function CstClientComments({ lead, onLeadUpdated }) {
       .slice(0, 8);
   }, [mentionable, mentionQuery]);
 
+  const currentUserId = String(user?._id || user?.id || '');
+  const isTechTeam = user?.role === 'tech_team';
+
   const comments = useMemo(() => {
-    const rows = Array.isArray(lead?.handover?.comments)
+    const raw = Array.isArray(lead?.handover?.comments)
       ? [...lead.handover.comments]
       : [];
-    return rows.sort(
-      (a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0)
+
+    const isForwardHandoff = (c) =>
+      /^\[Forwarded from CST/i.test(String(c?.body || '').trim());
+
+    const resolveVisibility = (c) => {
+      if (c?.visibility === 'cst' || c?.visibility === 'tech' || c?.visibility === 'both') {
+        return c.visibility;
+      }
+      const r = c?.createdBy?.role;
+      if (r === 'tech_team') return 'tech';
+      if (r === 'cst_manager') return 'cst';
+      if (r === 'tech_head' || r === 'super_admin' || r === 'admin') {
+        if (isForwardHandoff(c)) return 'tech';
+        const mentions = Array.isArray(c?.mentions) ? c.mentions : [];
+        const hasTech = mentions.some((m) => m?.role === 'tech_team');
+        const hasCst = mentions.some((m) => m?.role === 'cst_manager');
+        if (hasTech && hasCst) return 'both';
+        if (hasTech) return 'tech';
+        return 'cst';
+      }
+      return 'both';
+    };
+
+    // Department privacy (matches backend lane filter; no synthetic task-note bubbles)
+    const visible = raw.filter((c) => {
+      const r = c?.createdBy?.role;
+      if (isCstAuthor) {
+        if (r === 'tech_team') return false;
+        if (isForwardHandoff(c)) return false;
+        const v = resolveVisibility(c);
+        return v === 'cst' || v === 'both';
+      }
+      if (isTechTeam) {
+        if (r === 'cst_manager') return false;
+        if (r === 'tech_team') return true;
+        const v = resolveVisibility(c);
+        return v === 'tech' || v === 'both';
+      }
+      return true;
+    });
+
+    // Chat order: oldest → newest
+    return visible.sort(
+      (a, b) => new Date(a.createdAt || 0) - new Date(b.createdAt || 0)
     );
-  }, [lead?.handover?.comments]);
+  }, [lead?.handover?.comments, isCstAuthor, isTechTeam]);
 
   // Mark thread as read while the Comments tab is open
   useEffect(() => {
@@ -104,6 +190,9 @@ export default function CstClientComments({ lead, onLeadUpdated }) {
         await markClientCommentsRead(lead._id);
         if (cancelled) return;
         queryClient.invalidateQueries({ queryKey: ['commentNotifications'] });
+        queryClient.invalidateQueries({ queryKey: ['techHeadBadges'] });
+        queryClient.invalidateQueries({ queryKey: ['techHeadTeamComments'] });
+        queryClient.invalidateQueries({ queryKey: ['techHeadEscalations'] });
         queryClient.invalidateQueries({ queryKey: ['handoverQueue'] });
         queryClient.invalidateQueries({ queryKey: ['cstTechPipeline'] });
         queryClient.invalidateQueries({ queryKey: ['myProjects'] });
@@ -149,6 +238,9 @@ export default function CstClientComments({ lead, onLeadUpdated }) {
       setMessage('Comment posted.');
       onLeadUpdated?.(updated);
       queryClient.invalidateQueries({ queryKey: ['commentNotifications'] });
+      queryClient.invalidateQueries({ queryKey: ['techHeadBadges'] });
+      queryClient.invalidateQueries({ queryKey: ['techHeadTeamComments'] });
+      queryClient.invalidateQueries({ queryKey: ['techHeadEscalations'] });
       queryClient.invalidateQueries({ queryKey: ['handoverQueue'] });
       queryClient.invalidateQueries({ queryKey: ['cstTechPipeline'] });
       queryClient.invalidateQueries({ queryKey: ['myProjects'] });
@@ -219,8 +311,10 @@ export default function CstClientComments({ lead, onLeadUpdated }) {
         </h2>
         <p className="mt-1 text-sm text-zinc-500">
           {isCstAuthor
-            ? 'Escalate to Tech Head only — type @ to mention @Tech Head. Attach PDF, Docs, or Images.'
-            : 'Shared CST ↔ Tech thread. Type @ to mention CST Manager or Tech Head. Attach PDF, Docs, or Images.'}
+            ? 'CST ↔ Tech Head only — every comment alerts Tech Head. Optional @Tech Head. Attach PDF, Docs, or Images.'
+            : isTechHead
+              ? 'Hub thread — reply to CST or forward work to specialists. Type @ to mention CST or an assigned specialist.'
+              : 'Tech Head ↔ Tech Team only — replies alert Tech Head (hidden from CST). Attach PDF, Docs, or Images.'}
         </p>
 
         <div className="relative mt-4">
@@ -231,8 +325,10 @@ export default function CstClientComments({ lead, onLeadUpdated }) {
             onChange={(e) => onBodyChange(e.target.value)}
             placeholder={
               isCstAuthor
-                ? 'Write a comment… use @ to mention Tech Head'
-                : 'Write a comment… use @ to mention CST or Tech Head'
+                ? 'Write a comment for Tech Head…'
+                : isTechHead
+                  ? 'Write a comment… use @ to mention CST or a specialist'
+                  : 'Write a comment for Tech Head…'
             }
             className={`${fieldClass} resize-y`}
           />
@@ -322,68 +418,121 @@ export default function CstClientComments({ lead, onLeadUpdated }) {
         ) : null}
       </div>
 
-      <div className="space-y-3">
+      <div className="rounded-2xl border border-zinc-800/80 bg-[#0A0A0A]/80 p-3 sm:p-4">
         {comments.length === 0 ? (
-          <p className="rounded-2xl border border-dashed border-zinc-800 px-4 py-10 text-center text-sm text-zinc-500">
+          <p className="rounded-xl border border-dashed border-zinc-800 px-4 py-10 text-center text-sm text-zinc-500">
             No comments yet.
           </p>
         ) : (
-          comments.map((c) => {
-            const author =
-              c.createdBy?.fullName ||
-              c.createdBy?.username ||
-              'Team member';
-            const authorRole = c.createdBy?.role;
-            return (
-              <article
-                key={c.commentId}
-                className="rounded-2xl border border-zinc-800/80 bg-[#111111] px-4 py-3.5"
-              >
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <p className="text-sm font-semibold text-white">
-                    {author}
-                    {authorRole ? (
-                      <span className="ml-2 text-[11px] font-semibold uppercase tracking-wide text-[#F25E26]">
-                        {roleLabel(authorRole)}
-                      </span>
+          <ul className="flex flex-col gap-3">
+            {comments.map((c) => {
+              const authorId = commentAuthorId(c);
+              const isOwn =
+                Boolean(currentUserId) &&
+                Boolean(authorId) &&
+                authorId === currentUserId;
+              const authorName =
+                c.createdBy?.fullName ||
+                c.createdBy?.username ||
+                'Team member';
+              const authorRole = c.createdBy?.role;
+
+              return (
+                <li
+                  key={c.commentId}
+                  className={`flex w-full ${isOwn ? 'justify-end' : 'justify-start'}`}
+                >
+                  <article
+                    className={`w-fit max-w-[75%] rounded-2xl px-3.5 py-2.5 shadow-sm sm:px-4 sm:py-3 ${
+                      isOwn
+                        ? 'rounded-br-md bg-[#F25E26]/15 ring-1 ring-[#F25E26]/35'
+                        : 'rounded-bl-md bg-zinc-900/90 ring-1 ring-zinc-700/70'
+                    }`}
+                  >
+                    <div
+                      className={`flex flex-wrap items-center gap-x-2 gap-y-1 ${
+                        isOwn ? 'justify-end' : 'justify-start'
+                      }`}
+                    >
+                      <p
+                        className={`text-sm font-semibold ${
+                          isOwn ? 'text-[#ffb899]' : 'text-white'
+                        }`}
+                      >
+                        {isOwn ? 'You' : authorName}
+                      </p>
+                      {authorRole ? (
+                        <span
+                          className={`rounded-md px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide ${
+                            isOwn
+                              ? 'bg-[#F25E26]/25 text-[#F25E26]'
+                              : 'bg-zinc-800 text-zinc-300'
+                          }`}
+                        >
+                          {roleLabel(authorRole)}
+                        </span>
+                      ) : null}
+                      <p className="text-[11px] text-zinc-500">
+                        {formatPkt(c.createdAt)} PKT
+                      </p>
+                    </div>
+
+                    <p
+                      className={`mt-1.5 whitespace-pre-wrap text-sm leading-relaxed ${
+                        isOwn ? 'text-orange-50' : 'text-zinc-200'
+                      }`}
+                    >
+                      {c.body}
+                    </p>
+
+                    {Array.isArray(c.mentions) && c.mentions.length > 0 ? (
+                      <div
+                        className={`mt-2 flex flex-wrap gap-1.5 ${
+                          isOwn ? 'justify-end' : 'justify-start'
+                        }`}
+                      >
+                        {c.mentions.map((m) => (
+                          <span
+                            key={String(m.userId)}
+                            className={`rounded-full px-2 py-0.5 text-[11px] ${
+                              isOwn
+                                ? 'bg-[#F25E26]/20 text-[#ffc4a8]'
+                                : 'bg-zinc-800 text-zinc-300'
+                            }`}
+                          >
+                            @{m.username || m.fullName} · {roleLabel(m.role)}
+                          </span>
+                        ))}
+                      </div>
                     ) : null}
-                  </p>
-                  <p className="text-xs text-zinc-500">
-                    {formatPkt(c.createdAt)} PKT
-                  </p>
-                </div>
-                <p className="mt-2 whitespace-pre-wrap text-sm text-zinc-200">
-                  {c.body}
-                </p>
-                {Array.isArray(c.mentions) && c.mentions.length > 0 ? (
-                  <div className="mt-2 flex flex-wrap gap-1.5">
-                    {c.mentions.map((m) => (
-                      <span
-                        key={String(m.userId)}
-                        className="rounded-full bg-zinc-800 px-2 py-0.5 text-[11px] text-zinc-300"
+
+                    {Array.isArray(c.attachments) && c.attachments.length > 0 ? (
+                      <div
+                        className={`mt-2.5 flex flex-wrap gap-2 ${
+                          isOwn ? 'justify-end' : 'justify-start'
+                        }`}
                       >
-                        @{m.username || m.fullName} · {roleLabel(m.role)}
-                      </span>
-                    ))}
-                  </div>
-                ) : null}
-                {Array.isArray(c.attachments) && c.attachments.length > 0 ? (
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    {c.attachments.map((f) => (
-                      <button
-                        key={f.storedFilename}
-                        type="button"
-                        onClick={() => openAttachment(c, f)}
-                        className="rounded-lg border border-zinc-700 px-2.5 py-1 text-xs font-semibold text-[#F25E26] hover:bg-[#F25E26]/10"
-                      >
-                        {f.originalName || f.storedFilename}
-                      </button>
-                    ))}
-                  </div>
-                ) : null}
-              </article>
-            );
-          })
+                        {c.attachments.map((f) => (
+                          <button
+                            key={f.storedFilename}
+                            type="button"
+                            onClick={() => openAttachment(c, f)}
+                            className={`rounded-lg px-2.5 py-1 text-xs font-semibold transition ${
+                              isOwn
+                                ? 'border border-[#F25E26]/40 bg-[#F25E26]/10 text-[#ffb899] hover:bg-[#F25E26]/20'
+                                : 'border border-zinc-700 text-[#F25E26] hover:bg-[#F25E26]/10'
+                            }`}
+                          >
+                            {f.originalName || f.storedFilename}
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
+                  </article>
+                </li>
+              );
+            })}
+          </ul>
         )}
       </div>
     </div>

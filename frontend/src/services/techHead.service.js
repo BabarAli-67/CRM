@@ -39,8 +39,14 @@ export const getTechHeadBadges = async () => {
       queueCount: 0,
       escalationUnread: 0,
       completedCount: 0,
+      teamCommentUnread: 0,
     }
   );
+};
+
+export const getTeamComments = async () => {
+  const response = await api.get('/tech-head/team-comments');
+  return response.data.data.items || [];
 };
 
 export const getTechHeadQueue = async () => {

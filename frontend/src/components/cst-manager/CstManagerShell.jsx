@@ -13,6 +13,7 @@ import {
   getHandoverQueue,
   getTechPipeline,
 } from '../../services/handover.service.js';
+import { getMockupBadges } from '../../services/mockup.service.js';
 
 /** Attendance banner + KPI strip only on the Attendance home route. */
 const isAttendanceHome = (pathname) => pathname === '/dashboard/cst-manager';
@@ -32,6 +33,12 @@ export default function CstManagerShell({ title, children }) {
     refetchInterval: 15_000,
   });
 
+  const { data: mockupBadges } = useQuery({
+    queryKey: ['mockupBadges'],
+    queryFn: getMockupBadges,
+    refetchInterval: 15_000,
+  });
+
   const counts = useMemo(() => {
     let pending = 0;
     let onboard = 0;
@@ -44,8 +51,10 @@ export default function CstManagerShell({ title, children }) {
       pending,
       onboard,
       tech: Array.isArray(techLeads) ? techLeads.length : 0,
+      mockupUnread:
+        mockupBadges?.deliveredUnread ?? mockupBadges?.actionable ?? 0,
     };
-  }, [queueLeads, techLeads]);
+  }, [queueLeads, techLeads, mockupBadges]);
 
   const navItems = useMemo(
     () => [
@@ -85,6 +94,7 @@ export default function CstManagerShell({ title, children }) {
         to: '/dashboard/cst-manager/mockup',
         label: 'Mockup',
         icon: LayoutTemplate,
+        badge: counts.mockupUnread,
       },
     ],
     [counts]

@@ -49,11 +49,6 @@ const ASSIGNED_SPECIALIST_CLAUSE = {
   ],
 };
 
-const commentMentionsTechHead = (comment) => {
-  const mentions = Array.isArray(comment?.mentions) ? comment.mentions : [];
-  return mentions.some((m) => m?.role === 'tech_head');
-};
-
 const TEAM_SAFE_SELECT =
   'fullName username email phone role status jd assignedMentorId createdAt updatedAt';
 
@@ -402,7 +397,7 @@ export const getTechHeadCompleted = asyncHandler(async (req, res) => {
 });
 
 /**
- * GET /tech-head/escalations — CST comments that @mention Tech Head.
+ * GET /tech-head/escalations — all CST comments (with or without @Tech Head).
  */
 export const getCstEscalations = asyncHandler(async (req, res) => {
   const leads = await Lead.find({
@@ -427,8 +422,7 @@ export const getCstEscalations = asyncHandler(async (req, res) => {
       ? lead.handover.techTaskNotes
       : [];
     for (const comment of comments) {
-      if (!commentMentionsTechHead(comment)) continue;
-      // CST Escalations board: surface CST → Tech Head @mentions (and SA)
+      // CST Comments board: every CST / SA comment (Tech Team stays in Team Comments).
       const author = comment.createdBy;
       const authorRole =
         (typeof author === 'object' && author?.role) || null;
@@ -502,6 +496,7 @@ export const getCstEscalations = asyncHandler(async (req, res) => {
 /**
  * POST /tech-head/escalations/:leadId/forward
  * Body: { commentId, assignToUserId, guidance? }
+ * Delivers CST instruction into the specialist Comments thread (+ optional assign).
  */
 export const forwardEscalation = asyncHandler(async (req, res) => {
   const { commentId, assignToUserId, guidance } = req.body || {};
@@ -525,23 +520,89 @@ export const forwardEscalation = asyncHandler(async (req, res) => {
   });
   if (!lead) throw new ApiError(404, 'Client not found');
 
-  const comments = Array.isArray(lead.handover?.comments)
+  if (!lead.handover) lead.handover = {};
+  const comments = Array.isArray(lead.handover.comments)
     ? lead.handover.comments
     : [];
   const comment = comments.find((c) => String(c.commentId) === cid);
   if (!comment) throw new ApiError(404, 'Comment not found');
-  if (!commentMentionsTechHead(comment)) {
-    throw new ApiError(400, 'Only @Tech Head escalations can be forwarded');
-  }
 
+  // Ensure specialist can open My Projects for this client
   if (!isUserAssignedTech(lead, techId)) {
-    throw new ApiError(
-      400,
-      'Assignee must already be on this client’s Tech team'
-    );
+    if (!Array.isArray(lead.handover.assignedTechIds)) {
+      lead.handover.assignedTechIds = [];
+    }
+    lead.handover.assignedTechIds.push(tech._id);
+    if (!lead.handover.assignedTechId) {
+      lead.handover.assignedTechId = tech._id;
+    }
+    if (!lead.handover.assignedAt) {
+      lead.handover.assignedAt = new Date();
+    }
+    if (
+      !lead.handover.techStatus ||
+      lead.handover.techStatus === 'onboarded' ||
+      lead.handover.cstStatus === 'onboarded'
+    ) {
+      lead.handover.techStatus = 'assigned';
+      if (lead.handover.cstStatus === 'onboarded') {
+        lead.handover.cstStatus = 'assigned';
+      }
+    }
   }
 
-  if (!lead.handover) lead.handover = {};
+  const guidanceText =
+    typeof guidance === 'string' && guidance.trim()
+      ? guidance.trim()
+      : null;
+  const specialistLabel =
+    tech.fullName || tech.username || 'Specialist';
+  const jdLabel = tech.jd ? ` (${tech.jd})` : '';
+
+  let forwardBody = `[Forwarded from CST → ${specialistLabel}${jdLabel}]\n\n${String(
+    comment.body || ''
+  ).trim()}`;
+  if (guidanceText) {
+    forwardBody += `\n\n———\nInternal guidance: ${guidanceText}`;
+  }
+
+  const forwardComment = {
+    commentId: randomUUID(),
+    body: forwardBody,
+    visibility: 'tech',
+    mentions: [
+      {
+        userId: tech._id,
+        fullName: tech.fullName || null,
+        username: tech.username || null,
+        role: 'tech_team',
+      },
+    ],
+    attachments: [],
+    createdAt: new Date(),
+    createdBy: req.user._id,
+  };
+  if (!Array.isArray(lead.handover.comments)) {
+    lead.handover.comments = [];
+  }
+  lead.handover.comments.push(forwardComment);
+
+  if (!Array.isArray(lead.handover.commentReads)) {
+    lead.handover.commentReads = [];
+  }
+  const authorReadIdx = lead.handover.commentReads.findIndex(
+    (r) => String(r.userId) === String(req.user._id)
+  );
+  if (authorReadIdx >= 0) {
+    lead.handover.commentReads[authorReadIdx].lastReadAt =
+      forwardComment.createdAt;
+  } else {
+    lead.handover.commentReads.push({
+      userId: req.user._id,
+      lastReadAt: forwardComment.createdAt,
+    });
+  }
+
   if (!Array.isArray(lead.handover.techTaskNotes)) {
     lead.handover.techTaskNotes = [];
   }
@@ -549,13 +610,11 @@ export const forwardEscalation = asyncHandler(async (req, res) => {
   const note = {
     noteId: randomUUID(),
     commentId: cid,
+    forwardCommentId: forwardComment.commentId,
     body: comment.body,
-    guidance:
-      typeof guidance === 'string' && guidance.trim()
-        ? guidance.trim()
-        : null,
+    guidance: guidanceText,
     assignedToUserId: tech._id,
-    assignedToName: tech.fullName || tech.username || 'Tech',
+    assignedToName: specialistLabel,
     createdBy: req.user._id,
     createdByName: req.user.fullName || req.user.username || 'Tech Head',
     createdAt: new Date(),
@@ -563,20 +622,50 @@ export const forwardEscalation = asyncHandler(async (req, res) => {
   lead.handover.techTaskNotes.push(note);
   await lead.save();
 
-  // Notify the assigned specialist in their workspace
+  const businessName = lead.businessName || 'Client';
+  const fromName = note.createdByName;
+  const bodyPreview = String(forwardComment.body || '').slice(0, 140);
+
+  // Primary alert: Comments thread unread + toast
+  emitToUser(String(tech._id), 'client:comment-new', {
+    leadId: String(lead._id),
+    commentId: forwardComment.commentId,
+    businessName,
+    authorName: fromName,
+    authorRole: 'tech_head',
+    bodyPreview,
+    isMention: true,
+    at: forwardComment.createdAt,
+  });
+  emitToUser(String(tech._id), 'client:comment-mention', {
+    leadId: String(lead._id),
+    commentId: forwardComment.commentId,
+    businessName,
+    authorName: fromName,
+    authorRole: 'tech_head',
+    bodyPreview,
+    isMention: true,
+    at: forwardComment.createdAt,
+  });
+
+  // Legacy task-note event (toast routes into Comments)
   emitToUser(String(tech._id), 'tech:task-note', {
     leadId: String(lead._id),
-    businessName: lead.businessName || 'Client',
+    businessName,
     noteId: note.noteId,
-    commentId: note.commentId,
-    bodyPreview: String(note.body || '').slice(0, 140),
+    commentId: forwardComment.commentId,
+    bodyPreview,
     guidance: note.guidance,
-    fromName: note.createdByName,
+    fromName,
     at: note.createdAt,
   });
 
   res.status(201).json(
-    new ApiResponse(201, { note }, 'Escalation forwarded to specialist')
+    new ApiResponse(
+      201,
+      { note, comment: forwardComment },
+      'Forwarded to specialist Comments thread'
+    )
   );
 });
 
@@ -641,11 +730,10 @@ export const getTechHeadBadges = asyncHandler(async (req, res) => {
       ? lead.handover.comments
       : [];
     for (const c of comments) {
-      if (!commentMentionsTechHead(c)) continue;
       const by = c.createdBy;
       const authorRole =
         by && typeof by === 'object' ? by.role : null;
-      // Badge matches CST Escalations board (CST / SA → Tech Head only)
+      // Badge matches CST Comments board (all CST / SA comments)
       if (authorRole && authorRole !== 'cst_manager' && authorRole !== 'super_admin') {
         continue;
       }
@@ -654,10 +742,33 @@ export const getTechHeadBadges = asyncHandler(async (req, res) => {
     }
   }
 
+  // Unread Tech Team → Tech Head comments (Team Comments board; @ optional)
+  let teamCommentUnread = 0;
+  for (const lead of leads) {
+    const reads = Array.isArray(lead.handover?.commentReads)
+      ? lead.handover.commentReads
+      : [];
+    const entry = reads.find((r) => String(r.userId) === uid);
+    const lastReadMs = entry?.lastReadAt
+      ? new Date(entry.lastReadAt).getTime()
+      : 0;
+    const watermark = Number.isNaN(lastReadMs) ? 0 : lastReadMs;
+    const comments = Array.isArray(lead.handover?.comments)
+      ? lead.handover.comments
+      : [];
+    for (const c of comments) {
+      const by = c.createdBy;
+      const authorRole = by && typeof by === 'object' ? by.role : null;
+      if (authorRole !== 'tech_team') continue;
+      const at = new Date(c.createdAt || 0).getTime();
+      if (!Number.isNaN(at) && at > watermark) teamCommentUnread += 1;
+    }
+  }
+
   res.status(200).json(
     new ApiResponse(
       200,
-      { queueCount, escalationUnread, completedCount },
+      { queueCount, escalationUnread, completedCount, teamCommentUnread },
       'Tech Head badges retrieved'
     )
   );
@@ -727,7 +838,8 @@ export const getTechHeadClient = asyncHandler(async (req, res) => {
       'businessName serviceAreas websiteLink servicesOffered socialLinks handover createdAt updatedAt'
     )
     .populate('handover.assignedTechId', 'fullName username jd')
-    .populate('handover.assignedTechIds', 'fullName username jd');
+    .populate('handover.assignedTechIds', 'fullName username jd')
+    .populate('handover.comments.createdBy', 'fullName username role');
 
   if (!lead) throw new ApiError(404, 'Client not found');
 
@@ -738,6 +850,101 @@ export const getTechHeadClient = asyncHandler(async (req, res) => {
 
   res.status(200).json(
     new ApiResponse(200, { lead: client }, 'Tech Head client retrieved')
+  );
+});
+
+/**
+ * GET /tech-head/team-comments — all Tech Team comments (not CST); @ optional.
+ */
+export const getTeamComments = asyncHandler(async (req, res) => {
+  const leads = await Lead.find({
+    stage: 'closed_sale',
+    'handover.comments.0': { $exists: true },
+  })
+    .select(
+      'businessName handover.comments handover.commentReads handover.assignedTechId handover.assignedTechIds handover.cstStatus handover.techStatus handover.projectNumber'
+    )
+    .populate('handover.comments.createdBy', 'fullName username role jd')
+    .populate('handover.assignedTechId', 'fullName username jd')
+    .populate('handover.assignedTechIds', 'fullName username jd')
+    .sort({ updatedAt: -1 })
+    .limit(200);
+
+  const uid = String(req.user._id);
+  const items = [];
+
+  for (const lead of leads) {
+    const comments = Array.isArray(lead.handover?.comments)
+      ? lead.handover.comments
+      : [];
+    const reads = Array.isArray(lead.handover?.commentReads)
+      ? lead.handover.commentReads
+      : [];
+    const entry = reads.find((r) => String(r.userId) === uid);
+    const lastReadMs = entry?.lastReadAt
+      ? new Date(entry.lastReadAt).getTime()
+      : 0;
+    const watermark = Number.isNaN(lastReadMs) ? 0 : lastReadMs;
+
+    for (const comment of comments) {
+      const author = comment.createdBy;
+      const authorRole =
+        (typeof author === 'object' && author?.role) || null;
+      if (authorRole !== 'tech_team') continue;
+
+      const at = new Date(comment.createdAt || 0).getTime();
+      const unread = !Number.isNaN(at) && at > watermark;
+
+      items.push({
+        leadId: String(lead._id),
+        businessName: lead.businessName || 'Client',
+        projectNumber:
+          typeof lead.handover?.projectNumber === 'number' &&
+          lead.handover.projectNumber > 0
+            ? lead.handover.projectNumber
+            : null,
+        commentId: comment.commentId,
+        body: comment.body,
+        createdAt: comment.createdAt,
+        unread,
+        authorName:
+          (typeof author === 'object' &&
+            (author?.fullName || author?.username)) ||
+          'Tech',
+        authorRole: 'tech_team',
+        authorJd:
+          (typeof author === 'object' && author?.jd) || null,
+        assignees: getAssignedTechIdList(lead).map((id) => {
+          const multi = Array.isArray(lead.handover?.assignedTechIds)
+            ? lead.handover.assignedTechIds
+            : [];
+          const match =
+            multi.find((t) => String(t._id || t) === id) ||
+            (String(
+              lead.handover?.assignedTechId?._id ||
+                lead.handover?.assignedTechId
+            ) === id
+              ? lead.handover.assignedTechId
+              : null);
+          if (match && typeof match === 'object') {
+            return {
+              _id: String(match._id),
+              fullName: match.fullName || match.username,
+              jd: match.jd || null,
+            };
+          }
+          return { _id: id, fullName: null, jd: null };
+        }),
+      });
+    }
+  }
+
+  items.sort(
+    (a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0)
+  );
+
+  res.status(200).json(
+    new ApiResponse(200, { items }, 'Team comments retrieved')
   );
 });
 

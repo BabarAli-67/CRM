@@ -6,6 +6,7 @@ import {
   forwardEscalation,
   getCstEscalations,
   getInternActivity,
+  getTeamComments,
   getTechHeadAssigned,
   getTechHeadBadges,
   getTechHeadClient,
@@ -37,6 +38,7 @@ router.patch('/assign/:id', assignTeamToClient);
 
 router.get('/escalations', getCstEscalations);
 router.post('/escalations/:leadId/forward', forwardEscalation);
+router.get('/team-comments', getTeamComments);
 router.get('/intern-activity', getInternActivity);
 router.get('/clients/:id', getTechHeadClient);
 router.patch('/clients/:id/ops-status', updateClientOpsStatus);

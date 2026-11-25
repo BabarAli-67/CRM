@@ -51,6 +51,9 @@ export default function ClientCommentNotificationBell() {
     const socket = getSocket();
     const refresh = () => {
       queryClient.invalidateQueries({ queryKey: ['commentNotifications'] });
+      queryClient.invalidateQueries({ queryKey: ['techHeadBadges'] });
+      queryClient.invalidateQueries({ queryKey: ['techHeadTeamComments'] });
+      queryClient.invalidateQueries({ queryKey: ['techHeadEscalations'] });
       queryClient.invalidateQueries({ queryKey: ['handoverQueue'] });
       queryClient.invalidateQueries({ queryKey: ['cstTechPipeline'] });
       queryClient.invalidateQueries({ queryKey: ['myProjects'] });
