@@ -16,12 +16,11 @@ import {
   ADMIN_THEAD,
 } from './adminBrand.js';
 
+/** Approve pending public registrants only (privileged roles are env / Tech Head). */
 const ROLE_OPTIONS = [
-  { value: 'admin', label: 'Admin (Auditor)' },
   { value: 'sales_agent', label: 'Sales Agent' },
   { value: 'closer', label: 'Closer' },
   { value: 'cst_manager', label: 'CST Manager' },
-  { value: 'tech_team', label: 'Tech Team Member' },
 ];
 
 const formatRequestedAt = (value) => {

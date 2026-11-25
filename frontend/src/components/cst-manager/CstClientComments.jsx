@@ -12,11 +12,14 @@ import useAuth from '../../hooks/useAuth.hook.js';
 const fieldClass =
   'w-full rounded-xl border border-zinc-700 bg-zinc-950/60 px-4 py-2.5 text-sm text-white outline-none transition focus:border-[#F25E26]/50 focus:ring-2 focus:ring-[#F25E26]/20';
 
-/** Shared CST Manager ↔ Tech Team mentions only. */
-const MENTION_ROLES = new Set(['cst_manager', 'tech_team']);
+/** CST Manager may only @mention Tech Head (never individual specialists). */
+const CST_MENTION_ROLES = new Set(['tech_head']);
+/** Tech Head / Tech Team may mention CST or Tech Head on the shared thread. */
+const TECH_MENTION_ROLES = new Set(['cst_manager', 'tech_head']);
 
 const roleLabel = (role) => {
   if (role === 'tech_team') return 'Tech';
+  if (role === 'tech_head') return 'Tech Head';
   if (role === 'cst_manager') return 'CST';
   return role || 'User';
 };
@@ -50,8 +53,13 @@ export default function CstClientComments({ lead, onLeadUpdated }) {
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
 
+  const isCstAuthor = user?.role === 'cst_manager';
+  const allowedMentionRoles = isCstAuthor
+    ? CST_MENTION_ROLES
+    : TECH_MENTION_ROLES;
+
   const { data: users = [] } = useQuery({
-    queryKey: ['mentionUsers', 'cst-tech'],
+    queryKey: ['mentionUsers', isCstAuthor ? 'cst-tech-head' : 'tech-cst'],
     queryFn: () => getUsers({ status: 'approved' }),
     staleTime: 60_000,
   });
@@ -60,10 +68,10 @@ export default function CstClientComments({ lead, onLeadUpdated }) {
     () =>
       (users || []).filter(
         (u) =>
-          MENTION_ROLES.has(u.role) &&
+          allowedMentionRoles.has(u.role) &&
           String(u._id) !== String(user?._id || user?.id)
       ),
-    [users, user]
+    [users, user, allowedMentionRoles]
   );
 
   const filteredMentions = useMemo(() => {
@@ -159,7 +167,7 @@ export default function CstClientComments({ lead, onLeadUpdated }) {
     if (!el) return;
     const caret = el.selectionStart ?? value.length;
     const before = value.slice(0, caret);
-    const match = before.match(/@([\w.\-]*)$/);
+    const match = before.match(/@([\w.-]*)$/);
     if (match) {
       setShowMentions(true);
       setMentionQuery(match[1] || '');
@@ -175,7 +183,7 @@ export default function CstClientComments({ lead, onLeadUpdated }) {
     const caret = el?.selectionStart ?? value.length;
     const before = value.slice(0, caret);
     const after = value.slice(caret);
-    const replaced = before.replace(/@([\w.\-]*)$/, `@${u.username || u.fullName} `);
+    const replaced = before.replace(/@([\w.-]*)$/, `@${u.username || u.fullName} `);
     setBody(replaced + after);
     setMentionIds((prev) =>
       prev.includes(String(u._id)) ? prev : [...prev, String(u._id)]
@@ -210,8 +218,9 @@ export default function CstClientComments({ lead, onLeadUpdated }) {
           Comments
         </h2>
         <p className="mt-1 text-sm text-zinc-500">
-          Shared CST ↔ Tech thread. Type @ to mention a CST Manager or Tech
-          member. Attach PDF, Docs, or Images.
+          {isCstAuthor
+            ? 'Escalate to Tech Head only — type @ to mention @Tech Head. Attach PDF, Docs, or Images.'
+            : 'Shared CST ↔ Tech thread. Type @ to mention CST Manager or Tech Head. Attach PDF, Docs, or Images.'}
         </p>
 
         <div className="relative mt-4">
@@ -220,7 +229,11 @@ export default function CstClientComments({ lead, onLeadUpdated }) {
             rows={4}
             value={body}
             onChange={(e) => onBodyChange(e.target.value)}
-            placeholder="Write a comment… use @ to mention CST or Tech"
+            placeholder={
+              isCstAuthor
+                ? 'Write a comment… use @ to mention Tech Head'
+                : 'Write a comment… use @ to mention CST or Tech Head'
+            }
             className={`${fieldClass} resize-y`}
           />
           {showMentions && filteredMentions.length > 0 ? (

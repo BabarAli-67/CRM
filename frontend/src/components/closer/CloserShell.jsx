@@ -1,6 +1,7 @@
 import {
   BadgeCheck,
   CalendarCheck,
+  LayoutTemplate,
   PhoneCall,
   UserX,
   Users,
@@ -37,6 +38,11 @@ const NAV_ITEMS = [
     icon: UsersRound,
   },
   { to: '/dashboard/closer/callbacks', label: 'My Callbacks', icon: PhoneCall },
+  {
+    to: '/dashboard/closer/mockup',
+    label: 'Mockup',
+    icon: LayoutTemplate,
+  },
 ];
 
 /** Attendance banner + KPI strip only on the Attendance home route. */

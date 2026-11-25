@@ -169,6 +169,7 @@ const emptyReview = {
   personalEmail: '',
   websiteLink: '',
   gmbLink: '',
+  socialLinks: '',
   serviceAreas: '',
   servicesOffered: '',
   contractEnabled: false,
@@ -214,6 +215,7 @@ const mapLeadToReview = (lead) => {
     personalEmail: lead.personalEmail || '',
     websiteLink: lead.websiteLink || '',
     gmbLink: lead.gmbLink || '',
+    socialLinks: lead.socialLinks || '',
     serviceAreas: lead.serviceAreas || '',
     servicesOffered: stripContractLabel(lead.servicesOffered || ''),
     contractEnabled: Boolean(lead.contractEnabled),
@@ -634,6 +636,7 @@ export default function CloseSaleModal({ open, lead, onClose, onSuccess }) {
       personalEmail: review.personalEmail.trim() || null,
       websiteLink: normalizeUrl(review.websiteLink),
       gmbLink: normalizeUrl(review.gmbLink),
+      socialLinks: String(review.socialLinks || '').trim() || null,
       serviceAreas: review.serviceAreas.trim() || null,
       servicesOffered: finalServices,
       paymentOffered: finalOffered,
@@ -773,6 +776,16 @@ export default function CloseSaleModal({ open, lead, onClose, onSuccess }) {
                       value={review.gmbLink}
                       onChange={handleReviewChange('gmbLink')}
                       className={fieldClass}
+                    />
+                  </label>
+                  <label className="block space-y-1.5 text-sm text-zinc-300 sm:col-span-2">
+                    <span>Social Links</span>
+                    <textarea
+                      rows={2}
+                      placeholder="Facebook, Instagram, LinkedIn, TikTok, YouTube — one per line or comma-separated"
+                      value={review.socialLinks}
+                      onChange={handleReviewChange('socialLinks')}
+                      className={`${fieldClass} resize-y`}
                     />
                   </label>
                   <label className="block space-y-1.5 text-sm text-zinc-300">

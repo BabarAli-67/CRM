@@ -1,7 +1,40 @@
 import asyncHandler from '../utils/asyncHandler.util.js';
 import { ApiResponse } from '../utils/apiResponse.util.js';
-import { registerUser, loginUser } from '../services/auth.service.js';
+import { ApiError } from '../utils/apiError.util.js';
+import {
+  registerUser,
+  loginUser,
+  toSessionUser,
+} from '../services/auth.service.js';
 import env from '../config/env.config.js';
+
+/** Roles blocked from public registration (403 even before field validators). */
+const FORBIDDEN_PUBLIC_REGISTER_ROLES = new Set([
+  'admin',
+  'auditor',
+  'super_admin',
+  'tech_head',
+  'tech',
+  'tech_team',
+]);
+
+/**
+ * Middleware: reject privileged role attempts on /register with 403 Forbidden.
+ */
+export const rejectPrivilegedRegistration = (req, _res, next) => {
+  const role = String(req.body?.requestedRole || req.body?.role || '')
+    .trim()
+    .toLowerCase();
+  if (role && FORBIDDEN_PUBLIC_REGISTER_ROLES.has(role)) {
+    return next(
+      new ApiError(
+        403,
+        'Forbidden: Admin (Auditor), Tech Head, and Tech specialists cannot self-register.'
+      )
+    );
+  }
+  next();
+};
 
 export const register = asyncHandler(async (req, res) => {
   const { fullName, username, phone, password, requestedRole, role } = req.body;
@@ -41,9 +74,8 @@ export const login = asyncHandler(async (req, res) => {
 
 /** Fresh role/status from DB — keeps client session aligned with restrictTo. */
 export const getMe = asyncHandler(async (req, res) => {
+  const user = await toSessionUser(req.user);
   res
     .status(200)
-    .json(
-      new ApiResponse(200, { user: req.user.toSafeObject() }, 'Session user retrieved')
-    );
+    .json(new ApiResponse(200, { user }, 'Session user retrieved'));
 });

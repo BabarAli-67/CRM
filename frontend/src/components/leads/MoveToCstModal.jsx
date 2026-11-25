@@ -99,6 +99,7 @@ export default function MoveToCstModal({
   const [payReference, setPayReference] = useState('');
   const [upsellNotes, setUpsellNotes] = useState('');
   const [handoverNotes, setHandoverNotes] = useState('');
+  const [socialLinks, setSocialLinks] = useState('');
   const [error, setError] = useState('');
 
   const detectedBrand = useMemo(
@@ -136,8 +137,9 @@ export default function MoveToCstModal({
     setPayReference('');
     setUpsellNotes('');
     setHandoverNotes('');
+    setSocialLinks(lead?.socialLinks || '');
     setError('');
-  }, [open, lead?._id, savedCards]);
+  }, [open, lead?._id, lead?.socialLinks, savedCards]);
 
   const selectedSaved = useMemo(
     () => savedCards.find((c) => String(c.cardId) === String(selectedCardId)),
@@ -283,6 +285,7 @@ export default function MoveToCstModal({
     formData.append('upscaleNotes', upsellNotes.trim());
     formData.append('upsellNotes', upsellNotes.trim());
     formData.append('handoverNotes', handoverNotes.trim());
+    formData.append('socialLinks', socialLinks.trim());
     if (documentSigned && signedFile) {
       formData.append('signedDocument', signedFile);
     }
@@ -823,6 +826,17 @@ export default function MoveToCstModal({
               </label>
             </section>
           ) : null}
+
+          <label className="block space-y-1.5 text-sm text-zinc-300">
+            <span className="font-medium">Social Links</span>
+            <textarea
+              rows={2}
+              value={socialLinks}
+              onChange={(e) => setSocialLinks(e.target.value)}
+              placeholder="Facebook, Instagram, LinkedIn, TikTok, YouTube — one per line or comma-separated"
+              className={`${fieldClass} resize-y`}
+            />
+          </label>
 
           <label className="block space-y-1.5 text-sm text-zinc-300">
             <span className="font-medium">Handover CST Note</span>

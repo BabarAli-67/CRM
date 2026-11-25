@@ -6,12 +6,11 @@ import useAuth from '../hooks/useAuth.hook.js';
 const inputClassName =
   'w-full rounded-xl border border-obsidian-border bg-obsidian-elevated px-4 py-3 text-ink outline-none transition placeholder:text-ink-soft focus:border-flash-secondary focus:ring-2 focus:ring-flash-secondary/30';
 
+/** Public self-registration only — privileged roles are env-provisioned. */
 const ROLE_OPTIONS = [
   { value: 'sales_agent', label: 'Sales Agent' },
   { value: 'closer', label: 'Closer' },
   { value: 'cst_manager', label: 'CST Manager' },
-  { value: 'tech_team', label: 'Tech Team' },
-  { value: 'admin', label: 'Admin (Auditor)' },
 ];
 
 function PasswordField({

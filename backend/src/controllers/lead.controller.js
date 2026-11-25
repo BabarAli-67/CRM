@@ -23,6 +23,7 @@ import {
 import { buildAlertFlagsForSchedule } from '../utils/alertTiming.util.js';
 import { resolvePktMonthRange } from '../utils/shiftTime.util.js';
 import { applyContractFieldsToLead } from '../utils/contract.util.js';
+import { toTechSafeClient } from '../utils/techTeam.util.js';
 import { randomUUID } from 'crypto';
 
 /** Parse ?month=YYYY-MM for closed-sales scoping. Defaults to current PKT month. */
@@ -68,16 +69,36 @@ const canAccessLead = (lead, user) => {
   const isCloserOnRecord =
     user.role === 'closer' && isAssignedCloser;
 
-  // Tech may only see leads assigned specifically to them
+  // Tech specialists: only leads where their id is in assignedTechIds (or legacy assignedTechId)
+  const assignedTechIds = Array.isArray(lead.handover?.assignedTechIds)
+    ? lead.handover.assignedTechIds.map((id) => refId(id)).filter(Boolean)
+    : [];
+  const legacyTech = refId(lead.handover?.assignedTechId);
+  if (legacyTech && !assignedTechIds.includes(legacyTech)) {
+    assignedTechIds.push(legacyTech);
+  }
   const isAssignedTech =
-    user.role === 'tech_team' &&
-    refId(lead.handover?.assignedTechId) === userId;
+    user.role === 'tech_team' && assignedTechIds.includes(userId);
+
+  // Tech Head may view onboarded + assigned fulfillment leads (no financial projection here)
+  const techHeadStatuses = new Set([
+    'onboarded',
+    'assigned',
+    'in_progress',
+    'ongoing_seo',
+    'completed',
+  ]);
+  const isTechHeadVisible =
+    user.role === 'tech_head' &&
+    lead.stage === 'closed_sale' &&
+    techHeadStatuses.has(lead.handover?.cstStatus);
 
   return (
     isOwningAgent ||
     isCloserOnRecord ||
     isCloserClosedSaleVisible ||
-    isAssignedTech
+    isAssignedTech ||
+    isTechHeadVisible
   );
 };
 
@@ -111,6 +132,7 @@ const UPDATABLE_FIELDS = [
   'yelpLink',
   'websiteLink',
   'gmbLink',
+  'socialLinks',
   'serviceAreas',
   'servicesOffered',
   'paymentOffered',
@@ -754,6 +776,10 @@ export const moveLeadToCst = asyncHandler(async (req, res) => {
   const upscaleNotes = String(body.upscaleNotes || body.upsellNotes || '').trim() || null;
   const handoverNotes =
     String(body.handoverNotes || '').trim() || null;
+  if (Object.prototype.hasOwnProperty.call(body, 'socialLinks')) {
+    const social = String(body.socialLinks || '').trim();
+    lead.socialLinks = social || null;
+  }
 
   if (!lead.handover) {
     lead.handover = {};
@@ -934,7 +960,11 @@ export const getLeadById = asyncHandler(async (req, res) => {
     .populate('closedBy', 'fullName username role')
     .populate({
       path: 'handover.assignedTechId',
-      select: 'fullName username role',
+      select: 'fullName username role jd',
+    })
+    .populate({
+      path: 'handover.assignedTechIds',
+      select: 'fullName username role jd',
     })
     .populate({
       path: 'handover.comments.createdBy',
@@ -966,6 +996,7 @@ export const getLeadById = asyncHandler(async (req, res) => {
   if (
     req.user.role === 'cst_manager' ||
     req.user.role === 'tech_team' ||
+    req.user.role === 'tech_head' ||
     req.user.role === 'super_admin'
   ) {
     const comments = Array.isArray(leadObj?.handover?.comments)
@@ -994,7 +1025,28 @@ export const getLeadById = asyncHandler(async (req, res) => {
     }).length;
   }
 
-  res.status(200).json(new ApiResponse(200, { lead: leadObj }, 'Lead retrieved'));
+  // Tech department: strip all pricing / payment / balance fields
+  let payloadLead = leadObj;
+  if (req.user.role === 'tech_team' || req.user.role === 'tech_head') {
+    const safe = toTechSafeClient(leadObj);
+    // Specialists only see task notes assigned to them; never internActivity.
+    if (req.user.role === 'tech_team') {
+      const notes = Array.isArray(leadObj?.handover?.techTaskNotes)
+        ? leadObj.handover.techTaskNotes
+        : [];
+      safe.handover.techTaskNotes = notes.filter(
+        (n) => String(n.assignedToUserId) === String(req.user._id)
+      );
+    }
+    payloadLead = {
+      ...safe,
+      unreadCommentCount: leadObj.unreadCommentCount,
+    };
+  }
+
+  res
+    .status(200)
+    .json(new ApiResponse(200, { lead: payloadLead }, 'Lead retrieved'));
 });
 
 export const updateLead = asyncHandler(async (req, res) => {

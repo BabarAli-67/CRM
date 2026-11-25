@@ -9,7 +9,7 @@ import {
 } from '../services/handover.service.js';
 import { getSocket } from '../utils/socketClient.util.js';
 
-const COMMENT_ROLES = new Set(['cst_manager', 'tech_team']);
+const COMMENT_ROLES = new Set(['cst_manager', 'tech_team', 'tech_head']);
 
 const formatPktShort = (value) => {
   if (!value) return '';

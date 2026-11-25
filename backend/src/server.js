@@ -7,11 +7,13 @@ import seedAdmin from './seeders/seedAdmin.js';
 import runAutoCheckoutSweep from './jobs/autoCheckout.job.js';
 import runLeadEscalationSweep from './jobs/leadEscalation.job.js';
 import initSocketServer from './sockets/socket.server.js';
+import { backfillTechProjectNumbers } from './utils/projectNumber.util.js';
 
 const startServer = async () => {
   try {
     await connectDB();
     await seedAdmin();
+    await backfillTechProjectNumbers();
 
     const httpServer = http.createServer(app);
     initSocketServer(httpServer);

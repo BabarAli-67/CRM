@@ -60,14 +60,26 @@ export async function getOrCreateConversation(userA, contactId) {
 
 /**
  * Conversations for the user, newest activity first, with peer + unreadCount.
+ * Legacy threads that violate current hierarchy are hidden (send also 403s).
  */
 export async function listConversationsForUser(userId) {
+  const me = await User.findById(userId).select('_id role');
+  if (!me) return [];
+
   const conversations = await Conversation.find({ participants: userId })
     .sort({ lastMessageAt: -1 })
     .populate('participants', 'fullName username role');
 
+  const userIdStr = String(userId);
+  const allowed = conversations.filter((conversation) => {
+    const otherParticipant = conversation.participants.find(
+      (p) => String(p._id ?? p) !== userIdStr
+    );
+    return otherParticipant && canMessage(me, otherParticipant);
+  });
+
   const unreadCounts = await Promise.all(
-    conversations.map((conversation) =>
+    allowed.map((conversation) =>
       Message.countDocuments({
         conversationId: conversation._id,
         senderId: { $ne: userId },
@@ -76,9 +88,7 @@ export async function listConversationsForUser(userId) {
     )
   );
 
-  const userIdStr = String(userId);
-
-  return conversations.map((conversation, index) => {
+  return allowed.map((conversation, index) => {
     const otherParticipant = conversation.participants.find(
       (p) => String(p._id ?? p) !== userIdStr
     );
@@ -111,9 +121,34 @@ async function assertParticipant(conversationId, userId) {
   return conversation;
 }
 
-/** Exported for controllers that need a participant gate without loading messages. */
+/**
+ * Participant gate + live role-pair authorization (403 if hierarchy forbids).
+ */
+async function assertAuthorizedMessaging(conversationId, userId) {
+  const conversation = await assertParticipant(conversationId, userId);
+
+  const otherId = conversation.participants.find(
+    (p) => String(p) !== String(userId)
+  );
+  if (!otherId) {
+    throw new ApiError(403, 'You are not permitted to message this user.');
+  }
+
+  const [sender, peer] = await Promise.all([
+    User.findById(userId).select('_id role'),
+    User.findById(otherId).select('_id role status'),
+  ]);
+
+  if (!sender || !peer || peer.status !== 'approved' || !canMessage(sender, peer)) {
+    throw new ApiError(403, 'You are not permitted to message this user.');
+  }
+
+  return conversation;
+}
+
+/** Exported for controllers that need a participant + hierarchy gate. */
 export async function assertParticipantPublic(conversationId, userId) {
-  await assertParticipant(conversationId, userId);
+  await assertAuthorizedMessaging(conversationId, userId);
 }
 
 /**
@@ -125,7 +160,7 @@ export async function getMessages(
   userId,
   { before, limit = 30 } = {}
 ) {
-  await assertParticipant(conversationId, userId);
+  await assertAuthorizedMessaging(conversationId, userId);
 
   const filter = { conversationId };
   if (before) {
@@ -153,7 +188,7 @@ function buildLastMessagePreview(type, text) {
  * Persist a message and bump conversation last-message metadata.
  */
 export async function sendMessage(conversationId, senderId, payload) {
-  const conversation = await assertParticipant(conversationId, senderId);
+  const conversation = await assertAuthorizedMessaging(conversationId, senderId);
   const { type, text, attachment } = payload;
 
   if (type === 'text' && (!text || !text.trim())) {
@@ -186,7 +221,7 @@ export async function sendMessage(conversationId, senderId, payload) {
  * Mark all inbound unread messages in a conversation as seen.
  */
 export async function markConversationSeen(conversationId, userId) {
-  await assertParticipant(conversationId, userId);
+  await assertAuthorizedMessaging(conversationId, userId);
 
   const result = await Message.updateMany(
     { conversationId, senderId: { $ne: userId }, seenAt: null },

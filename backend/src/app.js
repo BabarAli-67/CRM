@@ -13,9 +13,11 @@ import callbackRoutes from './routes/callback.routes.js';
 import leadRoutes from './routes/lead.routes.js';
 import statsRoutes from './routes/stats.routes.js';
 import handoverRoutes from './routes/handover.routes.js';
+import techHeadRoutes from './routes/techHead.routes.js';
 import reportRoutes from './routes/report.routes.js';
 import userRoutes from './routes/user.routes.js';
 import chatRoutes from './routes/chat.route.js';
+import mockupRoutes from './routes/mockup.routes.js';
 
 const app = express();
 
@@ -71,9 +73,11 @@ app.use('/api/v1/callbacks', callbackRoutes);
 app.use('/api/v1/leads', leadRoutes);
 app.use('/api/v1/stats', statsRoutes);
 app.use('/api/v1/handover', handoverRoutes);
+app.use('/api/v1/tech-head', techHeadRoutes);
 app.use('/api/v1/reports', reportRoutes);
 app.use('/api/v1/users', userRoutes);
 app.use('/api/v1/chat', chatRoutes);
+app.use('/api/v1/mockups', mockupRoutes);
 
 app.use(notFound);
 app.use(errorHandler);

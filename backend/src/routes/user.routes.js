@@ -14,7 +14,8 @@ router.get(
     'super_admin',
     'admin',
     'cst_manager',
-    'tech_team'
+    'tech_team',
+    'tech_head'
   ),
   listUsers
 );

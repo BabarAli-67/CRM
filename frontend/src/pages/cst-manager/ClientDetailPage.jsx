@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import CstManagerShell from '../../components/cst-manager/CstManagerShell.jsx';
@@ -6,10 +6,11 @@ import ClientContextRecord from '../../components/cst-manager/ClientContextRecor
 import CstUpsellPanel from '../../components/cst-manager/CstUpsellPanel.jsx';
 import CstClientComments from '../../components/cst-manager/CstClientComments.jsx';
 import CstRetentionPanel from '../../components/cst-manager/CstRetentionPanel.jsx';
+import SaTechOversightPanel from '../../components/cst-manager/SaTechOversightPanel.jsx';
 import LivePortfolioSection, {
-  mapChangeRequestsFromLead,
   mapKeywordsFromLead,
 } from '../../components/portfolio/LivePortfolioSection.jsx';
+import useAuth from '../../hooks/useAuth.hook.js';
 import { getLeadById } from '../../services/lead.service.js';
 import {
   formatMoneyAmount,
@@ -22,17 +23,13 @@ import {
   getRetentionBadge,
 } from '../../utils/retention.util.js';
 
-const DETAIL_TABS = [
+const BASE_DETAIL_TABS = [
   { id: 'context', label: 'Client Context' },
   { id: 'upsell', label: 'Upsell' },
   { id: 'retention', label: 'Retention' },
   { id: 'comments', label: 'Comments' },
   { id: 'work', label: 'Work & Reports' },
 ];
-
-const DETAIL_TAB_IDS = new Set(DETAIL_TABS.map((t) => t.id));
-const resolveDetailTab = (value) =>
-  DETAIL_TAB_IDS.has(value) ? value : 'context';
 
 const BACK_FROM = {
   pending: {
@@ -47,10 +44,16 @@ const BACK_FROM = {
     label: 'Tech Status',
     to: '/dashboard/cst-manager/handover?tab=tech',
   },
+  admin: {
+    label: 'Pipeline',
+    to: '/admin/pipeline',
+  },
 };
 
-const resolveBackFrom = (value) =>
-  BACK_FROM[value] || BACK_FROM.onboard;
+const resolveBackFrom = (value, isSa) => {
+  if (isSa && (!value || value === 'admin')) return BACK_FROM.admin;
+  return BACK_FROM[value] || BACK_FROM.onboard;
+};
 
 const cardClass =
   'rounded-2xl border border-zinc-800/80 bg-[#111111] p-4 shadow-xl sm:p-5';
@@ -75,19 +78,34 @@ const formatPktFull = (value) => {
  * CST Client Detail — summary header + Context / Upsell / Comments / Work & Reports.
  */
 export default function ClientDetailPage() {
+  const { user } = useAuth();
+  const isSa = user?.role === 'super_admin' || user?.role === 'admin';
+  const detailTabs = useMemo(() => {
+    if (!isSa) return BASE_DETAIL_TABS;
+    return [
+      ...BASE_DETAIL_TABS,
+      { id: 'tech-oversight', label: 'Tech Oversight' },
+    ];
+  }, [isSa]);
+  const tabIds = useMemo(
+    () => new Set(detailTabs.map((t) => t.id)),
+    [detailTabs]
+  );
+  const resolveDetailTab = (value) =>
+    tabIds.has(value) ? value : 'context';
+
   const { id } = useParams();
   const [searchParams, setSearchParams] = useSearchParams();
   const queryClient = useQueryClient();
-  const backFrom = resolveBackFrom(searchParams.get('from'));
+  const backFrom = resolveBackFrom(searchParams.get('from'), isSa);
   const [detailTab, setDetailTab] = useState(() =>
     resolveDetailTab(searchParams.get('tab'))
   );
   const [keywords, setKeywords] = useState([]);
-  const [changeRequests, setChangeRequests] = useState([]);
 
   useEffect(() => {
     setDetailTab(resolveDetailTab(searchParams.get('tab')));
-  }, [searchParams]);
+  }, [searchParams, tabIds]);
 
   const selectDetailTab = (next) => {
     const idTab = resolveDetailTab(next);
@@ -97,6 +115,9 @@ export default function ClientDetailPage() {
         const nextParams = new URLSearchParams(prev);
         if (idTab === 'context') nextParams.delete('tab');
         else nextParams.set('tab', idTab);
+        if (isSa && !nextParams.get('from')) {
+          nextParams.set('from', 'admin');
+        }
         return nextParams;
       },
       { replace: true }
@@ -113,7 +134,6 @@ export default function ClientDetailPage() {
     queryFn: async () => {
       const row = await getLeadById(id);
       setKeywords(mapKeywordsFromLead(row));
-      setChangeRequests(mapChangeRequestsFromLead(row));
       return row;
     },
     enabled: Boolean(id),
@@ -126,7 +146,6 @@ export default function ClientDetailPage() {
     queryClient.setQueryData(['lead', id, 'portfolio'], updated);
     queryClient.setQueryData(['lead', id], updated);
     setKeywords(mapKeywordsFromLead(updated));
-    setChangeRequests(mapChangeRequestsFromLead(updated));
     queryClient.setQueryData(['handoverQueue'], (old) => {
       if (!Array.isArray(old)) return old;
       return old.map((row) =>
@@ -155,8 +174,7 @@ export default function ClientDetailPage() {
   const retentionBadge = getRetentionBadge(lead);
   const contractBadge = formatContractBadgeLabel(lead);
 
-  return (
-    <CstManagerShell title="Client Detail">
+  const body = (
       <section className="mx-auto w-full max-w-7xl space-y-4">
         <div>
           <Link
@@ -285,7 +303,7 @@ export default function ClientDetailPage() {
                 aria-label="Client detail sections"
                 className="flex flex-wrap gap-1 rounded-xl border border-zinc-800/80 bg-[#111111] p-1"
               >
-                {DETAIL_TABS.map((tab) => {
+                {detailTabs.map((tab) => {
                   const active = detailTab === tab.id;
                   const unread =
                     tab.id === 'comments'
@@ -362,8 +380,6 @@ export default function ClientDetailPage() {
                   leadId={id}
                   keywords={keywords}
                   setKeywords={setKeywords}
-                  changeRequests={changeRequests}
-                  setChangeRequests={setChangeRequests}
                   reports={
                     Array.isArray(lead.handover?.monthlyReports)
                       ? lead.handover.monthlyReports
@@ -372,12 +388,30 @@ export default function ClientDetailPage() {
                   onLeadUpdated={syncLeadCaches}
                 />
               ) : null}
+
+              {detailTab === 'tech-oversight' && isSa ? (
+                <SaTechOversightPanel lead={lead} />
+              ) : null}
             </div>
           </>
         )}
       </section>
-    </CstManagerShell>
   );
+
+  if (isSa) {
+    return (
+      <div className="min-h-screen bg-[#0A0A0A] text-white">
+        <header className="border-b border-zinc-800 px-4 py-3 sm:px-6">
+          <p className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500">
+            Super Admin · Client Detail
+          </p>
+        </header>
+        <main className="px-4 py-6 sm:px-6">{body}</main>
+      </div>
+    );
+  }
+
+  return <CstManagerShell title="Client Detail">{body}</CstManagerShell>;
 }
 
 function SummaryLine({ label, value }) {

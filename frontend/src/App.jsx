@@ -15,13 +15,25 @@ import LeadCreatePage from './pages/sales-agent/LeadCreatePage.jsx';
 import LeadEditPage from './pages/sales-agent/LeadEditPage.jsx';
 import AssignedLeadsPage from './pages/closer/AssignedLeadsPage.jsx';
 import CloserMyCallbacksPage from './pages/closer/CloserMyCallbacksPage.jsx';
+import CloserMockupPage from './pages/closer/CloserMockupPage.jsx';
 import CloserDashboardPage from './pages/CloserDashboard.page.jsx';
 import CstManagerDashboardPage from './pages/CstManagerDashboard.page.jsx';
 import HandoverQueuePage from './pages/cst-manager/HandoverQueuePage.jsx';
 import ClientDetailPage from './pages/cst-manager/ClientDetailPage.jsx';
+import CstMockupPage from './pages/cst-manager/CstMockupPage.jsx';
 import TechTeamDashboardPage from './pages/TechTeamDashboard.page.jsx';
 import MyProjectsPage from './pages/tech-team/MyProjectsPage.jsx';
 import TechClientPortfolioPage from './pages/tech-team/TechClientPortfolioPage.jsx';
+import TechTeamMockupPage from './pages/tech-team/TechTeamMockupPage.jsx';
+import TechHeadDashboardPage from './pages/TechHeadDashboard.page.jsx';
+import TechHeadQueuePage from './pages/tech-head/TechHeadQueuePage.jsx';
+import TechHeadAssignedPage from './pages/tech-head/TechHeadAssignedPage.jsx';
+import TechHeadCompletedPage from './pages/tech-head/TechHeadCompletedPage.jsx';
+import TechHeadTeamPage from './pages/tech-head/TechHeadTeamPage.jsx';
+import TechHeadEscalationsPage from './pages/tech-head/TechHeadEscalationsPage.jsx';
+import TechHeadInternActivityPage from './pages/tech-head/TechHeadInternActivityPage.jsx';
+import TechHeadClientPage from './pages/tech-head/TechHeadClientPage.jsx';
+import TechHeadMockupPage from './pages/tech-head/TechHeadMockupPage.jsx';
 
 import ReminderDevHarnessPage from './pages/ReminderDevHarness.page.jsx';
 
@@ -145,6 +157,14 @@ function App() {
         }
       />
       <Route
+        path="/dashboard/closer/mockup"
+        element={
+          <RoleRoute allowedRoles={['closer']}>
+            <CloserMockupPage />
+          </RoleRoute>
+        }
+      />
+      <Route
         path="/dashboard/cst-manager"
         element={
           <RoleRoute allowedRoles={['cst_manager']}>
@@ -169,6 +189,94 @@ function App() {
         }
       />
       <Route
+        path="/dashboard/cst-manager/mockup"
+        element={
+          <RoleRoute allowedRoles={['cst_manager']}>
+            <CstMockupPage />
+          </RoleRoute>
+        }
+      />
+      <Route
+        path="/admin/client/:id"
+        element={
+          <RoleRoute allowedRoles={['super_admin', 'admin']}>
+            <ClientDetailPage />
+          </RoleRoute>
+        }
+      />
+      <Route
+        path="/dashboard/tech-head"
+        element={
+          <RoleRoute allowedRoles={['tech_head']}>
+            <TechHeadDashboardPage />
+          </RoleRoute>
+        }
+      />
+      <Route
+        path="/dashboard/tech-head/queue"
+        element={
+          <RoleRoute allowedRoles={['tech_head']}>
+            <TechHeadQueuePage />
+          </RoleRoute>
+        }
+      />
+      <Route
+        path="/dashboard/tech-head/assigned"
+        element={
+          <RoleRoute allowedRoles={['tech_head']}>
+            <TechHeadAssignedPage />
+          </RoleRoute>
+        }
+      />
+      <Route
+        path="/dashboard/tech-head/completed"
+        element={
+          <RoleRoute allowedRoles={['tech_head']}>
+            <TechHeadCompletedPage />
+          </RoleRoute>
+        }
+      />
+      <Route
+        path="/dashboard/tech-head/team"
+        element={
+          <RoleRoute allowedRoles={['tech_head']}>
+            <TechHeadTeamPage />
+          </RoleRoute>
+        }
+      />
+      <Route
+        path="/dashboard/tech-head/escalations"
+        element={
+          <RoleRoute allowedRoles={['tech_head']}>
+            <TechHeadEscalationsPage />
+          </RoleRoute>
+        }
+      />
+      <Route
+        path="/dashboard/tech-head/intern-activity"
+        element={
+          <RoleRoute allowedRoles={['tech_head']}>
+            <TechHeadInternActivityPage />
+          </RoleRoute>
+        }
+      />
+      <Route
+        path="/dashboard/tech-head/client/:id"
+        element={
+          <RoleRoute allowedRoles={['tech_head']}>
+            <TechHeadClientPage />
+          </RoleRoute>
+        }
+      />
+      <Route
+        path="/dashboard/tech-head/mockup"
+        element={
+          <RoleRoute allowedRoles={['tech_head']}>
+            <TechHeadMockupPage />
+          </RoleRoute>
+        }
+      />
+      <Route
         path="/dashboard/tech-team"
         element={
           <RoleRoute allowedRoles={['tech_team']}>
@@ -189,6 +297,14 @@ function App() {
         element={
           <RoleRoute allowedRoles={['tech_team']}>
             <TechClientPortfolioPage />
+          </RoleRoute>
+        }
+      />
+      <Route
+        path="/dashboard/tech-team/mockup"
+        element={
+          <RoleRoute allowedRoles={['tech_team']}>
+            <TechTeamMockupPage />
           </RoleRoute>
         }
       />

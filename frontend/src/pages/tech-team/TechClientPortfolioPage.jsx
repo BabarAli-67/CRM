@@ -1,40 +1,47 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import CstClientComments from '../../components/cst-manager/CstClientComments.jsx';
+import OpsStatusBadges from '../../components/ops/OpsStatusBadges.jsx';
 import LivePortfolioSection, {
-  mapChangeRequestsFromLead,
   mapKeywordsFromLead,
 } from '../../components/portfolio/LivePortfolioSection.jsx';
-import TechTeamShell from '../../components/tech-team/TechTeamShell.jsx';
-import { getLeadById } from '../../services/lead.service.js';
+import ProjectNumberBadge from '../../components/tech/ProjectNumberBadge.jsx';
 import {
-  formatMoneyAmount,
-  getClientRevenueTotals,
-} from '../../utils/formatPayment.util.js';
-
-const DETAIL_TABS = [
-  { id: 'portfolio', label: 'Work & Reports' },
-  { id: 'comments', label: 'Comments' },
-];
-
-const DETAIL_TAB_IDS = new Set(DETAIL_TABS.map((t) => t.id));
-const resolveDetailTab = (value) =>
-  DETAIL_TAB_IDS.has(value) ? value : 'portfolio';
+  DeveloperMockupPanel,
+  RoleDeliverableWorkspace,
+} from '../../components/tech-team/JdWorkspacePanels.jsx';
+import TechTeamShell from '../../components/tech-team/TechTeamShell.jsx';
+import useAuth from '../../hooks/useAuth.hook.js';
+import { getLeadById } from '../../services/lead.service.js';
+import { projectTitle } from '../../utils/projectNumber.util.js';
+import {
+  getClientTabsForJd,
+  getWorkspaceMeta,
+  resolveClientTab,
+  resolveTechWorkspaceJd,
+} from '../../utils/techWorkspace.util.js';
 
 /**
- * Tech shared client portfolio — keywords, monthly PDFs, change requests,
- * plus the shared CST ↔ Tech Comments thread.
+ * JD-routed Tech client workspace — SEO keeps Work & Reports;
+ * Developer / Content / Social / Design get dedicated panels + Comments.
  */
 export default function TechClientPortfolioPage() {
   const { id } = useParams();
   const [searchParams, setSearchParams] = useSearchParams();
   const queryClient = useQueryClient();
+  const { user } = useAuth();
+  const workspaceJd = resolveTechWorkspaceJd(user);
+  const meta = getWorkspaceMeta(workspaceJd);
+  const tabs = useMemo(
+    () => getClientTabsForJd(workspaceJd),
+    [workspaceJd]
+  );
+
   const [detailTab, setDetailTab] = useState(() =>
-    resolveDetailTab(searchParams.get('tab'))
+    resolveClientTab(workspaceJd, searchParams.get('tab'))
   );
   const [keywords, setKeywords] = useState([]);
-  const [changeRequests, setChangeRequests] = useState([]);
 
   const {
     data: lead,
@@ -50,22 +57,21 @@ export default function TechClientPortfolioPage() {
   });
 
   useEffect(() => {
-    setDetailTab(resolveDetailTab(searchParams.get('tab')));
-  }, [searchParams]);
+    setDetailTab(resolveClientTab(workspaceJd, searchParams.get('tab')));
+  }, [searchParams, workspaceJd]);
 
   useEffect(() => {
     if (!lead) return;
     setKeywords(mapKeywordsFromLead(lead));
-    setChangeRequests(mapChangeRequestsFromLead(lead));
   }, [lead]);
 
   const selectDetailTab = (next) => {
-    const idTab = resolveDetailTab(next);
+    const idTab = resolveClientTab(workspaceJd, next);
     setDetailTab(idTab);
     setSearchParams(
       (prev) => {
         const nextParams = new URLSearchParams(prev);
-        if (idTab === 'portfolio') nextParams.delete('tab');
+        if (idTab === meta.primaryTab) nextParams.delete('tab');
         else nextParams.set('tab', idTab);
         return nextParams;
       },
@@ -80,16 +86,17 @@ export default function TechClientPortfolioPage() {
     queryClient.invalidateQueries({ queryKey: ['commentNotifications'] });
     if (updated) {
       setKeywords(mapKeywordsFromLead(updated));
-      setChangeRequests(mapChangeRequestsFromLead(updated));
     }
   };
 
-  const revenue = lead ? getClientRevenueTotals(lead) : null;
   const unread = Number(lead?.unreadCommentCount) || 0;
+  const taskNotes = Array.isArray(lead?.handover?.techTaskNotes)
+    ? lead.handover.techTaskNotes
+    : [];
 
   return (
     <TechTeamShell title="Client Portfolio">
-      <section className="mx-auto w-full max-w-3xl space-y-6">
+      <section className="mx-auto w-full max-w-7xl space-y-6">
         <div>
           <Link
             to="/dashboard/tech-team/projects"
@@ -112,22 +119,52 @@ export default function TechClientPortfolioPage() {
         ) : (
           <>
             <div className="rounded-2xl border border-zinc-800/80 bg-zinc-900/50 px-6 py-5 shadow-xl">
-              <p className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500">
-                Assigned client
-              </p>
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500">
+                  Assigned client
+                </p>
+                <ProjectNumberBadge lead={lead} size="lg" />
+                <span className="inline-flex rounded-full border border-[#F25E26]/40 bg-[#F25E26]/15 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[#F25E26]">
+                  {meta.badge}
+                </span>
+                {user?.jd === 'Intern' && workspaceJd ? (
+                  <span className="text-[11px] text-zinc-500">
+                    Intern · under {workspaceJd}
+                  </span>
+                ) : null}
+              </div>
               <h1 className="mt-2 font-display text-2xl font-bold tracking-tight text-white">
-                {lead.businessName || '—'}
+                {projectTitle(lead, '—')}
               </h1>
               <p className="mt-1 text-sm text-zinc-400">
-                {lead.clientName?.trim() || 'No client name'}
+                {lead.serviceAreas?.trim() || 'Assigned project'}
               </p>
-              {revenue ? (
-                <p className="mt-2 text-sm text-zinc-500">
-                  Collected{' '}
-                  <span className="font-semibold text-emerald-300">
-                    {formatMoneyAmount(revenue.totalCollected)}
-                  </span>
-                </p>
+              <OpsStatusBadges handover={lead.handover} className="mt-3" />
+              <p className="mt-2 text-xs text-zinc-500">
+                Work fields only · billing hidden from Tech · statuses set by
+                Tech Head
+              </p>
+              {taskNotes.length > 0 && workspaceJd === 'SEO Expert' ? (
+                <div className="mt-4 space-y-2 border-t border-zinc-800 pt-4">
+                  <p className="text-[11px] font-medium uppercase tracking-wide text-zinc-500">
+                    Task notes from Tech Head
+                  </p>
+                  {taskNotes.map((note) => (
+                    <div
+                      key={note.noteId}
+                      className="rounded-lg border border-orange-500/25 bg-orange-500/5 px-3 py-2.5"
+                    >
+                      <p className="whitespace-pre-wrap text-sm text-zinc-200">
+                        {note.body}
+                      </p>
+                      {note.guidance ? (
+                        <p className="mt-1.5 text-xs text-orange-200/90">
+                          Guidance: {note.guidance}
+                        </p>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
               ) : null}
             </div>
 
@@ -136,7 +173,7 @@ export default function TechClientPortfolioPage() {
               aria-label="Client sections"
               className="flex flex-wrap gap-1 rounded-xl border border-zinc-800/80 bg-[#111111] p-1"
             >
-              {DETAIL_TABS.map((tab) => {
+              {tabs.map((tab) => {
                 const active = detailTab === tab.id;
                 return (
                   <button
@@ -164,14 +201,14 @@ export default function TechClientPortfolioPage() {
 
             {detailTab === 'comments' ? (
               <CstClientComments lead={lead} onLeadUpdated={onLeadUpdated} />
-            ) : (
+            ) : null}
+
+            {detailTab === 'portfolio' && workspaceJd === 'SEO Expert' ? (
               <LivePortfolioSection
                 mode="tech"
                 leadId={id}
                 keywords={keywords}
                 setKeywords={setKeywords}
-                changeRequests={changeRequests}
-                setChangeRequests={setChangeRequests}
                 reports={
                   Array.isArray(lead.handover?.monthlyReports)
                     ? lead.handover.monthlyReports
@@ -179,7 +216,22 @@ export default function TechClientPortfolioPage() {
                 }
                 onLeadUpdated={onLeadUpdated}
               />
-            )}
+            ) : null}
+
+            {detailTab === 'mockup' && workspaceJd === 'Developer' ? (
+              <DeveloperMockupPanel />
+            ) : null}
+
+            {detailTab === 'workspace' &&
+            workspaceJd !== 'SEO Expert' &&
+            workspaceJd !== 'Developer' ? (
+              <RoleDeliverableWorkspace
+                badge={meta.badge}
+                title={meta.notesTitle || meta.primaryLabel}
+                hint={meta.notesHint}
+                taskNotes={taskNotes}
+              />
+            ) : null}
           </>
         )}
       </section>

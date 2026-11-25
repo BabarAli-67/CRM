@@ -8,9 +8,6 @@ import {
   submitLateRequest,
 } from '../services/attendance.service.js';
 
-/** Minutes before dynamic shift.startTime when Mark Attendance becomes available. */
-const CHECK_IN_EARLY_MINUTES = 20;
-
 const formatTime = (value) => {
   if (!value) return '—';
   return new Date(value).toLocaleString('en-PK', {
@@ -143,14 +140,19 @@ export default function AttendanceBanner() {
 
   if (attendance.status === 'auto_absent') {
     const shiftStartAt = new Date(attendance.shiftStartAt);
-    const checkInOpensAt = new Date(
-      shiftStartAt.getTime() - CHECK_IN_EARLY_MINUTES * 60 * 1000
-    );
+    const checkInOpensAt = attendance.checkInOpensAt
+      ? new Date(attendance.checkInOpensAt)
+      : new Date(shiftStartAt.getTime() - 20 * 60 * 1000);
+    const checkInClosesAt = attendance.checkInClosesAt
+      ? new Date(attendance.checkInClosesAt)
+      : shiftStartAt;
+    const isTechShift = attendance.shiftProfile === 'tech';
     const current = now();
     const beforeCheckInOpens = current < checkInOpensAt;
+    // Inclusive close (Tech: through 06:10 PM PKT)
     const withinOnTimeWindow =
-      current >= checkInOpensAt && current < shiftStartAt;
-    const afterShiftStart = current >= shiftStartAt;
+      current >= checkInOpensAt && current <= checkInClosesAt;
+    const afterOnTimeWindow = current > checkInClosesAt;
 
     return (
       <div className={bannerShell}>
@@ -161,9 +163,9 @@ export default function AttendanceBanner() {
                 Check-in not open yet
               </p>
               <p className="mt-1 text-sm text-[#A3A3A3]">
-                Check-in opens 20 minutes before shift (at{' '}
-                {formatTime(checkInOpensAt)}). Shift starts at{' '}
-                {formatTime(attendance.shiftStartAt)}.
+                {isTechShift
+                  ? `Tech check-in opens at shift start (${formatTime(checkInOpensAt)}). On-time window runs until ${formatTime(checkInClosesAt)}.`
+                  : `Check-in opens 20 minutes before shift (at ${formatTime(checkInOpensAt)}). Shift starts at ${formatTime(attendance.shiftStartAt)}.`}
               </p>
             </>
           ) : withinOnTimeWindow ? (
@@ -172,7 +174,9 @@ export default function AttendanceBanner() {
                 Mark your attendance for today’s shift
               </p>
               <p className="mt-1 text-sm text-[#A3A3A3]">
-                Shift starts at {formatTime(attendance.shiftStartAt)}.
+                {isTechShift
+                  ? `On-time window: ${formatTime(checkInOpensAt)} – ${formatTime(checkInClosesAt)} PKT.`
+                  : `Shift starts at ${formatTime(attendance.shiftStartAt)}.`}
               </p>
               <button
                 type="button"
@@ -183,13 +187,15 @@ export default function AttendanceBanner() {
                 {checkInMutation.isPending ? 'Marking…' : 'Mark Attendance'}
               </button>
             </>
-          ) : afterShiftStart ? (
+          ) : afterOnTimeWindow ? (
             <>
               <p className="text-base font-semibold text-white">
                 On-time check-in window has closed
               </p>
               <p className="mt-1 text-sm text-[#A3A3A3]">
-                Shift started at {formatTime(attendance.shiftStartAt)}.
+                {isTechShift
+                  ? `On-time window closed at ${formatTime(checkInClosesAt)}. Request attendance for Super Admin review.`
+                  : `Shift started at ${formatTime(attendance.shiftStartAt)}.`}
               </p>
               <div className="mt-3">
                 {!showLateForm ? (

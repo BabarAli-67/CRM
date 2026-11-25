@@ -93,7 +93,7 @@ export const setServiceScope = async (leadId, { selected, otherNote }) => {
 /**
  * CST Client Detail — unified save for all portfolio sections.
  * Pass only the sections you want to write; future sections can be added
- * to the same payload (keywords, changeRequests, …).
+ * to the same payload (keywords, reports, …).
  */
 export const saveClientPortfolio = async (leadId, payload) => {
   const response = await api.patch(`/handover/${leadId}/portfolio`, payload);
@@ -167,19 +167,27 @@ export const clientCommentsPath = (role, leadId) => {
   if (role === 'tech_team') {
     return `/dashboard/tech-team/client/${leadId}?tab=comments`;
   }
+  if (role === 'tech_head') {
+    return `/dashboard/tech-head/escalations`;
+  }
   return `/dashboard/cst-manager/client/${leadId}?tab=comments&from=onboard`;
 };
 
-/** CST / Tech — save keywords + change requests (live portfolio). */
+/** Tech — save live portfolio keywords.
+ * Keywords are upsert-merged server-side; pass removeKeywordIds to delete. */
 export const saveLivePortfolio = async (leadId, payload) => {
   const response = await api.patch(`/handover/${leadId}/live-portfolio`, payload);
   return response.data.data.lead;
 };
 
 /** Upload monthly report PDF (Tech). */
-export const uploadMonthlyReport = async (leadId, { title, file }) => {
+export const uploadMonthlyReport = async (
+  leadId,
+  { title, reportMonth, file }
+) => {
   const formData = new FormData();
   formData.append('title', title || '');
+  if (reportMonth) formData.append('reportMonth', reportMonth);
   formData.append('report', file);
   const response = await api.post(
     `/handover/${leadId}/monthly-reports`,
@@ -196,19 +204,6 @@ export const fetchMonthlyReportBlob = async (leadId, filename) => {
     { responseType: 'blob' }
   );
   return response.data;
-};
-
-/** Tech — update change request status. */
-export const updateChangeRequestStatus = async (
-  leadId,
-  requestId,
-  status
-) => {
-  const response = await api.patch(
-    `/handover/${leadId}/change-requests/${requestId}/status`,
-    { status }
-  );
-  return response.data.data.lead;
 };
 
 export const assignHandover = async (leadId, payload) => {

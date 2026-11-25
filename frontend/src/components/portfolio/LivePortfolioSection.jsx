@@ -2,28 +2,8 @@ import { useState } from 'react';
 import {
   fetchMonthlyReportBlob,
   saveLivePortfolio,
-  updateChangeRequestStatus,
   uploadMonthlyReport,
 } from '../../services/handover.service.js';
-
-const CATEGORY_OPTIONS = [
-  { id: 'seo', label: 'SEO' },
-  { id: 'web', label: 'Web' },
-  { id: 'citation_pages', label: 'Citation Pages' },
-  { id: 'others', label: 'Others' },
-];
-
-const STATUS_OPTIONS = [
-  { id: 'pending', label: 'Pending' },
-  { id: 'in_progress', label: 'In Progress' },
-  { id: 'completed', label: 'Completed' },
-];
-
-const STATUS_BADGE = {
-  pending: 'bg-amber-500/15 text-amber-300 ring-amber-500/40',
-  in_progress: 'bg-sky-500/15 text-sky-300 ring-sky-500/35',
-  completed: 'bg-emerald-500/15 text-emerald-300 ring-emerald-500/35',
-};
 
 const fieldClass =
   'w-full rounded-xl border border-zinc-700 bg-zinc-950/60 px-4 py-2.5 text-sm text-white outline-none transition focus:border-orange-500/50 focus:ring-2 focus:ring-orange-500/20';
@@ -47,55 +27,63 @@ const formatPkt = (value) => {
   });
 };
 
-const categoryLabel = (id) => {
-  if (id === 'social_media') return 'Others';
-  if (id === 'other') return 'Others';
-  return CATEGORY_OPTIONS.find((c) => c.id === id)?.label || id;
-};
-
 /**
- * Section F — Live Portfolio, Keywords & Tech Monthly Reports.
+ * Live Portfolio, Keywords & Tech Monthly Reports.
  * mode: 'cst' | 'tech'
- * CST: keywords + change requests are controlled by parent (top Save).
- * Tech: keywords / change requests / PDF / status persist immediately.
+ * Tech: keywords + PDF uploads persist immediately.
+ * CST / Tech Head: read keywords + view/download monthly PDFs.
  */
 export default function LivePortfolioSection({
   mode = 'cst',
   leadId,
-  keywords,
+  keywords: keywordsProp,
   setKeywords,
-  changeRequests,
-  setChangeRequests,
   reports = [],
   onLeadUpdated,
 }) {
   const isTech = mode === 'tech';
+  const keywords = Array.isArray(keywordsProp) ? keywordsProp : [];
+  const reportRows = Array.isArray(reports) ? reports : [];
   const [keywordDraft, setKeywordDraft] = useState('');
   const [positionDraft, setPositionDraft] = useState('');
   const [editingKeywordId, setEditingKeywordId] = useState(null);
   const [editText, setEditText] = useState('');
   const [editPosition, setEditPosition] = useState('');
-  const [crCategory, setCrCategory] = useState('seo');
-  const [crDescription, setCrDescription] = useState('');
   const [reportTitle, setReportTitle] = useState('');
+  const [reportMonth, setReportMonth] = useState('');
   const [reportFile, setReportFile] = useState(null);
+  const [keywordNoteDraft, setKeywordNoteDraft] = useState('');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
 
-  const persistLive = async (nextKeywords, nextRequests) => {
+  const persistLive = async (nextKeywords, { removeKeywordIds } = {}) => {
+    if (!isTech) return;
     setBusy(true);
     setError('');
     try {
-      // CST may update change requests; keywords stay Tech-managed
-      const payload = isTech
-        ? {
-            portfolioKeywords: nextKeywords,
-            changeRequests: nextRequests,
-          }
-        : { changeRequests: nextRequests };
+      const payload = {
+        portfolioKeywords: nextKeywords,
+        ...(Array.isArray(removeKeywordIds) && removeKeywordIds.length
+          ? { removeKeywordIds }
+          : {}),
+      };
       const updated = await saveLivePortfolio(leadId, payload);
       onLeadUpdated?.(updated);
+      // Sync local keyword list from server merge (includes peers' rows)
+      if (Array.isArray(updated?.handover?.portfolioKeywords)) {
+        setKeywords(
+          updated.handover.portfolioKeywords.map((row, i) => ({
+            keywordId: row.keywordId || `kw-${i + 1}`,
+            text: row.text || '',
+            position: row.position || null,
+            note: row.note || null,
+            at: row.at || null,
+            updatedBy: row.updatedBy || null,
+            updatedByName: row.updatedByName || null,
+          }))
+        );
+      }
       setMessage('Live portfolio updated.');
     } catch (err) {
       setError(
@@ -110,20 +98,42 @@ export default function LivePortfolioSection({
     if (!isTech) return;
     const text = keywordDraft.trim();
     if (!text) return;
-    const next = [
-      ...keywords,
-      {
-        keywordId: newId('kw'),
-        text,
-        position: positionDraft.trim() || null,
-        note: null,
-        at: new Date().toISOString(),
-      },
-    ];
+    // Update rank if keyword already exists (case-insensitive)
+    const existingIdx = keywords.findIndex(
+      (k) =>
+        String(k.text || '')
+          .trim()
+          .toLowerCase() === text.toLowerCase()
+    );
+    let next;
+    if (existingIdx >= 0) {
+      next = keywords.map((kw, i) =>
+        i === existingIdx
+          ? {
+              ...kw,
+              position: positionDraft.trim() || kw.position || null,
+              note: keywordNoteDraft.trim() || kw.note || null,
+              at: new Date().toISOString(),
+            }
+          : kw
+      );
+    } else {
+      next = [
+        ...keywords,
+        {
+          keywordId: newId('kw'),
+          text,
+          position: positionDraft.trim() || null,
+          note: keywordNoteDraft.trim() || null,
+          at: new Date().toISOString(),
+        },
+      ];
+    }
     setKeywords(next);
     setKeywordDraft('');
     setPositionDraft('');
-    await persistLive(next, changeRequests);
+    setKeywordNoteDraft('');
+    await persistLive(next);
   };
 
   const startEditKeyword = (kw) => {
@@ -157,7 +167,7 @@ export default function LivePortfolioSection({
     );
     setKeywords(next);
     cancelEditKeyword();
-    await persistLive(next, changeRequests);
+    await persistLive(next);
   };
 
   const removeKeyword = async (keywordId) => {
@@ -165,56 +175,9 @@ export default function LivePortfolioSection({
     const next = keywords.filter((k) => k.keywordId !== keywordId);
     setKeywords(next);
     if (editingKeywordId === keywordId) cancelEditKeyword();
-    await persistLive(next, changeRequests);
-  };
-
-  const addChangeRequest = async () => {
-    const description = crDescription.trim();
-    if (!description) {
-      setError('Enter a change description.');
-      return;
-    }
-    const next = [
-      ...changeRequests,
-      {
-        requestId: newId('cr'),
-        category: crCategory,
-        description,
-        status: 'pending',
-        loggedAt: new Date().toISOString(),
-      },
-    ];
-    setChangeRequests(next);
-    setCrDescription('');
-    setError('');
-    await persistLive(keywords, next);
-  };
-
-  const onStatusChange = async (requestId, status) => {
-    if (!isTech) return;
-    setBusy(true);
-    setError('');
-    try {
-      const updated = await updateChangeRequestStatus(
-        leadId,
-        requestId,
-        status
-      );
-      onLeadUpdated?.(updated);
-      const synced = Array.isArray(updated?.handover?.changeRequests)
-        ? updated.handover.changeRequests
-        : changeRequests.map((r) =>
-            r.requestId === requestId ? { ...r, status } : r
-          );
-      setChangeRequests(synced);
-      setMessage('Change request status updated.');
-    } catch (err) {
-      setError(
-        err?.response?.data?.message || 'Failed to update status.'
-      );
-    } finally {
-      setBusy(false);
-    }
+    await persistLive(next, {
+      removeKeywordIds: [keywordId],
+    });
   };
 
   const onUploadReport = async () => {
@@ -222,15 +185,23 @@ export default function LivePortfolioSection({
       setError('Choose a PDF file to upload.');
       return;
     }
+    const name = String(reportFile.name || '').toLowerCase();
+    const type = String(reportFile.type || '').toLowerCase();
+    if (!name.endsWith('.pdf') || (type && type !== 'application/pdf' && type !== 'application/x-pdf')) {
+      setError('Only .pdf files are accepted for monthly reports.');
+      return;
+    }
     setBusy(true);
     setError('');
     try {
       const updated = await uploadMonthlyReport(leadId, {
         title: reportTitle.trim() || reportFile.name,
+        reportMonth: reportMonth.trim() || undefined,
         file: reportFile,
       });
       onLeadUpdated?.(updated);
       setReportTitle('');
+      setReportMonth('');
       setReportFile(null);
       setMessage('Monthly report uploaded.');
     } catch (err) {
@@ -268,9 +239,7 @@ export default function LivePortfolioSection({
           Live Portfolio, Keywords & Tech Monthly Reports
         </h2>
         <p className="mt-1 text-sm text-zinc-500">
-          {isTech
-            ? 'Shared CST ↔ Tech workspace for keywords, monthly PDFs, and client change requests.'
-            : 'Shared CST ↔ Tech workspace for keywords and monthly PDFs.'}
+          Shared CST ↔ Tech workspace for keywords and monthly PDFs.
         </p>
       </div>
 
@@ -285,10 +254,9 @@ export default function LivePortfolioSection({
         </p>
       ) : null}
 
-      <div className="grid gap-4 lg:grid-cols-2">
-      <div className="space-y-4">
+      <div className="grid w-full grid-cols-1 gap-6 xl:grid-cols-2">
       {/* Keywords — Tech manages; CST view-only table */}
-      <div className="rounded-xl border border-zinc-800 bg-zinc-950/40 p-4">
+      <div className="min-w-0 rounded-xl border border-zinc-800 bg-zinc-950/40 p-4">
         <h3 className="text-sm font-semibold text-white">Portfolio Keywords</h3>
         <p className="mt-1 text-xs text-zinc-500">
           {isTech
@@ -297,7 +265,7 @@ export default function LivePortfolioSection({
         </p>
 
         {isTech ? (
-          <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_1fr_auto]">
+          <div className="mt-3 grid gap-2 sm:grid-cols-2">
             <input
               type="text"
               value={keywordDraft}
@@ -308,7 +276,7 @@ export default function LivePortfolioSection({
                   addKeyword();
                 }
               }}
-              placeholder="Keyword phrase…"
+              placeholder="Keyword…"
               className={fieldClass}
             />
             <input
@@ -321,16 +289,23 @@ export default function LivePortfolioSection({
                   addKeyword();
                 }
               }}
-              placeholder="Position e.g. #3 or Page 1 - Pos 4"
+              placeholder="Position / Rank e.g. #3"
               className={fieldClass}
+            />
+            <input
+              type="text"
+              value={keywordNoteDraft}
+              onChange={(e) => setKeywordNoteDraft(e.target.value)}
+              placeholder="Optional notes…"
+              className={`${fieldClass} sm:col-span-2`}
             />
             <button
               type="button"
               disabled={busy || !keywordDraft.trim()}
               onClick={addKeyword}
-              className="shrink-0 rounded-xl bg-orange-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-orange-500 disabled:opacity-50"
+              className="sm:col-span-2 shrink-0 rounded-xl bg-orange-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-orange-500 disabled:opacity-50"
             >
-              Add Keyword
+              Add / Update Keyword & Rank
             </button>
           </div>
         ) : null}
@@ -341,7 +316,9 @@ export default function LivePortfolioSection({
               <tr>
                 <th className="px-3 py-2.5 font-medium w-12">#</th>
                 <th className="px-3 py-2.5 font-medium">Keyword</th>
-                <th className="px-3 py-2.5 font-medium">Position of Keyword</th>
+                <th className="px-3 py-2.5 font-medium">Position</th>
+                <th className="px-3 py-2.5 font-medium">Updated By</th>
+                <th className="px-3 py-2.5 font-medium">Last Updated</th>
                 {isTech ? (
                   <th className="px-3 py-2.5 font-medium text-right">Actions</th>
                 ) : null}
@@ -351,7 +328,7 @@ export default function LivePortfolioSection({
               {keywords.length === 0 ? (
                 <tr>
                   <td
-                    colSpan={isTech ? 4 : 3}
+                    colSpan={isTech ? 6 : 5}
                     className="px-3 py-8 text-center text-sm text-zinc-500"
                   >
                     {isTech
@@ -398,6 +375,12 @@ export default function LivePortfolioSection({
                             {kw.position?.trim() || 'Not Ranked'}
                           </span>
                         )}
+                      </td>
+                      <td className="px-3 py-2.5 text-zinc-400">
+                        {kw.updatedByName || '—'}
+                      </td>
+                      <td className="px-3 py-2.5 text-xs text-zinc-500">
+                        {formatPkt(kw.at)}
                       </td>
                       {isTech ? (
                         <td className="px-3 py-2.5">
@@ -454,7 +437,7 @@ export default function LivePortfolioSection({
       </div>
 
       {/* Monthly Reports */}
-      <div className="rounded-xl border border-zinc-800 bg-zinc-950/40 p-4">
+      <div className="min-w-0 rounded-xl border border-zinc-800 bg-zinc-950/40 p-4">
         <h3 className="text-sm font-semibold text-white">
           Monthly Reports (PDF)
         </h3>
@@ -465,162 +448,120 @@ export default function LivePortfolioSection({
         </p>
 
         {isTech ? (
-          <div className="mt-3 grid gap-3 sm:grid-cols-[1fr_auto_auto]">
+          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            <input
+              type="text"
+              value={reportMonth}
+              onChange={(e) => setReportMonth(e.target.value)}
+              placeholder="Report Month e.g. November 2026"
+              className={fieldClass}
+            />
             <input
               type="text"
               value={reportTitle}
               onChange={(e) => setReportTitle(e.target.value)}
-              placeholder='Title e.g. "November 2026 SEO Report"'
+              placeholder="Report Title"
               className={fieldClass}
             />
             <input
               type="file"
               accept="application/pdf,.pdf"
-              onChange={(e) => setReportFile(e.target.files?.[0] || null)}
-              className="text-sm text-zinc-400 file:mr-3 file:rounded-lg file:border-0 file:bg-zinc-800 file:px-3 file:py-2 file:text-sm file:font-semibold file:text-white"
+              onChange={(e) => {
+                const file = e.target.files?.[0] || null;
+                if (
+                  file &&
+                  !String(file.name || '')
+                    .toLowerCase()
+                    .endsWith('.pdf')
+                ) {
+                  setReportFile(null);
+                  setError('Only .pdf files are accepted for monthly reports.');
+                  e.target.value = '';
+                  return;
+                }
+                setError('');
+                setReportFile(file);
+              }}
+              className="text-sm text-zinc-400 file:mr-3 file:rounded-lg file:border-0 file:bg-zinc-800 file:px-3 file:py-2 file:text-sm file:font-semibold file:text-white sm:col-span-2"
             />
             <button
               type="button"
               disabled={busy || !reportFile}
               onClick={onUploadReport}
-              className="rounded-xl bg-orange-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-orange-500 disabled:opacity-50"
+              className="rounded-xl bg-orange-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-orange-500 disabled:opacity-50 sm:col-span-2"
             >
-              {busy ? 'Uploading…' : 'Upload PDF'}
+              {busy ? 'Uploading…' : 'Upload Monthly Report (PDF)'}
             </button>
           </div>
         ) : null}
 
-        <div className="mt-3 space-y-2">
-          {reports.length === 0 ? (
-            <p className="text-sm text-zinc-500">No monthly reports yet.</p>
-          ) : (
-            reports.map((report) => (
-              <div
-                key={report.reportId}
-                className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-zinc-800 bg-zinc-900/50 px-3 py-2.5"
-              >
-                <div>
-                  <p className="text-sm font-medium text-white">
-                    {report.title}
-                  </p>
-                  <p className="text-xs text-zinc-500">
-                    Uploaded {formatPkt(report.at)} PKT
-                  </p>
-                </div>
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    onClick={() => openReport(report)}
-                    className="rounded-lg border border-zinc-600 px-3 py-1.5 text-xs font-semibold text-zinc-200 hover:bg-zinc-800"
+        <div className="mt-4 overflow-x-auto rounded-xl border border-zinc-800/80">
+          <table className="min-w-full text-left text-sm text-zinc-200">
+            <thead className="border-b border-zinc-800 bg-zinc-950/60 text-xs uppercase tracking-wide text-zinc-500">
+              <tr>
+                <th className="px-3 py-2.5 font-medium">Month</th>
+                <th className="px-3 py-2.5 font-medium">Title</th>
+                <th className="px-3 py-2.5 font-medium">Uploaded By</th>
+                <th className="px-3 py-2.5 font-medium">Date</th>
+                <th className="px-3 py-2.5 font-medium text-right">PDF</th>
+              </tr>
+            </thead>
+            <tbody>
+              {reportRows.length === 0 ? (
+                <tr>
+                  <td
+                    colSpan={5}
+                    className="px-3 py-8 text-center text-sm text-zinc-500"
                   >
-                    View PDF
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => openReport(report, { download: true })}
-                    className="rounded-lg bg-orange-600/20 px-3 py-1.5 text-xs font-semibold text-orange-300 hover:bg-orange-600/30"
+                    No monthly reports yet.
+                  </td>
+                </tr>
+              ) : (
+                reportRows.map((report) => (
+                  <tr
+                    key={report.reportId}
+                    className="border-b border-zinc-800/50 last:border-0"
                   >
-                    Download
-                  </button>
-                </div>
-              </div>
-            ))
-          )}
-        </div>
-      </div>
-      </div>
-
-      {/* Change Request Log — Tech portfolio only (hidden on CST Client Detail) */}
-      {isTech ? (
-        <div className="rounded-xl border border-zinc-800 bg-zinc-950/40 p-4">
-          <h3 className="text-sm font-semibold text-white">
-            Client Change Request Log
-          </h3>
-          <p className="mt-1 text-xs text-zinc-500">
-            Log client change requests. Tech updates status in real time.
-          </p>
-
-          <div className="mt-3 grid gap-3 sm:grid-cols-[10rem_1fr_auto]">
-            <select
-              value={crCategory}
-              onChange={(e) => setCrCategory(e.target.value)}
-              className={fieldClass}
-            >
-              {CATEGORY_OPTIONS.map((opt) => (
-                <option key={opt.id} value={opt.id}>
-                  {opt.label}
-                </option>
-              ))}
-            </select>
-            <textarea
-              value={crDescription}
-              onChange={(e) => setCrDescription(e.target.value)}
-              rows={2}
-              placeholder="Describe the client change request…"
-              className={`${fieldClass} resize-y`}
-            />
-            <button
-              type="button"
-              disabled={busy || !crDescription.trim()}
-              onClick={addChangeRequest}
-              className="self-start rounded-xl bg-orange-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-orange-500 disabled:opacity-50"
-            >
-              Log Request
-            </button>
-          </div>
-
-          <div className="mt-4 space-y-2">
-            {changeRequests.length === 0 ? (
-              <p className="text-sm text-zinc-500">No change requests logged.</p>
-            ) : (
-              changeRequests.map((row) => (
-                <div
-                  key={row.requestId}
-                  className="rounded-lg border border-zinc-800 bg-zinc-900/50 px-3 py-3"
-                >
-                  <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
-                          {categoryLabel(row.category)}
-                        </span>
-                        <span
-                          className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold ring-1 ${
-                            STATUS_BADGE[row.status] || STATUS_BADGE.pending
-                          }`}
+                    <td className="px-3 py-2.5 text-zinc-300">
+                      {report.reportMonth || '—'}
+                    </td>
+                    <td className="px-3 py-2.5 font-medium text-white">
+                      {report.title}
+                    </td>
+                    <td className="px-3 py-2.5 text-zinc-400">
+                      {report.uploadedByName ||
+                        report.uploadedBy?.fullName ||
+                        report.uploadedBy?.username ||
+                        '—'}
+                    </td>
+                    <td className="px-3 py-2.5 text-xs text-zinc-500">
+                      {formatPkt(report.at)}
+                    </td>
+                    <td className="px-3 py-2.5">
+                      <div className="flex justify-end gap-2">
+                        <button
+                          type="button"
+                          onClick={() => openReport(report)}
+                          className="rounded-lg border border-zinc-600 px-3 py-1.5 text-xs font-semibold text-zinc-200 hover:bg-zinc-800"
                         >
-                          {STATUS_OPTIONS.find((s) => s.id === row.status)
-                            ?.label || row.status}
-                        </span>
+                          View
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => openReport(report, { download: true })}
+                          className="rounded-lg bg-orange-600/20 px-3 py-1.5 text-xs font-semibold text-orange-300 hover:bg-orange-600/30"
+                        >
+                          Download
+                        </button>
                       </div>
-                      <p className="mt-1 text-sm text-zinc-200 whitespace-pre-wrap">
-                        {row.description}
-                      </p>
-                      <p className="mt-1 text-xs text-zinc-500">
-                        Logged {formatPkt(row.loggedAt)} PKT
-                      </p>
-                    </div>
-                    <select
-                      value={row.status || 'pending'}
-                      disabled={busy}
-                      onChange={(e) =>
-                        onStatusChange(row.requestId, e.target.value)
-                      }
-                      className="rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-xs font-semibold text-white"
-                    >
-                      {STATUS_OPTIONS.map((opt) => (
-                        <option key={opt.id} value={opt.id}>
-                          {opt.label}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
         </div>
-      ) : null}
+      </div>
       </div>
     </div>
   );
@@ -638,6 +579,7 @@ export const mapKeywordsFromLead = (lead) => {
         position: null,
         note: null,
         at: null,
+        updatedByName: null,
       };
     }
     return {
@@ -646,22 +588,9 @@ export const mapKeywordsFromLead = (lead) => {
       position: row.position || row.rank || null,
       note: row.note || null,
       at: row.at || null,
+      updatedBy: row.updatedBy || null,
+      updatedByName: row.updatedByName || null,
     };
   });
 };
 
-export const mapChangeRequestsFromLead = (lead) => {
-  const rows = Array.isArray(lead?.handover?.changeRequests)
-    ? lead.handover.changeRequests
-    : [];
-  return rows.map((row, i) => ({
-    requestId: row.requestId || `cr-${i + 1}`,
-    category: row.category || 'other',
-    description: row.description || '',
-    status: row.status || 'pending',
-    loggedAt: row.loggedAt || null,
-    loggedBy: row.loggedBy || null,
-    statusUpdatedAt: row.statusUpdatedAt || null,
-    statusUpdatedBy: row.statusUpdatedBy || null,
-  }));
-};

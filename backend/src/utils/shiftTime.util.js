@@ -9,17 +9,76 @@ dayjs.extend(customParseFormat);
 
 export const TZ = 'Asia/Karachi';
 
-/** Minutes before shift.startTime when on-time check-in becomes available. */
+/** Minutes before shift.startTime when on-time check-in becomes available (desk roles). */
 export const CHECK_IN_EARLY_MINUTES = 20;
 
 /**
- * Absolute PKT instant when check-in opens for a given shift start.
- * Derived from dynamic shiftStartAt — never from a hardcoded clock time.
+ * Tech Department fixed shift (independent of admin Shift settings).
+ * 06:00 PM – 03:00 AM PKT with a 10-minute on-time grace after start.
  */
-export const getCheckInOpensAt = (shiftStartAt) =>
-  dayjs(shiftStartAt).tz(TZ).subtract(CHECK_IN_EARLY_MINUTES, 'minute').toDate();
+export const TECH_SHIFT = {
+  startTime: '18:00',
+  endTime: '03:00',
+  /** On-time Present window: shiftStart … shiftStart + grace (inclusive). */
+  checkInGraceMinutes: 10,
+};
 
-export const getShiftWindowForDate = (shiftDateStr, shiftSettings) => {
+export const isTechAttendanceRole = (role) =>
+  String(role || '').trim() === 'tech_team';
+
+/**
+ * Merge global weekend/timezone with role-specific clock times.
+ * Tech specialists always use TECH_SHIFT; other roles use admin Shift settings.
+ */
+export const resolveShiftSettingsForRole = (role, globalSettings = {}) => {
+  const weekendDays = Array.isArray(globalSettings.weekendDays)
+    ? globalSettings.weekendDays
+    : [6, 0];
+  if (isTechAttendanceRole(role)) {
+    return {
+      startTime: TECH_SHIFT.startTime,
+      endTime: TECH_SHIFT.endTime,
+      weekendDays,
+      timezone: globalSettings.timezone || TZ,
+    };
+  }
+  return {
+    startTime: globalSettings.startTime || '19:00',
+    endTime: globalSettings.endTime || '04:00',
+    weekendDays,
+    timezone: globalSettings.timezone || TZ,
+  };
+};
+
+/**
+ * Absolute PKT instant when on-time check-in opens.
+ * Desk roles: 20 minutes before start. Tech: at shift start.
+ */
+export const getCheckInOpensAt = (shiftStartAt, role) => {
+  if (isTechAttendanceRole(role)) {
+    return dayjs(shiftStartAt).tz(TZ).toDate();
+  }
+  return dayjs(shiftStartAt)
+    .tz(TZ)
+    .subtract(CHECK_IN_EARLY_MINUTES, 'minute')
+    .toDate();
+};
+
+/**
+ * Absolute PKT instant when on-time check-in closes (inclusive end).
+ * Desk roles: at shift start. Tech: shift start + 10 minutes.
+ */
+export const getCheckInClosesAt = (shiftStartAt, role) => {
+  if (isTechAttendanceRole(role)) {
+    return dayjs(shiftStartAt)
+      .tz(TZ)
+      .add(TECH_SHIFT.checkInGraceMinutes, 'minute')
+      .toDate();
+  }
+  return dayjs(shiftStartAt).tz(TZ).toDate();
+};
+
+export const getShiftWindowForDate = (shiftDateStr, shiftSettings, role) => {
   const shiftStartAt = dayjs.tz(
     `${shiftDateStr} ${shiftSettings.startTime}`,
     'YYYY-MM-DD HH:mm',
@@ -40,14 +99,14 @@ export const getShiftWindowForDate = (shiftDateStr, shiftSettings) => {
     shiftEndAt = shiftEndAt.add(1, 'day');
   }
 
-  const checkInOpensAt = shiftStartAt
-    .subtract(CHECK_IN_EARLY_MINUTES, 'minute')
-    .toDate();
+  const checkInOpensAt = getCheckInOpensAt(shiftStartAt.toDate(), role);
+  const checkInClosesAt = getCheckInClosesAt(shiftStartAt.toDate(), role);
 
   return {
     shiftStartAt: shiftStartAt.toDate(),
     shiftEndAt: shiftEndAt.toDate(),
     checkInOpensAt,
+    checkInClosesAt,
   };
 };
 

@@ -37,12 +37,27 @@ const userSchema = new mongoose.Schema(
     /** Role requested at signup; final role is set on admin approval. */
     requestedRole: {
       type: String,
-      enum: ['admin', 'sales_agent', 'closer', 'cst_manager', 'tech_team'],
+      enum: [
+        'admin',
+        'sales_agent',
+        'closer',
+        'cst_manager',
+        'tech_head',
+        'tech_team',
+      ],
       default: undefined,
     },
     role: {
       type: String,
-      enum: ['super_admin', 'admin', 'sales_agent', 'closer', 'cst_manager', 'tech_team'],
+      enum: [
+        'super_admin',
+        'admin',
+        'sales_agent',
+        'closer',
+        'cst_manager',
+        'tech_head',
+        'tech_team',
+      ],
       default: null,
     },
     status: {
@@ -54,6 +69,38 @@ const userSchema = new mongoose.Schema(
     isAdmin: {
       type: Boolean,
       default: false,
+    },
+    /**
+     * Login / contact email (Tech Head team creates; optional for legacy users).
+     * Auth accepts `username` or `email` as the login identifier.
+     */
+    email: {
+      type: String,
+      default: null,
+      trim: true,
+      lowercase: true,
+    },
+    /**
+     * Tech Department job description (specialists only).
+     * Intern requires assignedMentorId.
+     */
+    jd: {
+      type: String,
+      enum: [
+        'Developer',
+        'Content Writer',
+        'SEO Expert',
+        'Social Media Manager',
+        'Graphic Designer',
+        'Intern',
+      ],
+      default: undefined,
+    },
+    /** Mentor / Reports-To for Interns (tech_team user with non-Intern jd). */
+    assignedMentorId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      default: null,
     },
   },
   { timestamps: true }

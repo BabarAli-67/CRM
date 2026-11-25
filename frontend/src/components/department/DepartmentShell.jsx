@@ -18,6 +18,7 @@ const ROLE_LABELS = {
   sales_agent: 'Sales Agent',
   closer: 'Closer',
   cst_manager: 'CST Manager',
+  tech_head: 'Tech Head',
   tech_team: 'Tech Team',
 };
 
@@ -238,16 +239,28 @@ function DepartmentKpiStrip({ role }) {
   const pulse = derivePulse(attendance, nowMs);
   const pulseClasses = PULSE_BADGE[pulse.key] || PULSE_BADGE.unknown;
 
-  const startLabel = formatShiftClock(shiftData?.settings?.startTime || '19:00');
-  const endLabel = formatShiftClock(shiftData?.settings?.endTime || '04:00');
+  // Tech Department uses a fixed 06:00 PM – 03:00 AM PKT window (independent of admin Shift settings).
+  const isTechShift = role === 'tech_team';
+  const startLabel = formatShiftClock(
+    isTechShift ? '18:00' : shiftData?.settings?.startTime || '19:00'
+  );
+  const endLabel = formatShiftClock(
+    isTechShift ? '03:00' : shiftData?.settings?.endTime || '04:00'
+  );
 
   const monthlyMinutes = useMemo(() => {
     if (showClosedCount) return 0;
 
+    // Strict PKT calendar month — resets to 0 at month boundary; history stays in DB.
+    const monthRows = historyRecords.filter((row) =>
+      String(row?.shiftDate || '').startsWith(month)
+    );
+
     const openId =
       isOnDuty && attendance?._id ? String(attendance._id) : null;
+    const todayInMonth = String(attendance?.shiftDate || '').startsWith(month);
 
-    const completed = historyRecords.reduce((sum, row) => {
+    const completed = monthRows.reduce((sum, row) => {
       // Open shift is counted via live elapsed — skip to avoid double-count
       if (openId && String(row._id) === openId && !row.checkOutTime) {
         return sum;
@@ -255,9 +268,10 @@ function DepartmentKpiStrip({ role }) {
       return sum + completedRowMinutes(row);
     }, 0);
 
-    const active = isOnDuty
-      ? elapsedActiveMinutes(attendance, tickNow)
-      : 0;
+    const active =
+      isOnDuty && todayInMonth
+        ? elapsedActiveMinutes(attendance, tickNow)
+        : 0;
 
     return completed + active;
   }, [
@@ -266,6 +280,7 @@ function DepartmentKpiStrip({ role }) {
     tickNow,
     showClosedCount,
     isOnDuty,
+    month,
   ]);
 
   const activityLabel = showClosedCount
@@ -317,12 +332,16 @@ function DepartmentKpiStrip({ role }) {
   );
 }
 
-function HeaderPulseDot() {
+function HeaderPulseDot({ enabled = true }) {
   const { data: todayData } = useQuery({
     queryKey: ['todayAttendance'],
     queryFn: getTodayStatus,
     refetchInterval: 30_000,
+    enabled,
   });
+
+  if (!enabled) return null;
+
   const pulse = derivePulse(todayData?.attendance);
   const pulseClasses = PULSE_BADGE[pulse.key] || PULSE_BADGE.unknown;
 
@@ -348,6 +367,11 @@ export default function DepartmentShell({
   children,
   /** When false, hide AttendanceBanner + KPI strip (page content only). */
   showAttendanceChrome = true,
+  /**
+   * When false, hide the header ABSENT / On Duty pulse pill.
+   * Defaults off for Tech Head (no personal attendance).
+   */
+  showAttendancePulse,
 }) {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
@@ -355,6 +379,10 @@ export default function DepartmentShell({
   const role = user?.role;
   const displayRole = roleLabel || ROLE_LABELS[role] || role || 'Department';
   const [mobileOpen, setMobileOpen] = useState(false);
+  const pulseEnabled =
+    showAttendancePulse !== undefined
+      ? Boolean(showAttendancePulse)
+      : role !== 'tech_head';
 
   const handleLogout = () => {
     logout();
@@ -492,7 +520,7 @@ export default function DepartmentShell({
           </div>
           <div className="flex min-w-0 items-center gap-2 sm:gap-3">
             <ClientCommentNotificationBell />
-            <HeaderPulseDot />
+            <HeaderPulseDot enabled={pulseEnabled} />
             <SessionIdentityBadge user={user} roleLabel={displayRole} />
           </div>
         </header>

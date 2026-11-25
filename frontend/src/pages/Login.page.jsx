@@ -28,6 +28,7 @@ export default function LoginPage() {
         sales_agent: '/dashboard/sales-agent',
         closer: '/dashboard/closer',
         cst_manager: '/dashboard/cst-manager',
+        tech_head: '/dashboard/tech-head',
         tech_team: '/dashboard/tech-team',
       };
 

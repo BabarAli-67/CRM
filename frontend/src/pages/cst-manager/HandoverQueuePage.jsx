@@ -66,12 +66,16 @@ const TECH_BADGE = {
     className: 'bg-orange-500/15 text-orange-300 ring-1 ring-orange-500/40',
   },
   assigned: {
-    label: 'Assigned to Tech',
+    label: 'Pending',
     className: 'bg-sky-500/15 text-sky-300 ring-1 ring-sky-500/35',
   },
   in_progress: {
     label: 'In Progress',
     className: 'bg-amber-500/15 text-amber-300 ring-1 ring-amber-500/40',
+  },
+  ongoing_seo: {
+    label: 'Ongoing (SEO)',
+    className: 'bg-violet-500/15 text-violet-300 ring-1 ring-violet-500/35',
   },
   completed: {
     label: 'Completed',
@@ -214,15 +218,17 @@ export default function HandoverQueuePage() {
     let onboarded = 0;
     let assigned = 0;
     let inProgress = 0;
+    let ongoingSeo = 0;
     let completed = 0;
     for (const lead of techLeads) {
       const s = resolveTechStatus(lead);
       if (s === 'onboarded') onboarded += 1;
       else if (s === 'completed') completed += 1;
+      else if (s === 'ongoing_seo') ongoingSeo += 1;
       else if (s === 'in_progress') inProgress += 1;
       else assigned += 1;
     }
-    return { onboarded, assigned, inProgress, completed };
+    return { onboarded, assigned, inProgress, ongoingSeo, completed };
   }, [techLeads]);
 
   const activeMeta = TAB_META[tab] || TAB_META.pending;
@@ -557,14 +563,14 @@ export default function HandoverQueuePage() {
 
         {tab === 'tech' ? (
           <div className="space-y-5">
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
               <StatusSummary
                 label="Onboarded / Active"
                 value={techCounts.onboarded}
                 accent="text-orange-300"
               />
               <StatusSummary
-                label="Not Started"
+                label="Pending"
                 value={techCounts.assigned}
                 accent="text-sky-300"
               />
@@ -572,6 +578,11 @@ export default function HandoverQueuePage() {
                 label="In Progress"
                 value={techCounts.inProgress}
                 accent="text-amber-300"
+              />
+              <StatusSummary
+                label="Ongoing (SEO)"
+                value={techCounts.ongoingSeo}
+                accent="text-violet-300"
               />
               <StatusSummary
                 label="Completed"

@@ -63,6 +63,15 @@ const leadSchema = new mongoose.Schema(
       default: null,
       trim: true,
     },
+    /**
+     * Social profile URLs (Facebook, Instagram, LinkedIn, TikTok, YouTube, …).
+     * Freeform multi-line / comma-separated text preserved as entered.
+     */
+    socialLinks: {
+      type: String,
+      default: null,
+      trim: true,
+    },
     serviceAreas: {
       type: String,
       default: null,
@@ -327,6 +336,7 @@ const leadSchema = new mongoose.Schema(
             'onboarded',
             'assigned',
             'in_progress',
+            'ongoing_seo',
             'completed',
           ],
           default: 'awaiting_handover',
@@ -336,10 +346,32 @@ const leadSchema = new mongoose.Schema(
           type: Date,
           default: null,
         },
+        /**
+         * Permanent Tech Department project number (#1, #2, …).
+         * Assigned on onboard; never reused or renumbered.
+         */
+        projectNumber: {
+          type: Number,
+          default: null,
+          min: 1,
+        },
         assignedTechId: {
           type: mongoose.Schema.Types.ObjectId,
           ref: 'User',
           default: null,
+        },
+        /**
+         * One or more Tech specialists assigned by Tech Head.
+         * Regular tech_team visibility is scoped to this list (or legacy assignedTechId).
+         */
+        assignedTechIds: {
+          type: [
+            {
+              type: mongoose.Schema.Types.ObjectId,
+              ref: 'User',
+            },
+          ],
+          default: undefined,
         },
         assignedAt: {
           type: Date,
@@ -652,6 +684,12 @@ const leadSchema = new mongoose.Schema(
               position: { type: String, default: null, trim: true },
               note: { type: String, default: null, trim: true },
               at: { type: Date, default: Date.now },
+              updatedBy: {
+                type: mongoose.Schema.Types.ObjectId,
+                ref: 'User',
+                default: null,
+              },
+              updatedByName: { type: String, default: null, trim: true },
             },
           ],
           default: undefined,
@@ -664,6 +702,8 @@ const leadSchema = new mongoose.Schema(
             {
               reportId: { type: String, required: true, trim: true },
               title: { type: String, required: true, trim: true },
+              /** Display month e.g. "November 2026" */
+              reportMonth: { type: String, default: null, trim: true },
               originalName: { type: String, default: null },
               storedFilename: { type: String, required: true },
               mimeType: { type: String, default: 'application/pdf' },
@@ -674,6 +714,7 @@ const leadSchema = new mongoose.Schema(
                 ref: 'User',
                 default: null,
               },
+              uploadedByName: { type: String, default: null, trim: true },
               at: { type: Date, default: Date.now },
             },
           ],
@@ -781,11 +822,98 @@ const leadSchema = new mongoose.Schema(
           ],
           default: [],
         },
-        /** Tech execution progress (mirrors assigned → in_progress → completed). */
+        /** Tech execution: assigned(Pending) → in_progress → ongoing_seo → completed. */
         techStatus: {
           type: String,
-          enum: ['assigned', 'in_progress', 'completed'],
+          enum: ['assigned', 'in_progress', 'ongoing_seo', 'completed'],
           default: null,
+        },
+        /**
+         * Tech Head operational trackers (editable by Tech Head only).
+         * Visible read-only to assigned Tech specialists.
+         */
+        clientOpsStatus: {
+          type: String,
+          enum: ['Running', 'Paused', 'Stopped / Out', 'Pending'],
+          default: null,
+        },
+        gmbOpsStatus: {
+          type: String,
+          enum: [
+            'Verified',
+            'Pending Verification',
+            'Suspended',
+            'Not Applicable',
+          ],
+          default: null,
+        },
+        websiteSeoOpsStatus: {
+          type: String,
+          enum: [
+            'Running',
+            'In Progress',
+            'Paused',
+            'Completed',
+            'Not Applicable',
+          ],
+          default: null,
+        },
+        /**
+         * Tech Head forwards of CST @Tech Head escalations to specialists.
+         */
+        techTaskNotes: {
+          type: [
+            {
+              noteId: { type: String, required: true, trim: true },
+              commentId: { type: String, default: null, trim: true },
+              body: { type: String, required: true, trim: true },
+              guidance: { type: String, default: null, trim: true },
+              assignedToUserId: {
+                type: mongoose.Schema.Types.ObjectId,
+                ref: 'User',
+                required: true,
+              },
+              assignedToName: { type: String, default: null, trim: true },
+              createdBy: {
+                type: mongoose.Schema.Types.ObjectId,
+                ref: 'User',
+                default: null,
+              },
+              createdByName: { type: String, default: null, trim: true },
+              createdAt: { type: Date, default: Date.now },
+            },
+          ],
+          default: undefined,
+        },
+        /**
+         * Silent Intern → Tech Head activity copies (mentor never sees this channel).
+         */
+        internActivity: {
+          type: [
+            {
+              activityId: { type: String, required: true, trim: true },
+              type: {
+                type: String,
+                enum: ['status', 'keyword', 'report', 'work_log'],
+                default: 'work_log',
+              },
+              summary: { type: String, required: true, trim: true },
+              internId: {
+                type: mongoose.Schema.Types.ObjectId,
+                ref: 'User',
+                required: true,
+              },
+              internName: { type: String, default: null, trim: true },
+              mentorId: {
+                type: mongoose.Schema.Types.ObjectId,
+                ref: 'User',
+                default: null,
+              },
+              mentorName: { type: String, default: null, trim: true },
+              createdAt: { type: Date, default: Date.now },
+            },
+          ],
+          default: undefined,
         },
         overrideLog: {
           type: [
@@ -828,6 +956,11 @@ leadSchema.index({ closerId: 1, stage: 1 });
 leadSchema.index({ status: 1, stage: 1, closerId: 1 });
 leadSchema.index({ 'followUp.callbackAt': 1 });
 leadSchema.index({ 'handover.assignedTechId': 1, 'handover.cstStatus': 1 });
+leadSchema.index({ 'handover.assignedTechIds': 1, 'handover.cstStatus': 1 });
 leadSchema.index({ status: 1, createdAt: 1 });
+leadSchema.index(
+  { 'handover.projectNumber': 1 },
+  { unique: true, sparse: true }
+);
 
 export default mongoose.model('Lead', leadSchema);

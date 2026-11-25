@@ -36,18 +36,27 @@ const formatCountdown = (remainingMs) => {
   return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
 };
 
+const PERSONAL_ATTENDANCE_ROLES = new Set([
+  'sales_agent',
+  'closer',
+  'cst_manager',
+  'tech_team',
+]);
+
 export default function GracefulExitModal() {
   const navigate = useNavigate();
-  const { logout } = useAuth();
+  const { user, logout } = useAuth();
   const queryClient = useQueryClient();
   const { settings, now, loading: clockLoading } = useShiftClock();
   const [, setTick] = useState(0);
   const autoTriggeredRef = useRef(false);
+  const tracksPersonalAttendance = PERSONAL_ATTENDANCE_ROLES.has(user?.role);
 
   const { data } = useQuery({
     queryKey: ['todayAttendance'],
     queryFn: getTodayStatus,
     refetchInterval: 15000,
+    enabled: tracksPersonalAttendance,
   });
 
   useEffect(() => {

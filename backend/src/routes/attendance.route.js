@@ -23,7 +23,7 @@ import { validate } from '../middlewares/validate.middleware.js';
 
 const router = Router();
 
-// Department personal check-in/out — Super Admin / Auditor get 403 by design
+// Department personal check-in/out — Tech Head / Super Admin / Auditor get 403 by design
 const personalRouter = Router();
 personalRouter.use(
   protect,

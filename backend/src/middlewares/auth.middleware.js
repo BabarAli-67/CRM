@@ -18,6 +18,8 @@ export const normalizeRole = (role) => {
     auditor: 'admin',
     tech: 'tech_team',
     techteam: 'tech_team',
+    tech_head: 'tech_head',
+    techhead: 'tech_head',
     cst: 'cst_manager',
     cstmanager: 'cst_manager',
   };

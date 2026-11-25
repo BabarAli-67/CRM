@@ -27,6 +27,11 @@ export const getAllUsers = async (filters = {}) => {
   return response.data.data.users;
 };
 
+export const createUser = async (payload) => {
+  const response = await api.post('/admin/users', payload);
+  return response.data.data.user;
+};
+
 export const updateUser = async (userId, payload) => {
   const response = await api.patch(`/admin/users/${userId}`, payload);
   return response.data;

@@ -3,6 +3,7 @@ import { useMutation } from '@tanstack/react-query';
 import api from '../../config/api.config.js';
 import {
   clientSignedDocumentUrl,
+  saveClientPortfolio,
   updateClientSignedDocument,
 } from '../../services/handover.service.js';
 import {
@@ -157,6 +158,11 @@ export default function ClientContextRecord({
   const [file, setFile] = useState(null);
   const [docError, setDocError] = useState('');
   const [docMessage, setDocMessage] = useState('');
+  const [socialLinksDraft, setSocialLinksDraft] = useState(
+    () => lead?.socialLinks || ''
+  );
+  const [socialMsg, setSocialMsg] = useState('');
+  const [socialErr, setSocialErr] = useState('');
 
   useEffect(() => {
     setSignYes(docSigned === true);
@@ -164,6 +170,30 @@ export default function ClientContextRecord({
     setDocError('');
     setDocMessage('');
   }, [lead?._id, docSigned, signedDoc?.storedFilename]);
+
+  useEffect(() => {
+    setSocialLinksDraft(lead?.socialLinks || '');
+    setSocialMsg('');
+    setSocialErr('');
+  }, [lead?._id, lead?.socialLinks]);
+
+  const socialMutation = useMutation({
+    mutationFn: () =>
+      saveClientPortfolio(lead._id, {
+        profileContext: { socialLinks: socialLinksDraft },
+      }),
+    onSuccess: (updated) => {
+      setSocialErr('');
+      setSocialMsg('Social Links saved.');
+      onLeadUpdated?.(updated);
+    },
+    onError: (err) => {
+      setSocialMsg('');
+      setSocialErr(
+        err?.response?.data?.message || 'Failed to save Social Links.'
+      );
+    },
+  });
 
   const docMutation = useMutation({
     mutationFn: () =>
@@ -232,8 +262,8 @@ export default function ClientContextRecord({
           Client Context
         </h2>
         <p className="mt-1 text-sm text-zinc-500">
-          Sales Agent and Closer identity fields stay locked. Document Sign is
-          editable for CST.
+          Sales Agent and Closer identity fields stay locked. Social Links and
+          Document Sign are editable for CST.
         </p>
       </div>
 
@@ -284,6 +314,34 @@ export default function ClientContextRecord({
               '—'
             )}
           </Field>
+          <div className="md:col-span-2 lg:col-span-3">
+            <p className={labelClass}>Social Links</p>
+            <textarea
+              value={socialLinksDraft}
+              onChange={(e) => setSocialLinksDraft(e.target.value)}
+              rows={3}
+              placeholder="Facebook, Instagram, LinkedIn, TikTok, YouTube — one per line or comma-separated"
+              className="w-full rounded-lg border border-zinc-700 bg-zinc-950/60 px-3 py-2 text-sm text-white outline-none transition focus:border-[#F25E26]/50 focus:ring-2 focus:ring-[#F25E26]/20"
+            />
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                disabled={socialMutation.isPending}
+                onClick={() => socialMutation.mutate()}
+                className="rounded-lg bg-[#F25E26] px-3 py-1.5 text-xs font-semibold text-white hover:brightness-110 disabled:opacity-50"
+              >
+                {socialMutation.isPending ? 'Saving…' : 'Save Social Links'}
+              </button>
+              {socialMsg ? (
+                <span className="text-xs text-emerald-300">{socialMsg}</span>
+              ) : null}
+              {socialErr ? (
+                <span className="text-xs text-red-400" role="alert">
+                  {socialErr}
+                </span>
+              ) : null}
+            </div>
+          </div>
           <Field label="Service Areas">
             {displayOrDash(lead?.serviceAreas)}
           </Field>

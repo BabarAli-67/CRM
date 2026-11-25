@@ -19,10 +19,14 @@ const storage = multer.diskStorage({
 });
 
 const fileFilter = (req, file, cb) => {
-  if (file.mimetype === 'application/pdf') {
+  const ext = path.extname(file.originalname || '').toLowerCase();
+  const mimeOk =
+    file.mimetype === 'application/pdf' ||
+    file.mimetype === 'application/x-pdf';
+  if (mimeOk && ext === '.pdf') {
     return cb(null, true);
   }
-  return cb(new Error('Monthly report must be a PDF file.'), false);
+  return cb(new Error('Monthly report must be a .pdf file.'), false);
 };
 
 const monthlyReportUpload = multer({

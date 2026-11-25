@@ -275,8 +275,9 @@ export const CST_STATUS_LABEL = {
   awaiting_handover: 'Awaiting CST handover',
   pending_review: 'Awaiting CST onboard',
   onboarded: 'Onboarded',
-  assigned: 'Assigned to tech',
-  in_progress: 'In progress',
+  assigned: 'Pending',
+  in_progress: 'In Progress',
+  ongoing_seo: 'Ongoing (SEO)',
   completed: 'Completed',
 };
 
@@ -293,8 +294,9 @@ export function formatLeadStage(lead) {
     const cst = lead.handover?.cstStatus;
     if (cst === 'pending_review') return 'Awaiting CST onboard';
     if (cst === 'onboarded') return 'Onboarded';
-    if (cst === 'assigned') return 'Assigned to tech';
-    if (cst === 'in_progress') return 'Fulfillment in progress';
+    if (cst === 'assigned') return 'Pending';
+    if (cst === 'in_progress') return 'In Progress';
+    if (cst === 'ongoing_seo') return 'Ongoing (SEO)';
     if (cst === 'completed') return 'Completed';
     if (cst === 'awaiting_handover') return 'Closed sale';
     return 'Closed sale';
@@ -314,6 +316,7 @@ export function formatLeadPipeline(lead) {
       cst === 'onboarded' ||
       cst === 'assigned' ||
       cst === 'in_progress' ||
+      cst === 'ongoing_seo' ||
       cst === 'completed'
     ) {
       return 'CST Operations';

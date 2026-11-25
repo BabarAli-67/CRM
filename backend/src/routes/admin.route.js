@@ -4,6 +4,7 @@ import { blockReadOnlyAdmin } from '../middlewares/permission.middleware.js';
 import {
   getPendingUsers,
   getAllUsers,
+  createUser,
   approveUser,
   rejectUser,
   resetUserPassword,
@@ -21,6 +22,7 @@ router.use(protect, restrictTo('super_admin', 'admin'), blockReadOnlyAdmin);
 router.get('/callbacks', getAdminCallbacks);
 
 router.get('/users/pending', getPendingUsers);
+router.post('/users', restrictTo('super_admin'), createUser);
 router.patch('/users/:id/approve', approveUserValidator, validate, approveUser);
 router.patch('/users/:id/reject', rejectUser);
 router.patch('/users/:id/reset-password', resetUserPassword);

@@ -605,7 +605,12 @@ function TechProjectsPanel({
             {leads.map((row) => (
               <tr key={row._id} className={ADMIN_ROW}>
                 <td className="px-4 py-3 font-medium text-white">
-                  {row.businessName}
+                  <Link
+                    to={`/admin/client/${row._id}?from=admin`}
+                    className="hover:text-orange-300"
+                  >
+                    {row.businessName}
+                  </Link>
                 </td>
                 <td className="px-4 py-3">
                   {personLabel(row.handover?.assignedTechId)}
@@ -617,17 +622,23 @@ function TechProjectsPanel({
                   {formatPkt(row.handover?.assignedAt)}
                 </td>
                 <td className="px-4 py-3">
-                  {canWrite ? (
-                    <button
-                      type="button"
-                      onClick={() => onOverride(row)}
-                      className={`${ADMIN_BTN_PRIMARY} !px-2.5 !py-1.5 text-xs`}
+                  <div className="flex flex-wrap gap-2">
+                    <Link
+                      to={`/admin/client/${row._id}?from=admin`}
+                      className={`${ADMIN_BTN_GHOST} !px-2.5 !py-1.5 text-xs`}
                     >
-                      Override
-                    </button>
-                  ) : (
-                    <span className="text-xs text-zinc-500">—</span>
-                  )}
+                      Open
+                    </Link>
+                    {canWrite ? (
+                      <button
+                        type="button"
+                        onClick={() => onOverride(row)}
+                        className={`${ADMIN_BTN_PRIMARY} !px-2.5 !py-1.5 text-xs`}
+                      >
+                        Override
+                      </button>
+                    ) : null}
+                  </div>
                 </td>
               </tr>
             ))}

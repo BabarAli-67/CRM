@@ -1,6 +1,11 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { deleteUser, getAllUsers, updateUser } from '../services/admin.service.js';
+import {
+  createUser,
+  deleteUser,
+  getAllUsers,
+  updateUser,
+} from '../services/admin.service.js';
 import {
   ADMIN_BTN_GHOST,
   ADMIN_BTN_PRIMARY,
@@ -13,18 +18,33 @@ import {
   STATUS_PILLS,
 } from './adminBrand.js';
 
+/** SA directory create/edit — no Admin/Tech Head (env) or Tech Team (Tech Head UI). */
 const ROLE_OPTIONS = [
-  { value: 'admin', label: 'Admin (Auditor)' },
   { value: 'sales_agent', label: 'Sales Agent' },
   { value: 'closer', label: 'Closer' },
   { value: 'cst_manager', label: 'CST Manager' },
-  { value: 'tech_team', label: 'Tech Team Member' },
 ];
+
+const ROLE_LABELS = {
+  ...Object.fromEntries(ROLE_OPTIONS.map((o) => [o.value, o.label])),
+  admin: 'Admin (Auditor)',
+  tech_head: 'Tech Head',
+  tech_team: 'Tech Team Member',
+  super_admin: 'Super Admin',
+};
 
 const formatRoleLabel = (role) => {
   if (!role) return 'Unassigned';
-  if (role === 'super_admin') return 'Super Admin';
-  return ROLE_OPTIONS.find((option) => option.value === role)?.label || role;
+  return ROLE_LABELS[role] || role;
+};
+
+const emptyCreate = {
+  fullName: '',
+  username: '',
+  phone: '',
+  email: '',
+  password: '',
+  role: 'sales_agent',
 };
 
 export default function UserRoster({ readOnly = false }) {
@@ -35,7 +55,11 @@ export default function UserRoster({ readOnly = false }) {
     username: '',
     phone: '',
     role: '',
+    jd: '',
+    assignedMentorId: '',
   });
+  const [createOpen, setCreateOpen] = useState(false);
+  const [createDraft, setCreateDraft] = useState(emptyCreate);
   const [search, setSearch] = useState('');
   const [actionError, setActionError] = useState('');
   const [actionSuccess, setActionSuccess] = useState('');
@@ -58,11 +82,13 @@ export default function UserRoster({ readOnly = false }) {
         u.fullName?.toLowerCase().includes(q) ||
         u.username?.toLowerCase().includes(q) ||
         u.role?.toLowerCase().includes(q) ||
-        u.status?.toLowerCase().includes(q)
+        u.status?.toLowerCase().includes(q) ||
+        u.jd?.toLowerCase().includes(q)
     );
   }, [users, search]);
 
-  const invalidateUsers = () => queryClient.invalidateQueries({ queryKey: ['allUsers'] });
+  const invalidateUsers = () =>
+    queryClient.invalidateQueries({ queryKey: ['allUsers'] });
 
   const updateMutation = useMutation({
     mutationFn: ({ userId, payload }) => updateUser(userId, payload),
@@ -75,6 +101,21 @@ export default function UserRoster({ readOnly = false }) {
     onError: (err) => {
       setActionSuccess('');
       setActionError(err.response?.data?.message || 'Failed to update user.');
+    },
+  });
+
+  const createMutation = useMutation({
+    mutationFn: (payload) => createUser(payload),
+    onSuccess: () => {
+      setActionError('');
+      setActionSuccess('User created successfully.');
+      setCreateOpen(false);
+      setCreateDraft(emptyCreate);
+      invalidateUsers();
+    },
+    onError: (err) => {
+      setActionSuccess('');
+      setActionError(err.response?.data?.message || 'Failed to create user.');
     },
   });
 
@@ -93,25 +134,45 @@ export default function UserRoster({ readOnly = false }) {
 
   const startEdit = (user) => {
     setEditingId(user._id);
+    const editableRole = ROLE_OPTIONS.some((o) => o.value === user.role)
+      ? user.role
+      : null;
     setDraft({
       fullName: user.fullName || '',
       username: user.username || '',
       phone: user.phone || '',
-      role: user.role && user.role !== 'super_admin' ? user.role : 'sales_agent',
+      role: editableRole || user.role || 'sales_agent',
+      roleEditable: Boolean(editableRole),
     });
     setActionError('');
     setActionSuccess('');
   };
 
   const handleSave = (userId) => {
+    const payload = {
+      fullName: draft.fullName,
+      username: draft.username,
+      phone: draft.phone,
+    };
+    // Only send role when changing an operational desk role (never env / Tech Head roles)
+    if (draft.roleEditable) {
+      payload.role = draft.role;
+    }
+    updateMutation.mutate({ userId, payload });
+  };
+
+  const handleDeactivate = (user) => {
+    const next =
+      user.status === 'approved'
+        ? 'rejected'
+        : user.status === 'rejected'
+          ? 'approved'
+          : 'rejected';
+    const label = next === 'rejected' ? 'deactivate' : 'reactivate';
+    if (!window.confirm(`${label} ${user.fullName || 'this user'}?`)) return;
     updateMutation.mutate({
-      userId,
-      payload: {
-        fullName: draft.fullName,
-        username: draft.username,
-        phone: draft.phone,
-        role: draft.role,
-      },
+      userId: user._id,
+      payload: { status: next },
     });
   };
 
@@ -121,6 +182,17 @@ export default function UserRoster({ readOnly = false }) {
     );
     if (!confirmed) return;
     deleteMutation.mutate(userId);
+  };
+
+  const handleCreate = () => {
+    createMutation.mutate({
+      fullName: createDraft.fullName.trim(),
+      username: createDraft.username.trim() || undefined,
+      phone: createDraft.phone.trim(),
+      email: createDraft.email.trim() || undefined,
+      password: createDraft.password,
+      role: createDraft.role,
+    });
   };
 
   if (isLoading) {
@@ -153,12 +225,103 @@ export default function UserRoster({ readOnly = false }) {
           type="search"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search name, username, role, status…"
+          placeholder="Search name, username, role, JD, status…"
           className={`w-full max-w-md ${ADMIN_INPUT}`}
           aria-label="Search users"
         />
-        <p className="text-xs text-zinc-500">{filteredUsers.length} users</p>
+        <div className="flex items-center gap-3">
+          <p className="text-xs text-zinc-500">{filteredUsers.length} users</p>
+          {!readOnly ? (
+            <button
+              type="button"
+              onClick={() => {
+                setCreateOpen((v) => !v);
+                setActionError('');
+                setActionSuccess('');
+              }}
+              className={ADMIN_BTN_PRIMARY}
+            >
+              {createOpen ? 'Close' : 'Create User'}
+            </button>
+          ) : null}
+        </div>
       </div>
+
+      {createOpen && !readOnly ? (
+        <div className={`${ADMIN_CARD} space-y-3 p-4`}>
+          <p className="text-sm font-semibold text-white">
+            Create Sales Agent / Closer / CST Manager
+          </p>
+          <p className="text-xs text-zinc-500">
+            Admin (Auditor) and Tech Head are provisioned via server `.env`. Tech
+            specialists are created only by Tech Head → Team Management.
+          </p>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            <input
+              className={ADMIN_INPUT}
+              placeholder="Full name"
+              value={createDraft.fullName}
+              onChange={(e) =>
+                setCreateDraft((p) => ({ ...p, fullName: e.target.value }))
+              }
+            />
+            <input
+              className={ADMIN_INPUT}
+              placeholder="Username (optional if email set)"
+              value={createDraft.username}
+              onChange={(e) =>
+                setCreateDraft((p) => ({ ...p, username: e.target.value }))
+              }
+            />
+            <input
+              className={ADMIN_INPUT}
+              placeholder="Phone"
+              value={createDraft.phone}
+              onChange={(e) =>
+                setCreateDraft((p) => ({ ...p, phone: e.target.value }))
+              }
+            />
+            <input
+              className={ADMIN_INPUT}
+              placeholder="Email"
+              value={createDraft.email}
+              onChange={(e) =>
+                setCreateDraft((p) => ({ ...p, email: e.target.value }))
+              }
+            />
+            <input
+              className={ADMIN_INPUT}
+              type="password"
+              placeholder="Password (min 8)"
+              value={createDraft.password}
+              onChange={(e) =>
+                setCreateDraft((p) => ({ ...p, password: e.target.value }))
+              }
+            />
+            <select
+              className={ADMIN_INPUT}
+              value={createDraft.role}
+              onChange={(e) =>
+                setCreateDraft((p) => ({ ...p, role: e.target.value }))
+              }
+            >
+              {ROLE_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          <button
+            type="button"
+            disabled={createMutation.isPending}
+            onClick={handleCreate}
+            className={ADMIN_BTN_PRIMARY}
+          >
+            {createMutation.isPending ? 'Creating…' : 'Create & Activate'}
+          </button>
+        </div>
+      ) : null}
 
       {actionError ? (
         <div
@@ -191,8 +354,11 @@ export default function UserRoster({ readOnly = false }) {
                 <th className="px-4 py-3 font-medium">Username</th>
                 <th className="px-4 py-3 font-medium">Phone</th>
                 <th className="px-4 py-3 font-medium">Role</th>
+                <th className="px-4 py-3 font-medium">JD / Mentor</th>
                 <th className="px-4 py-3 font-medium">Status</th>
-                {!readOnly ? <th className="px-4 py-3 font-medium">Actions</th> : null}
+                {!readOnly ? (
+                  <th className="px-4 py-3 font-medium">Actions</th>
+                ) : null}
               </tr>
             </thead>
             <tbody>
@@ -202,6 +368,10 @@ export default function UserRoster({ readOnly = false }) {
                 const statusClass =
                   STATUS_PILLS[user.status] ||
                   'bg-white/5 text-zinc-300 ring-1 ring-white/10';
+                const mentorName =
+                  user.assignedMentorId?.fullName ||
+                  user.assignedMentorId?.username ||
+                  null;
 
                 return (
                   <tr key={user._id} className={ADMIN_ROW}>
@@ -211,7 +381,10 @@ export default function UserRoster({ readOnly = false }) {
                           type="text"
                           value={draft.fullName}
                           onChange={(event) =>
-                            setDraft((prev) => ({ ...prev, fullName: event.target.value }))
+                            setDraft((prev) => ({
+                              ...prev,
+                              fullName: event.target.value,
+                            }))
                           }
                           className={ADMIN_INPUT}
                         />
@@ -225,7 +398,10 @@ export default function UserRoster({ readOnly = false }) {
                           type="text"
                           value={draft.username}
                           onChange={(event) =>
-                            setDraft((prev) => ({ ...prev, username: event.target.value }))
+                            setDraft((prev) => ({
+                              ...prev,
+                              username: event.target.value,
+                            }))
                           }
                           className={ADMIN_INPUT}
                         />
@@ -239,7 +415,10 @@ export default function UserRoster({ readOnly = false }) {
                           type="tel"
                           value={draft.phone}
                           onChange={(event) =>
-                            setDraft((prev) => ({ ...prev, phone: event.target.value }))
+                            setDraft((prev) => ({
+                              ...prev,
+                              phone: event.target.value,
+                            }))
                           }
                           className={ADMIN_INPUT}
                         />
@@ -248,11 +427,14 @@ export default function UserRoster({ readOnly = false }) {
                       )}
                     </td>
                     <td className="px-4 py-4 text-white">
-                      {!readOnly && isEditing ? (
+                      {!readOnly && isEditing && draft.roleEditable ? (
                         <select
                           value={draft.role}
                           onChange={(event) =>
-                            setDraft((prev) => ({ ...prev, role: event.target.value }))
+                            setDraft((prev) => ({
+                              ...prev,
+                              role: event.target.value,
+                            }))
                           }
                           className={ADMIN_INPUT}
                         >
@@ -263,14 +445,33 @@ export default function UserRoster({ readOnly = false }) {
                           ))}
                         </select>
                       ) : (
-                        <span className={ROLE_PILL}>{formatRoleLabel(user.role)}</span>
+                        <span className={ROLE_PILL}>
+                          {formatRoleLabel(user.role)}
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-4 py-4 text-zinc-400">
+                      {user.role === 'tech_team' ||
+                      user.role === 'tech_head' ? (
+                        <span className="text-xs">
+                          {user.role === 'tech_head' ? '—' : user.jd || '—'}
+                          {mentorName ? (
+                            <span className="block text-zinc-500">
+                              Under {mentorName}
+                            </span>
+                          ) : null}
+                        </span>
+                      ) : (
+                        '—'
                       )}
                     </td>
                     <td className="px-4 py-4">
                       <span
                         className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-medium capitalize ${statusClass}`}
                       >
-                        {user.status}
+                        {user.status === 'rejected'
+                          ? 'deactivated'
+                          : user.status}
                       </span>
                     </td>
                     {!readOnly ? (
@@ -312,8 +513,26 @@ export default function UserRoster({ readOnly = false }) {
                             )}
                             <button
                               type="button"
-                              disabled={deleteMutation.isPending || updateMutation.isPending}
-                              onClick={() => handleDelete(user._id, user.fullName)}
+                              disabled={
+                                deleteMutation.isPending ||
+                                updateMutation.isPending
+                              }
+                              onClick={() => handleDeactivate(user)}
+                              className="rounded-xl border border-amber-500/40 px-3 py-2 font-display text-xs font-semibold text-amber-200 transition hover:bg-amber-500/10 disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              {user.status === 'approved'
+                                ? 'Deactivate'
+                                : 'Reactivate'}
+                            </button>
+                            <button
+                              type="button"
+                              disabled={
+                                deleteMutation.isPending ||
+                                updateMutation.isPending
+                              }
+                              onClick={() =>
+                                handleDelete(user._id, user.fullName)
+                              }
                               className="rounded-xl border border-red-500/40 px-3 py-2 font-display text-xs font-semibold text-red-300 transition hover:bg-red-500/10 disabled:cursor-not-allowed disabled:opacity-50"
                             >
                               Delete

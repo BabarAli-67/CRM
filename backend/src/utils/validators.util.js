@@ -30,17 +30,19 @@ export const registerValidator = [
       }
       return true;
     }),
+  // Public registration: Sales Agent / Closer / CST Manager only.
+  // Privileged roles (admin, tech_head, tech_team, super_admin) are rejected in auth.service with 403.
   body('requestedRole')
     .optional()
-    .isIn(['admin', 'sales_agent', 'closer', 'cst_manager', 'tech_team'])
+    .isIn(['sales_agent', 'closer', 'cst_manager'])
     .withMessage(
-      'Role must be one of: admin, sales_agent, closer, cst_manager, tech_team'
+      'Public registration is limited to Sales Agent, Closer, or CST Manager'
     ),
   body('role')
     .optional()
-    .isIn(['admin', 'sales_agent', 'closer', 'cst_manager', 'tech_team'])
+    .isIn(['sales_agent', 'closer', 'cst_manager'])
     .withMessage(
-      'Role must be one of: admin, sales_agent, closer, cst_manager, tech_team'
+      'Public registration is limited to Sales Agent, Closer, or CST Manager'
     ),
 ];
 
@@ -54,9 +56,13 @@ export const loginValidator = [
 ];
 
 export const approveUserValidator = [
+  // Pending public registrants may only be activated as operational desk roles.
+  // Admin (Auditor) + Tech Head are env-provisioned; Tech specialists via Tech Head.
   body('role')
-    .isIn(['admin', 'sales_agent', 'closer', 'cst_manager', 'tech_team'])
-    .withMessage('Role must be one of: admin, sales_agent, closer, cst_manager, tech_team'),
+    .isIn(['sales_agent', 'closer', 'cst_manager'])
+    .withMessage(
+      'Role must be one of: sales_agent, closer, cst_manager'
+    ),
 ];
 
 export const updateUserValidator = [
@@ -76,10 +82,19 @@ export const updateUserValidator = [
     )
     .customSanitizer((value) => String(value).toLowerCase()),
   body('phone').optional().trim(),
+  body('email').optional({ nullable: true }).trim(),
+  body('status')
+    .optional()
+    .isIn(['approved', 'rejected', 'pending'])
+    .withMessage('status must be approved, rejected, or pending'),
+  body('jd').optional({ nullable: true }).trim(),
+  body('assignedMentorId').optional({ nullable: true }).trim(),
   body('role')
     .optional()
-    .isIn(['admin', 'sales_agent', 'closer', 'cst_manager', 'tech_team'])
-    .withMessage('Role must be one of: admin, sales_agent, closer, cst_manager, tech_team'),
+    .isIn(['sales_agent', 'closer', 'cst_manager'])
+    .withMessage(
+      'Role must be one of: sales_agent, closer, cst_manager'
+    ),
 ];
 
 export const shiftUpdateValidator = [

@@ -158,10 +158,11 @@ async function main() {
     !hasRole(byRole.closer.data.data.contacts, 'tech_team') &&
     !hasRole(byRole.cst_manager.data.data.contacts, 'sales_agent') &&
     !hasRole(byRole.cst_manager.data.data.contacts, 'closer') &&
+    !hasRole(byRole.cst_manager.data.data.contacts, 'tech_team') &&
     !hasRole(byRole.tech_team.data.data.contacts, 'sales_agent') &&
     !hasRole(byRole.tech_team.data.data.contacts, 'closer') &&
+    !hasRole(byRole.tech_team.data.data.contacts, 'cst_manager') &&
     hasRole(byRole.sales_agent.data.data.contacts, 'closer') &&
-    hasRole(byRole.cst_manager.data.data.contacts, 'tech_team') &&
     hasRole(byRole.admin.data.data.contacts, 'sales_agent') &&
     hasRole(byRole.super_admin.data.data.contacts, 'tech_team');
 

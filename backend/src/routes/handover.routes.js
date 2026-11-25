@@ -61,11 +61,15 @@ router.get(
   getRetentionReminders
 );
 
-router.get('/my-projects', restrictTo('tech_team'), getMyProjects);
+router.get(
+  '/my-projects',
+  restrictTo('tech_team'),
+  getMyProjects
+);
 
 router.get(
   '/comment-notifications',
-  restrictTo('cst_manager', 'tech_team', 'super_admin'),
+  restrictTo('cst_manager', 'tech_team', 'tech_head', 'super_admin'),
   getCommentNotifications
 );
 
@@ -218,9 +222,18 @@ router.patch(
   updateChangeRequestStatus
 );
 
-router.patch('/:id/assign', restrictTo('cst_manager'), assignHandover);
+// Legacy single-assign kept for Super Admin overrides; day-to-day assign is Tech Head.
+router.patch(
+  '/:id/assign',
+  restrictTo('tech_head', 'super_admin'),
+  assignHandover
+);
 
-router.patch('/:id/milestone', restrictTo('tech_team'), updateMilestone);
+router.patch(
+  '/:id/milestone',
+  restrictTo('tech_team', 'tech_head', 'super_admin'),
+  updateMilestone
+);
 
 // super_admin writes; admin is allowlisted so blockReadOnlyAdmin returns the
 // auditor-specific 403 rather than a generic role deny.

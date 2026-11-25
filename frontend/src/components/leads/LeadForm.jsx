@@ -117,6 +117,7 @@ const emptyForm = {
   personalEmail: '',
   websiteLink: '',
   gmbLink: '',
+  socialLinks: '',
   serviceAreas: '',
   servicesOffered: '',
   contractEnabled: false,
@@ -172,6 +173,7 @@ const mapInitialToForm = (initialValues) => {
     websiteLink:
       initialValues.websiteLink || initialValues.businessLink || '',
     gmbLink: initialValues.gmbLink || '',
+    socialLinks: initialValues.socialLinks || '',
     serviceAreas: initialValues.serviceAreas || '',
     servicesOffered: stripContractLabel(initialValues.servicesOffered || ''),
     contractEnabled: Boolean(initialValues.contractEnabled),
@@ -529,6 +531,7 @@ export default function LeadForm({
       personalEmail: form.personalEmail.trim() || null,
       websiteLink,
       gmbLink: normalizeUrl(form.gmbLink),
+      socialLinks: form.socialLinks.trim() || null,
       serviceAreas: form.serviceAreas.trim() || null,
       servicesOffered: finalServices,
       paymentOffered: finalOffered,
@@ -774,6 +777,17 @@ export default function LeadForm({
                 value={form.gmbLink}
                 onChange={handleChange('gmbLink')}
                 className={fieldClass}
+              />
+            </label>
+
+            <label className={`${labelClass} sm:col-span-2`}>
+              <span>Social Links</span>
+              <textarea
+                rows={2}
+                placeholder="Facebook, Instagram, LinkedIn, TikTok, YouTube — one per line or comma-separated"
+                value={form.socialLinks}
+                onChange={handleChange('socialLinks')}
+                className={`${fieldClass} resize-y`}
               />
             </label>
 

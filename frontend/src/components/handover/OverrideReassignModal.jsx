@@ -8,8 +8,9 @@ const CST_STATUSES = [
   { value: 'awaiting_handover', label: 'Awaiting CST handover' },
   { value: 'pending_review', label: 'Handed over to CST' },
   { value: 'onboarded', label: 'Onboarded (CST)' },
-  { value: 'assigned', label: 'Assigned' },
-  { value: 'in_progress', label: 'In progress' },
+  { value: 'assigned', label: 'Pending' },
+  { value: 'in_progress', label: 'In Progress' },
+  { value: 'ongoing_seo', label: 'Ongoing (SEO)' },
   { value: 'completed', label: 'Completed' },
 ];
 

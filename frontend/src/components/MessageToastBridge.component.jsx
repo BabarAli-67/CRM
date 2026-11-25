@@ -18,7 +18,7 @@ import { clientCommentsPath } from '../services/handover.service.js';
 import { getSocket } from '../utils/socketClient.util.js';
 
 const TOAST_TTL_MS = 7000;
-const COMMENT_ROLES = new Set(['cst_manager', 'tech_team']);
+const COMMENT_ROLES = new Set(['cst_manager', 'tech_team', 'tech_head']);
 
 /**
  * Global chat + CST↔Tech client-comment notifications:
@@ -128,9 +128,11 @@ export default function MessageToastBridge() {
       const roleWord =
         authorRole === 'tech_team'
           ? 'Tech'
-          : authorRole === 'cst_manager'
-            ? 'CST'
-            : authorName;
+          : authorRole === 'tech_head'
+            ? 'Tech Head'
+            : authorRole === 'cst_manager'
+              ? 'CST'
+              : authorName;
 
       const preview = isMention
         ? `${authorName} mentioned you on ${businessName}`
@@ -169,6 +171,8 @@ export default function MessageToastBridge() {
       queryClient.invalidateQueries({ queryKey: ['handoverQueue'] });
       queryClient.invalidateQueries({ queryKey: ['cstTechPipeline'] });
       queryClient.invalidateQueries({ queryKey: ['myProjects'] });
+      queryClient.invalidateQueries({ queryKey: ['techHeadBadges'] });
+      queryClient.invalidateQueries({ queryKey: ['techHeadEscalations'] });
     };
 
     // Prefer client:comment-new (includes isMention). Mention-only event is
@@ -181,12 +185,130 @@ export default function MessageToastBridge() {
     };
   }, [queryClient, user?.role]);
 
+  // Tech Head queue + specialist task notes + CST Tech Status sync
+  useEffect(() => {
+    const role = user?.role;
+    if (
+      role !== 'tech_head' &&
+      role !== 'tech_team' &&
+      role !== 'cst_manager'
+    ) {
+      return undefined;
+    }
+
+    const socket = getSocket();
+    const seen = new Set();
+
+    const pushToast = ({ toastId, kind, leadId, senderName, preview, path }) => {
+      if (seen.has(toastId)) return;
+      seen.add(toastId);
+      window.setTimeout(() => seen.delete(toastId), TOAST_TTL_MS + 500);
+      playMessageChime();
+      setToasts((prev) => [
+        ...prev.filter((t) => t.id !== toastId),
+        { id: toastId, kind, leadId, senderName, preview, path },
+      ]);
+      showBrowserNotification({
+        title: senderName,
+        body: preview,
+        tag: toastId,
+      });
+      window.setTimeout(() => {
+        setToasts((prev) => prev.filter((t) => t.id !== toastId));
+      }, TOAST_TTL_MS);
+    };
+
+    const onQueueNew = (payload) => {
+      if (role !== 'tech_head' || !payload?.leadId) return;
+      pushToast({
+        toastId: `queue-${payload.leadId}-${payload.at || Date.now()}`,
+        kind: 'tech_queue',
+        leadId: payload.leadId,
+        senderName: 'Incoming Handover',
+        preview: `${payload.businessName || 'Client'} is ready in the Unassigned queue`,
+        path: '/dashboard/tech-head/queue',
+      });
+      queryClient.invalidateQueries({ queryKey: ['techHeadQueue'] });
+      queryClient.invalidateQueries({ queryKey: ['techHeadBadges'] });
+    };
+
+    const onTaskNote = (payload) => {
+      if (role !== 'tech_team' || !payload?.leadId) return;
+      pushToast({
+        toastId: `task-${payload.noteId || payload.leadId}`,
+        kind: 'tech_task',
+        leadId: payload.leadId,
+        senderName: 'Task from Tech Head',
+        preview: payload.guidance
+          ? `${payload.businessName || 'Client'} — ${payload.guidance}`
+          : `${payload.businessName || 'Client'} — ${payload.bodyPreview || 'New task note'}`,
+        path: `/dashboard/tech-team/client/${payload.leadId}`,
+      });
+      queryClient.invalidateQueries({ queryKey: ['myProjects'] });
+      queryClient.invalidateQueries({
+        queryKey: ['lead', payload.leadId, 'tech-portfolio'],
+      });
+    };
+
+    const onStatusUpdated = (payload) => {
+      if (!payload?.leadId) return;
+      queryClient.invalidateQueries({ queryKey: ['cstTechPipeline'] });
+      queryClient.invalidateQueries({ queryKey: ['techHeadAssigned'] });
+      queryClient.invalidateQueries({ queryKey: ['techHeadCompleted'] });
+      queryClient.invalidateQueries({ queryKey: ['myProjects'] });
+      queryClient.invalidateQueries({ queryKey: ['handoverQueue'] });
+    };
+
+    const onSeoHandover = (payload) => {
+      if (!payload?.leadId) return;
+      const pn = payload.projectNumber ? `#${payload.projectNumber} · ` : '';
+      if (role === 'tech_head') {
+        pushToast({
+          toastId: `seo-ho-${payload.leadId}-${payload.at || Date.now()}`,
+          kind: 'seo_handover',
+          leadId: payload.leadId,
+          senderName: 'Developer → SEO',
+          preview: payload.needsTechHeadAttention
+            ? `${pn}${payload.businessName || 'Client'} needs SEO review / reassignment`
+            : `${pn}${payload.businessName || 'Client'} handed to SEO`,
+          path: '/dashboard/tech-head/assigned',
+        });
+      } else if (role === 'tech_team') {
+        pushToast({
+          toastId: `seo-ho-${payload.leadId}-${payload.at || Date.now()}`,
+          kind: 'seo_handover',
+          leadId: payload.leadId,
+          senderName: 'SEO Handover',
+          preview: `${pn}${payload.businessName || 'Client'} is now Ongoing (SEO) — open Work & Reports`,
+          path: `/dashboard/tech-team/client/${payload.leadId}`,
+        });
+      }
+      queryClient.invalidateQueries({ queryKey: ['myProjects'] });
+      queryClient.invalidateQueries({ queryKey: ['techHeadAssigned'] });
+    };
+
+    socket.on('tech:queue-new', onQueueNew);
+    socket.on('tech:task-note', onTaskNote);
+    socket.on('tech:status-updated', onStatusUpdated);
+    socket.on('tech:seo-handover', onSeoHandover);
+    return () => {
+      socket.off('tech:queue-new', onQueueNew);
+      socket.off('tech:task-note', onTaskNote);
+      socket.off('tech:status-updated', onStatusUpdated);
+      socket.off('tech:seo-handover', onSeoHandover);
+    };
+  }, [queryClient, user?.role]);
+
   const dismiss = (id) => {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   };
 
   const openFromToast = (toast) => {
     dismiss(toast.id);
+    if (toast.path) {
+      navigate(toast.path);
+      return;
+    }
     if (
       (toast.kind === 'client_comment' || toast.kind === 'client_mention') &&
       toast.leadId
@@ -218,7 +340,11 @@ export default function MessageToastBridge() {
           <p className="mt-1.5 text-[10px] font-medium uppercase tracking-wide text-orange-400/90">
             {toast.kind === 'client_comment' || toast.kind === 'client_mention'
               ? 'Open comments'
-              : 'Open chat'}
+              : toast.kind === 'tech_queue'
+                ? 'Open queue'
+                : toast.kind === 'tech_task'
+                  ? 'Open project'
+                  : 'Open chat'}
           </p>
         </button>
       ))}

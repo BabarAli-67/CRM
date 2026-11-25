@@ -1,8 +1,10 @@
 import asyncHandler from '../utils/asyncHandler.util.js';
+import { ApiError } from '../utils/apiError.util.js';
 import { ApiResponse } from '../utils/apiResponse.util.js';
 import { toCsv } from '../utils/csv.util.js';
 import {
-  getOrCreateTodayRecord,
+  assertPersonalAttendanceRole,
+  getTodayAttendancePayload,
   checkIn,
   submitLateRequest,
   checkOut,
@@ -15,7 +17,11 @@ import {
 } from '../services/attendance.service.js';
 
 export const getTodayStatus = asyncHandler(async (req, res) => {
-  const attendance = await getOrCreateTodayRecord(req.user._id);
+  assertPersonalAttendanceRole(req.user);
+  const attendance = await getTodayAttendancePayload(
+    req.user._id,
+    req.user.role
+  );
 
   res.status(200).json(
     new ApiResponse(
@@ -27,7 +33,8 @@ export const getTodayStatus = asyncHandler(async (req, res) => {
 });
 
 export const markCheckIn = asyncHandler(async (req, res) => {
-  const attendance = await checkIn(req.user._id);
+  assertPersonalAttendanceRole(req.user);
+  const attendance = await checkIn(req.user._id, req.user.role);
 
   res
     .status(200)
@@ -35,8 +42,13 @@ export const markCheckIn = asyncHandler(async (req, res) => {
 });
 
 export const requestLate = asyncHandler(async (req, res) => {
+  assertPersonalAttendanceRole(req.user);
   const { reason } = req.body;
-  const attendance = await submitLateRequest(req.user._id, reason);
+  const attendance = await submitLateRequest(
+    req.user._id,
+    reason,
+    req.user.role
+  );
 
   res
     .status(200)
@@ -50,6 +62,7 @@ export const requestLate = asyncHandler(async (req, res) => {
 });
 
 export const markCheckOut = asyncHandler(async (req, res) => {
+  assertPersonalAttendanceRole(req.user);
   const attendance = await checkOut(req.user._id);
 
   res
@@ -58,6 +71,7 @@ export const markCheckOut = asyncHandler(async (req, res) => {
 });
 
 export const requestExtend = asyncHandler(async (req, res) => {
+  assertPersonalAttendanceRole(req.user);
   const attendance = await extendShift(req.user._id);
 
   res
@@ -66,6 +80,7 @@ export const requestExtend = asyncHandler(async (req, res) => {
 });
 
 export const getHistory = asyncHandler(async (req, res) => {
+  assertPersonalAttendanceRole(req.user);
   const { month, from, to } = req.query;
   const records = await getMyHistory(req.user._id, { month, from, to });
 
@@ -134,6 +149,13 @@ export const exportGrid = asyncHandler(async (req, res) => {
 });
 
 export const approveAttendance = asyncHandler(async (req, res) => {
+  // Defense-in-depth: only Super Admin may approve/reject (Auditor is read-only via middleware).
+  if (req.user?.role !== 'super_admin') {
+    throw new ApiError(
+      403,
+      'Forbidden: Only Super Admin can approve or reject attendance requests'
+    );
+  }
   const { decision } = req.body;
   const { id } = req.params;
   const attendance = await approveLateRequest(id, decision, req.user._id);
@@ -149,6 +171,12 @@ export const approveAttendance = asyncHandler(async (req, res) => {
 });
 
 export const overrideForceAbsent = asyncHandler(async (req, res) => {
+  if (req.user?.role !== 'super_admin') {
+    throw new ApiError(
+      403,
+      'Forbidden: Only Super Admin can force-absent attendance records'
+    );
+  }
   const { reason } = req.body;
   const { id } = req.params;
   const attendance = await forceAbsent(id, reason, req.user._id);

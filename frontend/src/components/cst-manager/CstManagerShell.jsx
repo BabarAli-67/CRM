@@ -1,4 +1,10 @@
-import { CalendarCheck, ClipboardList, UserCheck, Wrench } from 'lucide-react';
+import {
+  CalendarCheck,
+  ClipboardList,
+  LayoutTemplate,
+  UserCheck,
+  Wrench,
+} from 'lucide-react';
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useLocation } from 'react-router-dom';
@@ -74,6 +80,11 @@ export default function CstManagerShell({ title, children }) {
         alsoMatch: ['/dashboard/cst-manager/client'],
         icon: Wrench,
         badge: counts.tech,
+      },
+      {
+        to: '/dashboard/cst-manager/mockup',
+        label: 'Mockup',
+        icon: LayoutTemplate,
       },
     ],
     [counts]
