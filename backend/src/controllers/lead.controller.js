@@ -83,8 +83,13 @@ const canAccessLead = (lead, user) => {
   if (legacyTech && !assignedTechIds.includes(legacyTech)) {
     assignedTechIds.push(legacyTech);
   }
+  // CST Non-Active clients are hidden from all Tech ends
+  const isCstNonActive = lead.handover?.isNonActive === true;
+
   const isAssignedTech =
-    user.role === 'tech_team' && assignedTechIds.includes(userId);
+    !isCstNonActive &&
+    user.role === 'tech_team' &&
+    assignedTechIds.includes(userId);
 
   // Tech Head may view onboarded + assigned fulfillment leads (no financial projection here)
   const techHeadStatuses = new Set([
@@ -95,6 +100,7 @@ const canAccessLead = (lead, user) => {
     'completed',
   ]);
   const isTechHeadVisible =
+    !isCstNonActive &&
     user.role === 'tech_head' &&
     lead.stage === 'closed_sale' &&
     techHeadStatuses.has(lead.handover?.cstStatus);

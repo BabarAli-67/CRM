@@ -102,7 +102,7 @@ export default function CstClientsPage() {
       setMessage(
         vars.cstClientState === 'Non-Active'
           ? 'Client moved to Non-Active.'
-          : 'Client restored to Active.'
+          : 'Client restored to Onboard.'
       );
       queryClient.invalidateQueries({ queryKey: ['cstClients'] });
       queryClient.invalidateQueries({ queryKey: ['cstTechPipeline'] });

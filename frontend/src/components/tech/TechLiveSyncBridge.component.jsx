@@ -45,6 +45,7 @@ const SOCKET_EVENTS = [
   'tech:keywords-ranked',
   'tech:task-note',
   'tech:priority',
+  'cst:client-state',
   'client:comment-new',
   'client:comment-mention',
   'mockup:new',

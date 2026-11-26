@@ -14,6 +14,7 @@ import {
   leadIndicatesGmbOrSeo,
   MENTOR_JD_OPTIONS,
   TECH_JD_OPTIONS,
+  TECH_CST_ACTIVE_CLAUSE,
   TECH_NON_EXPIRED_CLAUSE,
   TECH_STATUS_LABEL,
   toTechSafeClient,
@@ -299,6 +300,7 @@ export const getTechHeadQueue = asyncHandler(async (req, res) => {
     stage: 'closed_sale',
     'handover.cstStatus': 'onboarded',
     ...TECH_NON_EXPIRED_CLAUSE,
+    ...TECH_CST_ACTIVE_CLAUSE,
     $and: [
       {
         $or: [
@@ -338,6 +340,7 @@ export const getTechHeadAssigned = asyncHandler(async (req, res) => {
     'handover.cstStatus': { $in: TECH_LIVE_STATUSES },
     'handover.techStatus': { $ne: 'completed' },
     ...TECH_NON_EXPIRED_CLAUSE,
+    ...TECH_CST_ACTIVE_CLAUSE,
     $and: [ASSIGNED_SPECIALIST_CLAUSE],
   })
     .select(
@@ -371,6 +374,7 @@ export const getTechHeadCompleted = asyncHandler(async (req, res) => {
   const leads = await Lead.find({
     stage: 'closed_sale',
     ...TECH_NON_EXPIRED_CLAUSE,
+    ...TECH_CST_ACTIVE_CLAUSE,
     $and: [
       {
         $or: [
@@ -410,6 +414,7 @@ export const getCstEscalations = asyncHandler(async (req, res) => {
   const leads = await Lead.find({
     stage: 'closed_sale',
     ...TECH_NON_EXPIRED_CLAUSE,
+    ...TECH_CST_ACTIVE_CLAUSE,
     'handover.comments.0': { $exists: true },
   })
     .select(
@@ -685,6 +690,7 @@ export const getTechHeadBadges = asyncHandler(async (req, res) => {
     stage: 'closed_sale',
     'handover.cstStatus': 'onboarded',
     ...TECH_NON_EXPIRED_CLAUSE,
+    ...TECH_CST_ACTIVE_CLAUSE,
     $and: [
       {
         $or: [
@@ -705,6 +711,7 @@ export const getTechHeadBadges = asyncHandler(async (req, res) => {
   const completedCount = await Lead.countDocuments({
     stage: 'closed_sale',
     ...TECH_NON_EXPIRED_CLAUSE,
+    ...TECH_CST_ACTIVE_CLAUSE,
     $and: [
       {
         $or: [
@@ -719,6 +726,7 @@ export const getTechHeadBadges = asyncHandler(async (req, res) => {
   const priorityCount = await Lead.countDocuments({
     stage: 'closed_sale',
     ...TECH_NON_EXPIRED_CLAUSE,
+    ...TECH_CST_ACTIVE_CLAUSE,
     'handover.isPriority': true,
     'handover.cstStatus': {
       $in: ['onboarded', ...TECH_LIVE_STATUSES],
@@ -731,6 +739,7 @@ export const getTechHeadBadges = asyncHandler(async (req, res) => {
   const leads = await Lead.find({
     stage: 'closed_sale',
     ...TECH_NON_EXPIRED_CLAUSE,
+    ...TECH_CST_ACTIVE_CLAUSE,
     'handover.comments.0': { $exists: true },
   })
     .select('handover.comments handover.commentReads')
@@ -808,6 +817,7 @@ export const getTechHeadPriority = asyncHandler(async (req, res) => {
   const leads = await Lead.find({
     stage: 'closed_sale',
     ...TECH_NON_EXPIRED_CLAUSE,
+    ...TECH_CST_ACTIVE_CLAUSE,
     'handover.isPriority': true,
     'handover.cstStatus': {
       $in: ['onboarded', ...TECH_LIVE_STATUSES],
@@ -848,6 +858,7 @@ export const setClientPriority = asyncHandler(async (req, res) => {
     _id: req.params.id,
     stage: 'closed_sale',
     ...TECH_NON_EXPIRED_CLAUSE,
+    ...TECH_CST_ACTIVE_CLAUSE,
     'handover.cstStatus': {
       $in: ['onboarded', ...TECH_LIVE_STATUSES, 'completed'],
     },
@@ -951,6 +962,7 @@ export const getTechHeadClient = asyncHandler(async (req, res) => {
     _id: req.params.id,
     stage: 'closed_sale',
     ...TECH_NON_EXPIRED_CLAUSE,
+    ...TECH_CST_ACTIVE_CLAUSE,
   })
     .select(
       'businessName serviceAreas websiteLink servicesOffered socialLinks gmbLink handover createdAt updatedAt'
@@ -978,6 +990,7 @@ export const getTeamComments = asyncHandler(async (req, res) => {
   const leads = await Lead.find({
     stage: 'closed_sale',
     ...TECH_NON_EXPIRED_CLAUSE,
+    ...TECH_CST_ACTIVE_CLAUSE,
     'handover.comments.0': { $exists: true },
   })
     .select(
@@ -1233,6 +1246,7 @@ export const assignTeamToClient = asyncHandler(async (req, res) => {
     _id: req.params.id,
     stage: 'closed_sale',
     ...TECH_NON_EXPIRED_CLAUSE,
+    ...TECH_CST_ACTIVE_CLAUSE,
     'handover.cstStatus': {
       $in: [
         'onboarded',

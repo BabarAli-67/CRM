@@ -73,6 +73,14 @@ export const TECH_NON_EXPIRED_CLAUSE = {
   'handover.clientStatus': { $ne: 'Expired' },
 };
 
+/**
+ * Mongo clause: hide CST Non-Active clients from Tech Head / Tech Team.
+ * Missing / null isNonActive counts as Active ($ne: true).
+ */
+export const TECH_CST_ACTIVE_CLAUSE = {
+  'handover.isNonActive': { $ne: true },
+};
+
 export const isExpiredClient = (lead) =>
   String(lead?.handover?.clientStatus || lead?.clientStatus || '') ===
   'Expired';

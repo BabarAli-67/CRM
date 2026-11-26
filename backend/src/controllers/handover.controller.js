@@ -24,6 +24,7 @@ import {
   isUserAssignedTech,
   resolveTechWorkspaceJd,
   SEO_WAITING_FOR_DEVELOPER_MSG,
+  TECH_CST_ACTIVE_CLAUSE,
   TECH_NON_EXPIRED_CLAUSE,
   toTechSafeClient,
   canUseSeoPortfolioTools,
@@ -143,12 +144,7 @@ const normalizeChangeRequests = (raw, userId) => {
 };
 
 /** Mongo clause: CST Active clients (legacy rows without field count as Active). */
-const CST_ACTIVE_CLIENT_CLAUSE = {
-  $or: [
-    { 'handover.isNonActive': { $ne: true } },
-    { 'handover.isNonActive': { $exists: false } },
-  ],
-};
+const CST_ACTIVE_CLIENT_CLAUSE = TECH_CST_ACTIVE_CLAUSE;
 
 export const getHandoverQueue = asyncHandler(async (req, res) => {
   // Pending Review + Onboard tabs share this feed; frontend filters by cstStatus
@@ -2215,6 +2211,7 @@ export const getCommentNotifications = asyncHandler(async (req, res) => {
       ? {
           stage: 'closed_sale',
           ...TECH_NON_EXPIRED_CLAUSE,
+    ...TECH_CST_ACTIVE_CLAUSE,
           'handover.cstStatus': { $in: TECH_ACTIVE_STATUSES },
           $or: [
             { 'handover.assignedTechIds': req.user._id },
@@ -2226,6 +2223,7 @@ export const getCommentNotifications = asyncHandler(async (req, res) => {
         ? {
             stage: 'closed_sale',
             ...TECH_NON_EXPIRED_CLAUSE,
+    ...TECH_CST_ACTIVE_CLAUSE,
             'handover.cstStatus': { $in: CST_PIPELINE_STATUSES },
             'handover.comments.0': { $exists: true },
           }
@@ -2910,6 +2908,8 @@ export const getCstClients = asyncHandler(async (req, res) => {
 
 /**
  * PATCH /handover/:id/cst-client-state — mark Active / Non-Active (CST).
+ * Non-Active → hidden from all Tech Head / Tech Team boards + toast notify.
+ * Restore Active → returns client to CST Onboard (clears tech assignment).
  */
 export const setCstClientState = asyncHandler(async (req, res) => {
   const nextRaw = String(
@@ -2929,7 +2929,12 @@ export const setCstClientState = asyncHandler(async (req, res) => {
   const lead = await Lead.findOne({
     _id: req.params.id,
     stage: 'closed_sale',
-    ...CST_CLIENT_PIPELINE_CLAUSE,
+    $or: [
+      ...(Array.isArray(CST_CLIENT_PIPELINE_CLAUSE.$or)
+        ? CST_CLIENT_PIPELINE_CLAUSE.$or
+        : [CST_CLIENT_PIPELINE_CLAUSE]),
+      { 'handover.isNonActive': true },
+    ],
   });
 
   if (!lead) {
@@ -2938,9 +2943,24 @@ export const setCstClientState = asyncHandler(async (req, res) => {
   if (!lead.handover) lead.handover = {};
 
   const becomingNonActive = next === 'Non-Active';
+  const priorTechIds = getAssignedTechIdList(lead);
+  const now = new Date();
+
   lead.handover.cstClientState = next;
   lead.handover.isNonActive = becomingNonActive;
-  lead.handover.nonActiveAt = becomingNonActive ? new Date() : null;
+  lead.handover.nonActiveAt = becomingNonActive ? now : null;
+
+  if (!becomingNonActive) {
+    // Restore → CST Onboard tab (fresh awaiting Tech Head assign)
+    lead.handover.cstStatus = 'onboarded';
+    lead.handover.techStatus = null;
+    lead.handover.assignedTechId = null;
+    lead.handover.assignedTechIds = [];
+    lead.handover.assignedAt = null;
+    lead.handover.isPriority = false;
+    lead.handover.priorityAssignedAt = null;
+    if (!lead.handover.onboardedAt) lead.handover.onboardedAt = now;
+  }
 
   await lead.save();
   await lead.populate([
@@ -2948,28 +2968,56 @@ export const setCstClientState = asyncHandler(async (req, res) => {
     { path: 'closerId', select: 'fullName username role' },
     { path: 'closedBy', select: 'fullName username role' },
     { path: 'handover.assignedTechId', select: 'fullName username role' },
+    { path: 'handover.assignedTechIds', select: 'fullName username role' },
   ]);
 
   const payload = {
     leadId: String(lead._id),
     businessName: lead.businessName || 'Client',
+    projectNumber: lead.handover?.projectNumber || null,
     cstClientState: next,
     isNonActive: becomingNonActive,
-    at: new Date(),
+    cstStatus: lead.handover?.cstStatus || null,
+    at: now,
   };
-  const cstManagers = await User.find({
-    role: 'cst_manager',
-    status: 'approved',
-  }).select('_id');
-  for (const u of cstManagers) {
-    emitToUser(u._id, 'cst:client-state', payload);
+
+  const recipientIds = new Set(priorTechIds);
+  const [cstManagers, techHeads] = await Promise.all([
+    User.find({ role: 'cst_manager', status: 'approved' }).select('_id'),
+    User.find({ role: 'tech_head', status: 'approved' }).select('_id'),
+  ]);
+  for (const u of cstManagers) recipientIds.add(String(u._id));
+  for (const u of techHeads) recipientIds.add(String(u._id));
+
+  for (const uid of recipientIds) {
+    emitToUser(uid, 'cst:client-state', payload);
+  }
+
+  await emitTechProjectSync(User, lead, {
+    reason: becomingNonActive ? 'cst-non-active' : 'cst-restored-onboard',
+    actorId: req.user._id,
+    alsoNotifyUserIds: priorTechIds,
+  });
+
+  if (!becomingNonActive) {
+    // Surface again on Tech Head Incoming Queue
+    await emitToAllTechHeads(User, 'tech:queue-new', {
+      leadId: String(lead._id),
+      businessName: lead.businessName || 'Client',
+      projectNumber: lead.handover?.projectNumber || null,
+      onboardedAt: lead.handover?.onboardedAt || now,
+      at: now,
+      restored: true,
+    });
   }
 
   res.status(200).json(
     new ApiResponse(
       200,
       { lead },
-      becomingNonActive ? 'Client marked Non-Active' : 'Client restored to Active'
+      becomingNonActive
+        ? 'Client marked Non-Active'
+        : 'Client restored to Onboard'
     )
   );
 });
@@ -3117,6 +3165,7 @@ export const saveDevelopedWebsiteUrl = asyncHandler(async (req, res) => {
     _id: req.params.id,
     stage: 'closed_sale',
     ...TECH_NON_EXPIRED_CLAUSE,
+    ...TECH_CST_ACTIVE_CLAUSE,
   });
   if (!lead) throw new ApiError(404, 'Client not found');
 
@@ -3185,6 +3234,7 @@ export const getMyProjects = asyncHandler(async (req, res) => {
   const leads = await Lead.find({
     stage: 'closed_sale',
     ...TECH_NON_EXPIRED_CLAUSE,
+    ...TECH_CST_ACTIVE_CLAUSE,
     'handover.cstStatus': {
       $in: ['assigned', 'in_progress', 'ongoing_seo'],
     },
@@ -3235,6 +3285,7 @@ export const getMyPriorityProjects = asyncHandler(async (req, res) => {
   const leads = await Lead.find({
     stage: 'closed_sale',
     ...TECH_NON_EXPIRED_CLAUSE,
+    ...TECH_CST_ACTIVE_CLAUSE,
     'handover.isPriority': true,
     'handover.cstStatus': {
       $in: ['assigned', 'in_progress', 'ongoing_seo'],
@@ -3295,6 +3346,7 @@ export const getMyCompletedProjects = asyncHandler(async (req, res) => {
     Lead.find({
       stage: 'closed_sale',
       ...TECH_NON_EXPIRED_CLAUSE,
+    ...TECH_CST_ACTIVE_CLAUSE,
       'handover.developerHandoffs.developerId': uid,
     })
       .select(MY_PROJECTS_SELECT)
@@ -3302,6 +3354,7 @@ export const getMyCompletedProjects = asyncHandler(async (req, res) => {
     Lead.find({
       stage: 'closed_sale',
       ...TECH_NON_EXPIRED_CLAUSE,
+    ...TECH_CST_ACTIVE_CLAUSE,
       $and: [
         {
           $or: [
@@ -3383,6 +3436,7 @@ export const getMyTaskStats = asyncHandler(async (req, res) => {
   const active = await Lead.find({
     stage: 'closed_sale',
     ...TECH_NON_EXPIRED_CLAUSE,
+    ...TECH_CST_ACTIVE_CLAUSE,
     'handover.cstStatus': { $in: TECH_ACTIVE_STATUSES },
     $or: [
       { 'handover.assignedTechIds': uid },
@@ -3432,6 +3486,7 @@ export const confirmKeywordsRanked = asyncHandler(async (req, res) => {
     _id: req.params.id,
     stage: 'closed_sale',
     ...TECH_NON_EXPIRED_CLAUSE,
+    ...TECH_CST_ACTIVE_CLAUSE,
   });
   if (!lead) throw new ApiError(404, 'Client not found');
 

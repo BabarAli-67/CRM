@@ -409,11 +409,41 @@ export default function MessageToastBridge() {
       queryClient.invalidateQueries({ queryKey: ['techHeadQueue'] });
     };
 
-    const onCstClientState = () => {
-      if (role !== 'cst_manager' && role !== 'super_admin') return;
-      queryClient.invalidateQueries({ queryKey: ['cstClients'] });
-      queryClient.invalidateQueries({ queryKey: ['cstTechPipeline'] });
-      queryClient.invalidateQueries({ queryKey: ['handoverQueue'] });
+    const onCstClientState = (payload) => {
+      if (role === 'cst_manager' || role === 'super_admin') {
+        queryClient.invalidateQueries({ queryKey: ['cstClients'] });
+        queryClient.invalidateQueries({ queryKey: ['cstTechPipeline'] });
+        queryClient.invalidateQueries({ queryKey: ['handoverQueue'] });
+      }
+
+      if (
+        (role === 'tech_head' || role === 'tech_team') &&
+        payload?.isNonActive &&
+        payload?.leadId
+      ) {
+        const pn = payload.projectNumber ? `#${payload.projectNumber} · ` : '';
+        pushToast({
+          toastId: `cst-non-active-${payload.leadId}-${payload.at || Date.now()}`,
+          kind: 'cst_non_active',
+          leadId: payload.leadId,
+          senderName: 'CST · Non-Active',
+          preview: `${pn}${
+            payload.businessName || 'Client'
+          } has been marked as Non-Active`,
+          path:
+            role === 'tech_head'
+              ? '/dashboard/tech-head/assigned'
+              : '/dashboard/tech-team/projects',
+        });
+        queryClient.invalidateQueries({ queryKey: ['myProjects'] });
+        queryClient.invalidateQueries({ queryKey: ['myPriorityProjects'] });
+        queryClient.invalidateQueries({ queryKey: ['myCompletedProjects'] });
+        queryClient.invalidateQueries({ queryKey: ['techHeadQueue'] });
+        queryClient.invalidateQueries({ queryKey: ['techHeadAssigned'] });
+        queryClient.invalidateQueries({ queryKey: ['techHeadCompleted'] });
+        queryClient.invalidateQueries({ queryKey: ['techHeadPriority'] });
+        queryClient.invalidateQueries({ queryKey: ['techHeadBadges'] });
+      }
     };
 
     socket.on('tech:queue-new', onQueueNew);
