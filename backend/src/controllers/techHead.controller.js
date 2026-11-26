@@ -579,6 +579,23 @@ export const forwardEscalation = asyncHandler(async (req, res) => {
     forwardBody += `\n\n———\nInternal guidance: ${guidanceText}`;
   }
 
+  // Carry over CST upload attachments so specialists can open the same files
+  const sourceAttachments = Array.isArray(comment.attachments)
+    ? comment.attachments
+    : [];
+  const forwardedAttachments = sourceAttachments
+    .map((file) => {
+      if (!file?.storedFilename) return null;
+      return {
+        originalName: file.originalName || null,
+        storedFilename: file.storedFilename,
+        mimeType: file.mimeType || null,
+        sizeBytes: file.sizeBytes || null,
+        relativePath: file.relativePath || null,
+      };
+    })
+    .filter(Boolean);
+
   const forwardComment = {
     commentId: randomUUID(),
     body: forwardBody,
@@ -591,7 +608,7 @@ export const forwardEscalation = asyncHandler(async (req, res) => {
         role: 'tech_team',
       },
     ],
-    attachments: [],
+    attachments: forwardedAttachments,
     createdAt: new Date(),
     createdBy: req.user._id,
   };

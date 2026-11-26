@@ -304,18 +304,12 @@ export default function CstClientComments({ lead, onLeadUpdated }) {
     }
   };
 
-  const canDeleteAttachment = (comment) => {
-    const authorId = commentAuthorId(comment);
-    if (authorId && authorId === String(user?._id || user?.id || '')) {
-      return true;
-    }
-    return (
-      user?.role === 'cst_manager' ||
-      user?.role === 'tech_head' ||
-      user?.role === 'super_admin' ||
-      user?.role === 'admin'
-    );
-  };
+  const canDeleteAttachment = () =>
+    user?.role === 'cst_manager' ||
+    user?.role === 'tech_head' ||
+    user?.role === 'tech_team' ||
+    user?.role === 'super_admin' ||
+    user?.role === 'admin';
 
   const deleteAttachmentMutation = useMutation({
     mutationFn: ({ commentId, filename }) =>
@@ -542,7 +536,7 @@ export default function CstClientComments({ lead, onLeadUpdated }) {
                         }`}
                       >
                         {c.attachments.map((f) => {
-                          const showDelete = canDeleteAttachment(c);
+                          const showDelete = canDeleteAttachment();
                           const deleting =
                             deleteAttachmentMutation.isPending &&
                             deleteAttachmentMutation.variables?.commentId ===

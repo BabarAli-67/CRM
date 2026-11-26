@@ -2427,13 +2427,15 @@ export const deleteClientCommentAttachment = asyncHandler(async (req, res) => {
     ? String(comment.createdBy._id || comment.createdBy)
     : '';
   const isAuthor = authorId && authorId === String(req.user._id);
+  // Tech specialists (all JDs), Tech Head, CST, and admins may remove attachments
   const canModerate =
     role === 'cst_manager' ||
     role === 'tech_head' ||
+    role === 'tech_team' ||
     role === 'super_admin' ||
     role === 'admin';
   if (!isAuthor && !canModerate) {
-    throw new ApiError(403, 'You can only delete your own comment attachments');
+    throw new ApiError(403, 'Not allowed to delete this attachment');
   }
 
   const attachments = Array.isArray(comment.attachments)
