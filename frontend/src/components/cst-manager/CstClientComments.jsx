@@ -304,9 +304,6 @@ export default function CstClientComments({ lead, onLeadUpdated }) {
     }
   };
 
-  const isImageAttachment = (file) =>
-    String(file?.mimeType || '').toLowerCase().startsWith('image/');
-
   const canDeleteAttachment = (comment) => {
     const authorId = commentAuthorId(comment);
     if (authorId && authorId === String(user?._id || user?.id || '')) {
@@ -325,13 +322,13 @@ export default function CstClientComments({ lead, onLeadUpdated }) {
       deleteClientCommentAttachment(lead._id, commentId, filename),
     onSuccess: (updatedLead) => {
       setError('');
-      setMessage('Image deleted.');
+      setMessage('Attachment deleted.');
       onLeadUpdated?.(updatedLead);
       queryClient.invalidateQueries({ queryKey: ['commentNotifications'] });
     },
     onError: (err) => {
       setMessage('');
-      setError(err?.response?.data?.message || 'Failed to delete image.');
+      setError(err?.response?.data?.message || 'Failed to delete attachment.');
     },
   });
 
@@ -343,10 +340,10 @@ export default function CstClientComments({ lead, onLeadUpdated }) {
         </h2>
         <p className="mt-1 text-sm text-zinc-500">
           {isCstAuthor
-            ? 'CST ↔ Tech Head only — every comment alerts Tech Head. Optional @Tech Head. Attach PDF, Docs, or Images.'
+            ? 'CST ↔ Tech Head only — every comment alerts Tech Head. Optional @Tech Head. Attach PDF, Docs, Images, or Video.'
             : isTechHead
               ? 'Hub thread — reply to CST or forward work to specialists. Type @ to mention CST or an assigned specialist.'
-              : 'Tech Head ↔ Tech Team only — replies alert Tech Head (hidden from CST). Attach PDF, Docs, or Images.'}
+              : 'Tech Head ↔ Tech Team only — replies alert Tech Head (hidden from CST). Attach PDF, Docs, Images, or Video.'}
         </p>
 
         <div className="relative mt-4">
@@ -419,7 +416,7 @@ export default function CstClientComments({ lead, onLeadUpdated }) {
           <input
             type="file"
             multiple
-            accept=".pdf,.doc,.docx,.png,.jpg,.jpeg,.webp,.gif,application/pdf,image/*,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            accept=".pdf,.doc,.docx,.png,.jpg,.jpeg,.webp,.gif,.mp4,.webm,.mov,.avi,.mkv,application/pdf,image/*,video/*,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
             onChange={(e) => setFiles(Array.from(e.target.files || []))}
             className="text-sm text-zinc-400 file:mr-3 file:rounded-lg file:border-0 file:bg-zinc-800 file:px-3 file:py-2 file:text-sm file:font-semibold file:text-white"
           />
@@ -545,8 +542,7 @@ export default function CstClientComments({ lead, onLeadUpdated }) {
                         }`}
                       >
                         {c.attachments.map((f) => {
-                          const showDelete =
-                            isImageAttachment(f) && canDeleteAttachment(c);
+                          const showDelete = canDeleteAttachment(c);
                           const deleting =
                             deleteAttachmentMutation.isPending &&
                             deleteAttachmentMutation.variables?.commentId ===

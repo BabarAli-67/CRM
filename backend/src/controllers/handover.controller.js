@@ -2386,7 +2386,7 @@ export const serveClientCommentAttachment = asyncHandler(async (req, res) => {
 
 /**
  * DELETE /handover/:id/comments/:commentId/files/:filename
- * Remove a comment image attachment (author, CST, Tech Head, or admin).
+ * Remove any comment attachment (author, CST, Tech Head, or admin).
  */
 export const deleteClientCommentAttachment = asyncHandler(async (req, res) => {
   const lead = await Lead.findById(req.params.id).select(
@@ -2433,7 +2433,7 @@ export const deleteClientCommentAttachment = asyncHandler(async (req, res) => {
     role === 'super_admin' ||
     role === 'admin';
   if (!isAuthor && !canModerate) {
-    throw new ApiError(403, 'You can only delete your own comment images');
+    throw new ApiError(403, 'You can only delete your own comment attachments');
   }
 
   const attachments = Array.isArray(comment.attachments)
@@ -2445,10 +2445,6 @@ export const deleteClientCommentAttachment = asyncHandler(async (req, res) => {
   if (fileIndex < 0) throw new ApiError(404, 'Attachment not found');
 
   const file = attachments[fileIndex];
-  const mime = String(file.mimeType || '').toLowerCase();
-  if (!mime.startsWith('image/')) {
-    throw new ApiError(400, 'Only image attachments can be deleted here');
-  }
 
   const abs = path.join(
     process.cwd(),
@@ -2487,7 +2483,7 @@ export const deleteClientCommentAttachment = asyncHandler(async (req, res) => {
     new ApiResponse(
       200,
       { lead: leadObj, commentId: comment.commentId },
-      'Comment image deleted'
+      'Comment attachment deleted'
     )
   );
 });

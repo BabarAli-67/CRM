@@ -176,7 +176,7 @@ export const clientCommentAttachmentUrl = (leadId, commentId, filename) =>
     filename
   )}`;
 
-/** Delete a comment image attachment. */
+/** Delete a comment file attachment (image, PDF, doc, video, etc.). */
 export const deleteClientCommentAttachment = async (
   leadId,
   commentId,

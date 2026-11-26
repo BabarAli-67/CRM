@@ -15,6 +15,11 @@ const ALLOWED_MIME_TYPES = new Set([
   'image/gif',
   'application/msword',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'video/mp4',
+  'video/webm',
+  'video/quicktime',
+  'video/x-msvideo',
+  'video/x-matroska',
 ]);
 
 const ALLOWED_EXT = new Set([
@@ -26,6 +31,11 @@ const ALLOWED_EXT = new Set([
   '.gif',
   '.doc',
   '.docx',
+  '.mp4',
+  '.webm',
+  '.mov',
+  '.avi',
+  '.mkv',
 ]);
 
 const storage = multer.diskStorage({
@@ -46,7 +56,9 @@ const fileFilter = (req, file, cb) => {
     return cb(null, true);
   }
   return cb(
-    new Error('Attachments must be PDF, DOC, DOCX, or image files.'),
+    new Error(
+      'Attachments must be PDF, DOC, DOCX, image, or video files (mp4, webm, mov, avi, mkv).'
+    ),
     false
   );
 };
@@ -54,7 +66,7 @@ const fileFilter = (req, file, cb) => {
 const clientCommentUpload = multer({
   storage,
   fileFilter,
-  limits: { fileSize: 15 * 1024 * 1024, files: 5 },
+  limits: { fileSize: 50 * 1024 * 1024, files: 5 },
 });
 
 export default clientCommentUpload;
