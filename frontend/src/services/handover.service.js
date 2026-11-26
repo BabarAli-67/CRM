@@ -176,6 +176,20 @@ export const clientCommentAttachmentUrl = (leadId, commentId, filename) =>
     filename
   )}`;
 
+/** Delete a comment image attachment. */
+export const deleteClientCommentAttachment = async (
+  leadId,
+  commentId,
+  filename
+) => {
+  const response = await api.delete(
+    `/handover/${leadId}/comments/${commentId}/files/${encodeURIComponent(
+      filename
+    )}`
+  );
+  return response.data.data.lead;
+};
+
 /** Deep-link to the shared Comments tab for CST / Tech Head / Tech Team. */
 export const clientCommentsPath = (role, leadId) => {
   if (role === 'tech_team') {

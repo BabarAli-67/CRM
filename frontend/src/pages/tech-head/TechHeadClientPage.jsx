@@ -17,7 +17,6 @@ import TechProjectWorkScope, {
 import TechHeadShell from '../../components/tech-head/TechHeadShell.jsx';
 import { getTechHeadClient } from '../../services/techHead.service.js';
 import { resolveTechHeadBackNav } from '../../utils/techDetailNav.util.js';
-import { opsStatusBadgeClass } from '../../utils/opsStatus.util.js';
 import { projectTitle } from '../../utils/projectNumber.util.js';
 
 export default function TechHeadClientPage() {
@@ -73,7 +72,6 @@ export default function TechHeadClientPage() {
   };
 
   const statusLabel = resolveProjectStatusLabel(lead);
-  const clientLifecycle = lead?.handover?.clientStatus || 'Active';
 
   return (
     <TechHeadShell title="Project Detail">
@@ -113,20 +111,6 @@ export default function TechHeadClientPage() {
                     {projectTitle(lead, '—')}
                   </h1>
                   <div className="mt-3 flex flex-wrap gap-3">
-                    <span className="inline-flex max-w-full flex-col items-start gap-0.5">
-                      <span className="text-[10px] font-medium uppercase tracking-wide text-zinc-500">
-                        Client Status
-                      </span>
-                      <span
-                        className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold ${opsStatusBadgeClass(
-                          clientLifecycle === 'Expired'
-                            ? 'Suspended'
-                            : 'Verified'
-                        )}`}
-                      >
-                        {clientLifecycle}
-                      </span>
-                    </span>
                     <OpsStatusBadges handover={lead.handover} />
                   </div>
                 </div>

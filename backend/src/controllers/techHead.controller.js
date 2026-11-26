@@ -1305,6 +1305,27 @@ export const assignTeamToClient = asyncHandler(async (req, res) => {
     alsoNotifyUserIds: priorIds,
   });
 
+  // CST boards: leave Onboard → Tech Status + Client → Active
+  if (firstAssign) {
+    const cstManagers = await User.find({
+      role: 'cst_manager',
+      status: 'approved',
+    }).select('_id');
+    const cstPayload = {
+      leadId: String(lead._id),
+      businessName: lead.businessName || 'Client',
+      projectNumber: lead.handover?.projectNumber || null,
+      cstClientState: lead.handover?.cstClientState || 'Active',
+      isNonActive: Boolean(lead.handover?.isNonActive),
+      cstStatus: lead.handover?.cstStatus || 'assigned',
+      reason: 'tech-assigned',
+      at: new Date(),
+    };
+    for (const u of cstManagers) {
+      emitToUser(u._id, 'cst:client-state', cstPayload);
+    }
+  }
+
   // Newly assigned specialists get a Priority alert when the project is flagged
   if (lead.handover.isPriority) {
     const currentIds = getAssignedTechIdList(lead);

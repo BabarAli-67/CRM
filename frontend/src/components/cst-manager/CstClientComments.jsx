@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   addClientComment,
   clientCommentAttachmentUrl,
+  deleteClientCommentAttachment,
   markClientCommentsRead,
 } from '../../services/handover.service.js';
 import { getUsers } from '../../services/lead.service.js';
@@ -303,6 +304,37 @@ export default function CstClientComments({ lead, onLeadUpdated }) {
     }
   };
 
+  const isImageAttachment = (file) =>
+    String(file?.mimeType || '').toLowerCase().startsWith('image/');
+
+  const canDeleteAttachment = (comment) => {
+    const authorId = commentAuthorId(comment);
+    if (authorId && authorId === String(user?._id || user?.id || '')) {
+      return true;
+    }
+    return (
+      user?.role === 'cst_manager' ||
+      user?.role === 'tech_head' ||
+      user?.role === 'super_admin' ||
+      user?.role === 'admin'
+    );
+  };
+
+  const deleteAttachmentMutation = useMutation({
+    mutationFn: ({ commentId, filename }) =>
+      deleteClientCommentAttachment(lead._id, commentId, filename),
+    onSuccess: (updatedLead) => {
+      setError('');
+      setMessage('Image deleted.');
+      onLeadUpdated?.(updatedLead);
+      queryClient.invalidateQueries({ queryKey: ['commentNotifications'] });
+    },
+    onError: (err) => {
+      setMessage('');
+      setError(err?.response?.data?.message || 'Failed to delete image.');
+    },
+  });
+
   return (
     <div className="space-y-4">
       <div className="relative rounded-2xl border border-zinc-800/80 bg-[#111111] p-4 sm:p-5">
@@ -512,20 +544,49 @@ export default function CstClientComments({ lead, onLeadUpdated }) {
                           isOwn ? 'justify-end' : 'justify-start'
                         }`}
                       >
-                        {c.attachments.map((f) => (
-                          <button
-                            key={f.storedFilename}
-                            type="button"
-                            onClick={() => openAttachment(c, f)}
-                            className={`rounded-lg px-2.5 py-1 text-xs font-semibold transition ${
-                              isOwn
-                                ? 'border border-[#F25E26]/40 bg-[#F25E26]/10 text-[#ffb899] hover:bg-[#F25E26]/20'
-                                : 'border border-zinc-700 text-[#F25E26] hover:bg-[#F25E26]/10'
-                            }`}
-                          >
-                            {f.originalName || f.storedFilename}
-                          </button>
-                        ))}
+                        {c.attachments.map((f) => {
+                          const showDelete =
+                            isImageAttachment(f) && canDeleteAttachment(c);
+                          const deleting =
+                            deleteAttachmentMutation.isPending &&
+                            deleteAttachmentMutation.variables?.commentId ===
+                              c.commentId &&
+                            deleteAttachmentMutation.variables?.filename ===
+                              f.storedFilename;
+                          return (
+                            <div
+                              key={f.storedFilename}
+                              className="inline-flex items-center gap-1"
+                            >
+                              <button
+                                type="button"
+                                onClick={() => openAttachment(c, f)}
+                                className={`rounded-lg px-2.5 py-1 text-xs font-semibold transition ${
+                                  isOwn
+                                    ? 'border border-[#F25E26]/40 bg-[#F25E26]/10 text-[#ffb899] hover:bg-[#F25E26]/20'
+                                    : 'border border-zinc-700 text-[#F25E26] hover:bg-[#F25E26]/10'
+                                }`}
+                              >
+                                {f.originalName || f.storedFilename}
+                              </button>
+                              {showDelete ? (
+                                <button
+                                  type="button"
+                                  disabled={deleteAttachmentMutation.isPending}
+                                  onClick={() =>
+                                    deleteAttachmentMutation.mutate({
+                                      commentId: c.commentId,
+                                      filename: f.storedFilename,
+                                    })
+                                  }
+                                  className="rounded-lg border border-red-500/40 px-2 py-1 text-[11px] font-semibold text-red-300 transition hover:bg-red-500/15 disabled:opacity-50"
+                                >
+                                  {deleting ? 'Deleting…' : 'Delete'}
+                                </button>
+                              ) : null}
+                            </div>
+                          );
+                        })}
                       </div>
                     ) : null}
                   </article>

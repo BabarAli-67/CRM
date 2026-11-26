@@ -2385,6 +2385,114 @@ export const serveClientCommentAttachment = asyncHandler(async (req, res) => {
 });
 
 /**
+ * DELETE /handover/:id/comments/:commentId/files/:filename
+ * Remove a comment image attachment (author, CST, Tech Head, or admin).
+ */
+export const deleteClientCommentAttachment = asyncHandler(async (req, res) => {
+  const lead = await Lead.findById(req.params.id).select(
+    'handover.comments handover.assignedTechId handover.assignedTechIds businessName'
+  );
+  if (!lead) throw new ApiError(404, 'Client not found');
+
+  const role = req.user.role;
+  if (role === 'tech_team') {
+    if (!isUserAssignedTech(lead, req.user._id)) {
+      throw new ApiError(
+        403,
+        'You can only manage attachments on your assigned clients'
+      );
+    }
+  } else if (
+    role !== 'cst_manager' &&
+    role !== 'tech_head' &&
+    role !== 'super_admin' &&
+    role !== 'admin'
+  ) {
+    throw new ApiError(
+      403,
+      'Attachments are limited to CST Manager, Tech Head, and Tech Team'
+    );
+  }
+
+  if (!lead.handover) lead.handover = {};
+  const comments = Array.isArray(lead.handover.comments)
+    ? lead.handover.comments
+    : [];
+  const comment = comments.find(
+    (c) => String(c.commentId) === String(req.params.commentId)
+  );
+  if (!comment) throw new ApiError(404, 'Comment not found');
+
+  const authorId = comment.createdBy
+    ? String(comment.createdBy._id || comment.createdBy)
+    : '';
+  const isAuthor = authorId && authorId === String(req.user._id);
+  const canModerate =
+    role === 'cst_manager' ||
+    role === 'tech_head' ||
+    role === 'super_admin' ||
+    role === 'admin';
+  if (!isAuthor && !canModerate) {
+    throw new ApiError(403, 'You can only delete your own comment images');
+  }
+
+  const attachments = Array.isArray(comment.attachments)
+    ? comment.attachments
+    : [];
+  const fileIndex = attachments.findIndex(
+    (a) => String(a.storedFilename) === String(req.params.filename)
+  );
+  if (fileIndex < 0) throw new ApiError(404, 'Attachment not found');
+
+  const file = attachments[fileIndex];
+  const mime = String(file.mimeType || '').toLowerCase();
+  if (!mime.startsWith('image/')) {
+    throw new ApiError(400, 'Only image attachments can be deleted here');
+  }
+
+  const abs = path.join(
+    process.cwd(),
+    'uploads',
+    'client-comments',
+    String(req.params.id),
+    file.storedFilename
+  );
+  try {
+    if (fs.existsSync(abs)) fs.unlinkSync(abs);
+  } catch {
+    // Continue — DB entry still removed even if disk file is already gone
+  }
+
+  attachments.splice(fileIndex, 1);
+  comment.attachments = attachments;
+  lead.markModified('handover.comments');
+  await lead.save();
+
+  await emitTechProjectSync(User, lead, {
+    reason: 'comment-image-deleted',
+    actorId: req.user._id,
+  });
+
+  const updated = await populateCstLead(Lead.findById(lead._id));
+  const leadObj =
+    typeof updated?.toObject === 'function' ? updated.toObject() : updated;
+  if (leadObj?.handover) {
+    leadObj.handover.comments = filterCommentsForViewerRole(
+      leadObj.handover.comments,
+      role === 'super_admin' ? 'tech_head' : role
+    );
+  }
+
+  res.status(200).json(
+    new ApiResponse(
+      200,
+      { lead: leadObj, commentId: comment.commentId },
+      'Comment image deleted'
+    )
+  );
+});
+
+/**
  * Tech (assigned) or CST — save live portfolio keywords + change requests only.
  */
 export const saveLivePortfolio = asyncHandler(async (req, res) => {
@@ -2838,9 +2946,30 @@ export const getTechPipeline = asyncHandler(async (req, res) => {
   );
 });
 
+/** Onboarded + assigned tech pipeline (Non-Active board + state toggles). */
 const CST_CLIENT_PIPELINE_CLAUSE = {
   $or: [
     { 'handover.cstStatus': 'onboarded' },
+    {
+      'handover.assignedTechId': { $ne: null },
+      'handover.cstStatus': {
+        $in: ['assigned', 'in_progress', 'ongoing_seo', 'completed'],
+      },
+    },
+    {
+      'handover.assignedTechIds.0': { $exists: true },
+      'handover.cstStatus': {
+        $in: ['assigned', 'in_progress', 'ongoing_seo', 'completed'],
+      },
+    },
+  ],
+};
+
+/**
+ * Client → Active: only after Tech Head assigns (not still sitting in Onboard).
+ */
+const CST_CLIENT_ACTIVE_BOARD_CLAUSE = {
+  $or: [
     {
       'handover.assignedTechId': { $ne: null },
       'handover.cstStatus': {
@@ -2872,7 +3001,9 @@ export const getCstClients = asyncHandler(async (req, res) => {
   const leads = await Lead.find({
     stage: 'closed_sale',
     $and: [
-      CST_CLIENT_PIPELINE_CLAUSE,
+      isNonActive
+        ? CST_CLIENT_PIPELINE_CLAUSE
+        : CST_CLIENT_ACTIVE_BOARD_CLAUSE,
       isNonActive
         ? { 'handover.isNonActive': true }
         : CST_ACTIVE_CLIENT_CLAUSE,

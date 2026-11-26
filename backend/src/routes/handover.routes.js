@@ -28,6 +28,7 @@ import {
   markClientCommentsRead,
   getCommentNotifications,
   serveClientCommentAttachment,
+  deleteClientCommentAttachment,
   saveLivePortfolio,
   uploadMonthlyReport,
   serveMonthlyReport,
@@ -222,6 +223,12 @@ router.get(
   '/:id/comments/:commentId/files/:filename',
   restrictTo('cst_manager', 'tech_team', 'tech_head', 'super_admin', 'admin'),
   serveClientCommentAttachment
+);
+
+router.delete(
+  '/:id/comments/:commentId/files/:filename',
+  restrictTo('cst_manager', 'tech_team', 'tech_head', 'super_admin', 'admin'),
+  deleteClientCommentAttachment
 );
 
 router.patch(
