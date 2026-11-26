@@ -9,26 +9,34 @@ const STEPS = [
   { key: 'completed', label: 'Completed' },
 ];
 
+/** Default for non-Developer / non-SEO roles (Content, Design, SMM, …). */
 const NEXT_OPTIONS = {
-  assigned: [{ value: 'in_progress', label: 'Start → In Progress' }],
+  assigned: [{ value: 'in_progress', label: 'Start in Progress' }],
   in_progress: [
     { value: 'ongoing_seo', label: 'Mark → Ongoing (SEO)' },
-    { value: 'completed', label: 'Mark → Completed' },
+    { value: 'completed', label: 'Task Completed' },
   ],
-  // SEO Experts (and other non-Developer roles) can Start work after handoff
   ongoing_seo: [
-    { value: 'in_progress', label: 'Start → In Progress' },
-    { value: 'completed', label: 'Mark → Completed' },
+    { value: 'in_progress', label: 'Start in Progress' },
+    { value: 'completed', label: 'Task Completed' },
   ],
 };
 
-/** Developers may only hand off to Ongoing (SEO) — never Mark Completed. */
+/** Developers: SEO handoff only (no Start / Completed on their card). */
 const DEVELOPER_NEXT_OPTIONS = {
-  assigned: [{ value: 'in_progress', label: 'Start → In Progress' }],
-  in_progress: [
-    { value: 'ongoing_seo', label: 'Move to Ongoing (SEO)' },
-  ],
+  assigned: [{ value: 'ongoing_seo', label: 'Move to Ongoing (SEO)' }],
+  in_progress: [{ value: 'ongoing_seo', label: 'Move to Ongoing (SEO)' }],
   ongoing_seo: [],
+};
+
+/** SEO Experts: start work + complete (no Developer handoff button). */
+const SEO_NEXT_OPTIONS = {
+  assigned: [{ value: 'in_progress', label: 'Start in Progress' }],
+  in_progress: [{ value: 'completed', label: 'Task Completed' }],
+  ongoing_seo: [
+    { value: 'in_progress', label: 'Start in Progress' },
+    { value: 'completed', label: 'Task Completed' },
+  ],
 };
 
 /**
@@ -36,7 +44,8 @@ const DEVELOPER_NEXT_OPTIONS = {
  *
  * @param {string} leadId
  * @param {string} [status] Current handover.cstStatus / techStatus
- * @param {boolean} [developerHandoffOnly] Hide Mark Completed; SEO handoff only
+ * @param {boolean} [developerHandoffOnly] Developer: only Move to Ongoing (SEO)
+ * @param {boolean} [seoStatusActions] SEO Expert: Start in Progress + Task Completed
  * @param {boolean} [actionsDisabled] Lock all next-step buttons (SEO waiting gate)
  * @param {string} [disabledNote] Subtle note shown when locked
  * @param {(lead: object) => void} [onUpdated]
@@ -45,6 +54,7 @@ export default function MilestoneStepper({
   leadId,
   status = 'assigned',
   developerHandoffOnly = false,
+  seoStatusActions = false,
   actionsDisabled = false,
   disabledNote = '',
   onUpdated,
@@ -60,7 +70,9 @@ export default function MilestoneStepper({
   );
   const optionMap = developerHandoffOnly
     ? DEVELOPER_NEXT_OPTIONS
-    : NEXT_OPTIONS;
+    : seoStatusActions
+      ? SEO_NEXT_OPTIONS
+      : NEXT_OPTIONS;
   const nextOptions = optionMap[current] || [];
   const isComplete = current === 'completed';
   // When on Ongoing (SEO), treat that step as reached even if we skipped visually

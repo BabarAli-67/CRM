@@ -3683,9 +3683,10 @@ const MILESTONE_ORDER = {
   completed: 5,
 };
 
-/** Allowed transitions for Tech project status. */
+/** Allowed transitions for Tech project status (role-refined below). */
 const MILESTONE_NEXT = {
-  assigned: ['in_progress'],
+  // Developers may jump Pending → Ongoing (SEO); others Start → In Progress
+  assigned: ['in_progress', 'ongoing_seo'],
   in_progress: ['ongoing_seo', 'completed'],
   // SEO Experts may Start → In Progress after Developer handoff lands on Ongoing (SEO)
   ongoing_seo: ['in_progress', 'completed'],
@@ -3719,9 +3720,28 @@ export const updateMilestone = asyncHandler(async (req, res) => {
     throw new ApiError(403, 'Not allowed to update project status');
   }
 
+  let workspaceJd = null;
+  if (role === 'tech_team') {
+    let actorForJd = req.user;
+    if (req.user.jd === 'Intern') {
+      actorForJd = await User.findById(req.user._id)
+        .select('fullName username role jd assignedMentorId')
+        .populate('assignedMentorId', 'jd fullName');
+    }
+    workspaceJd = resolveTechWorkspaceJd(actorForJd);
+  }
+
   const current =
     lead.handover.techStatus || lead.handover.cstStatus || 'assigned';
-  const allowed = MILESTONE_NEXT[current] || [];
+  let allowed = MILESTONE_NEXT[current] || [];
+  // Developers: handoff to Ongoing (SEO) only — no Start / Completed
+  if (workspaceJd === 'Developer') {
+    allowed = allowed.filter((m) => m === 'ongoing_seo');
+  }
+  // SEO Experts: Start in Progress + Task Completed only (no SEO handoff)
+  if (workspaceJd === 'SEO Expert') {
+    allowed = allowed.filter((m) => m === 'in_progress' || m === 'completed');
+  }
   if (!allowed.includes(milestone)) {
     throw new ApiError(
       400,
@@ -3730,18 +3750,10 @@ export const updateMilestone = asyncHandler(async (req, res) => {
   }
 
   // SEO Expert cannot advance status while a co-assigned Developer still owns build
-  if (role === 'tech_team') {
-    let actorForGate = req.user;
-    if (req.user.jd === 'Intern') {
-      actorForGate = await User.findById(req.user._id)
-        .select('fullName username role jd assignedMentorId')
-        .populate('assignedMentorId', 'jd fullName');
-    }
-    if (resolveTechWorkspaceJd(actorForGate) === 'SEO Expert') {
-      await ensureAssignedTechsPopulated(lead, User);
-      if (isSeoWaitingForDeveloper(lead)) {
-        throw new ApiError(403, SEO_WAITING_FOR_DEVELOPER_MSG);
-      }
+  if (workspaceJd === 'SEO Expert') {
+    await ensureAssignedTechsPopulated(lead, User);
+    if (isSeoWaitingForDeveloper(lead)) {
+      throw new ApiError(403, SEO_WAITING_FOR_DEVELOPER_MSG);
     }
   }
 

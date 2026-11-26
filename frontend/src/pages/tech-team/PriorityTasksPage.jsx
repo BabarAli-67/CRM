@@ -227,6 +227,7 @@ export default function PriorityTasksPage() {
                       'assigned'
                     }
                     developerHandoffOnly={workspaceJd === 'Developer'}
+                    seoStatusActions={workspaceJd === 'SEO Expert'}
                     actionsDisabled={waitingForDeveloper}
                     disabledNote=""
                   />
