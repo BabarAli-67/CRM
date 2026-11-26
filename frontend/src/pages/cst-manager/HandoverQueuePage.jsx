@@ -3,25 +3,18 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import LeadDetailModal from '../../components/leads/LeadDetailModal.jsx';
 import CstManagerShell from '../../components/cst-manager/CstManagerShell.jsx';
+import CstOnboardClientCard from '../../components/cst-manager/CstOnboardClientCard.jsx';
 import WelcomeEmailModal from '../../components/cst-manager/WelcomeEmailModal.jsx';
 import CstOnboardFilterBar from '../../components/cst-manager/CstOnboardFilterBar.jsx';
 import {
   getHandoverQueue,
   getTechPipeline,
   markClientOnboarded,
+  setCstClientState,
 } from '../../services/handover.service.js';
 import { formatUserRef } from '../../utils/formatUserRef.util.js';
-import {
-  formatMoneyAmount,
-  formatPaymentSummary,
-  getClientRevenueTotals,
-} from '../../utils/formatPayment.util.js';
+import { formatPaymentSummary } from '../../utils/formatPayment.util.js';
 import { retentionAlertAtFromClosedAt } from '../../utils/emailjs.util.js';
-import {
-  formatContractBadgeLabel,
-  formatPktDateTimeLong,
-  getRetentionBadge,
-} from '../../utils/retention.util.js';
 import { pktDateKey } from '../../components/closer/CloserTableFilterBar.jsx';
 
 const formatPkt = (value) => {
@@ -233,6 +226,35 @@ export default function HandoverQueuePage() {
 
   const activeMeta = TAB_META[tab] || TAB_META.pending;
 
+  const nonActiveMutation = useMutation({
+    mutationFn: (leadId) => setCstClientState(leadId, 'Non-Active'),
+    onSuccess: (lead, leadId) => {
+      const id = String(lead?._id || leadId);
+      setActionError('');
+      setMessage('Client marked Non-Active.');
+      // Drop from Tech Status immediately — only Client → Non-Active keeps them
+      queryClient.setQueryData(['cstTechPipeline'], (old) =>
+        Array.isArray(old)
+          ? old.filter((l) => String(l._id) !== id)
+          : old
+      );
+      queryClient.setQueryData(['handoverQueue'], (old) =>
+        Array.isArray(old)
+          ? old.filter((l) => String(l._id) !== id)
+          : old
+      );
+      queryClient.invalidateQueries({ queryKey: ['cstTechPipeline'] });
+      queryClient.invalidateQueries({ queryKey: ['cstClients'] });
+      queryClient.invalidateQueries({ queryKey: ['handoverQueue'] });
+    },
+    onError: (err) => {
+      setMessage('');
+      setActionError(
+        err?.response?.data?.message || 'Failed to mark client Non-Active.'
+      );
+    },
+  });
+
   const onboardMutation = useMutation({
     mutationFn: (id) => markClientOnboarded(id),
     onSuccess: (lead) => {
@@ -441,121 +463,13 @@ export default function HandoverQueuePage() {
               </p>
             ) : (
               <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                {filteredOnboardRows.map((row) => {
-                  const revenue = getClientRevenueTotals(row);
-                  // Base = deal paymentOffered; Collected/Pending include upsells + retention
-                  const base = revenue.baseOffered;
-                  const collected = revenue.totalCollected;
-                  const pending = revenue.totalPending;
-                  const retentionBadge = getRetentionBadge(row);
-                  const contractBadge = formatContractBadgeLabel(row);
-
-                  const unread = Number(row.unreadCommentCount) || 0;
-
-                  return (
-                    <Link
-                      key={row._id}
-                      to={
-                        unread > 0
-                          ? `/dashboard/cst-manager/client/${row._id}?tab=comments&from=onboard`
-                          : `/dashboard/cst-manager/client/${row._id}?from=onboard`
-                      }
-                      className="block rounded-xl border border-white/10 bg-[#111111] px-4 py-3.5 transition hover:border-[#F25E26]/45 hover:bg-[#161616] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#F25E26]/40"
-                    >
-                      <div className="flex flex-wrap items-center gap-2">
-                        <h3 className="truncate font-display text-sm font-bold tracking-tight text-white">
-                          {row.businessName?.trim() || '—'}
-                        </h3>
-                        {contractBadge ? (
-                          <span
-                            className="inline-flex max-w-[14rem] shrink-0 truncate items-center rounded-full bg-sky-500/15 px-2 py-0.5 text-[10px] font-bold text-sky-300 ring-1 ring-sky-500/40"
-                            title={contractBadge}
-                          >
-                            {contractBadge}
-                          </span>
-                        ) : null}
-                        {retentionBadge ? (
-                          <span
-                            className={`inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-[10px] font-bold ring-1 ${
-                              retentionBadge.kind === 'paid'
-                                ? 'bg-emerald-500/15 text-emerald-300 ring-emerald-500/40'
-                                : 'bg-[#F25E26]/15 text-[#F25E26] ring-[#F25E26]/40'
-                            }`}
-                          >
-                            {retentionBadge.label}
-                          </span>
-                        ) : null}
-                        {unread > 0 ? (
-                          <span className="inline-flex shrink-0 items-center rounded-full bg-[#F25E26]/15 px-2 py-0.5 text-[10px] font-bold text-[#F25E26] ring-1 ring-[#F25E26]/40">
-                            {unread === 1
-                              ? '1 New Comment'
-                              : `${unread} New Comments`}
-                          </span>
-                        ) : null}
-                      </div>
-
-                      <dl className="mt-3 space-y-1.5 text-xs">
-                        <div className="flex gap-2">
-                          <dt className="shrink-0 text-zinc-500">
-                            Business Email
-                          </dt>
-                          <dd className="min-w-0 truncate text-zinc-300">
-                            {row.businessEmail?.trim() || '—'}
-                          </dd>
-                        </div>
-                        <div className="flex gap-2">
-                          <dt className="shrink-0 text-zinc-500">
-                            Client Name
-                          </dt>
-                          <dd className="min-w-0 truncate text-zinc-300">
-                            {row.clientName?.trim() || '—'}
-                          </dd>
-                        </div>
-                        <div className="flex gap-2">
-                          <dt className="shrink-0 text-zinc-500">
-                            Next Retention
-                          </dt>
-                          <dd className="min-w-0 text-zinc-200">
-                            {retentionBadge?.at
-                              ? formatPktDateTimeLong(retentionBadge.at)
-                              : '—'}
-                          </dd>
-                        </div>
-                      </dl>
-
-                      <div className="mt-3 grid grid-cols-3 gap-2 rounded-lg border border-white/10 bg-black/30 px-2.5 py-2">
-                        <div>
-                          <p className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
-                            Base
-                          </p>
-                          <p className="mt-0.5 text-xs font-semibold text-white">
-                            {formatMoneyAmount(base)}
-                          </p>
-                        </div>
-                        <div>
-                          <p className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
-                            Collected
-                          </p>
-                          <p className="mt-0.5 text-xs font-semibold text-emerald-300">
-                            {formatMoneyAmount(collected)}
-                          </p>
-                        </div>
-                        <div>
-                          <p className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
-                            Pending
-                          </p>
-                          <p
-                            className={`mt-0.5 text-xs font-semibold ${
-                              pending > 0 ? 'text-[#F25E26]' : 'text-zinc-300'
-                            }`}
-                          >
-                            {formatMoneyAmount(pending)}
-                          </p>
-                        </div>
-                      </div>
-                    </Link>
-                  );
-                })}
+                {filteredOnboardRows.map((row) => (
+                  <CstOnboardClientCard
+                    key={row._id}
+                    lead={row}
+                    from="onboard"
+                  />
+                ))}
               </div>
             )}
           </div>
@@ -681,6 +595,22 @@ export default function HandoverQueuePage() {
                               >
                                 {unread > 0 ? 'Open Comments' : 'Open Client'}
                               </Link>
+                              <button
+                                type="button"
+                                disabled={
+                                  nonActiveMutation.isPending &&
+                                  nonActiveMutation.variables === row._id
+                                }
+                                onClick={() =>
+                                  nonActiveMutation.mutate(row._id)
+                                }
+                                className="rounded-lg border border-zinc-600 px-3 py-1.5 text-xs font-semibold text-zinc-300 hover:bg-zinc-800 disabled:opacity-50"
+                              >
+                                {nonActiveMutation.isPending &&
+                                nonActiveMutation.variables === row._id
+                                  ? 'Updating…'
+                                  : 'Non-Active'}
+                              </button>
                             </div>
                           </td>
                         </tr>

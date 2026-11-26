@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import {
+  confirmKeywordsRanked,
   fetchMonthlyReportBlob,
   saveLivePortfolio,
   uploadMonthlyReport,
@@ -39,6 +40,10 @@ export default function LivePortfolioSection({
   keywords: keywordsProp,
   setKeywords,
   reports = [],
+  keywordsRankedConfirmation = null,
+  showConfirmKeywordsRanked = false,
+  actionsLocked = false,
+  lockedReason = '',
   onLeadUpdated,
 }) {
   const isTech = mode === 'tech';
@@ -54,11 +59,35 @@ export default function LivePortfolioSection({
   const [reportFile, setReportFile] = useState(null);
   const [keywordNoteDraft, setKeywordNoteDraft] = useState('');
   const [busy, setBusy] = useState(false);
+  const [confirmBusy, setConfirmBusy] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
 
+  const rankedConfirmed = Boolean(keywordsRankedConfirmation?.confirmed);
+  const editsBlocked = Boolean(actionsLocked);
+  const waitingNote =
+    lockedReason ||
+    'Waiting for Developer to push to Ongoing (SEO)';
+
+  const onConfirmKeywordsRanked = async () => {
+    if (!leadId || confirmBusy || editsBlocked) return;
+    setConfirmBusy(true);
+    setError('');
+    try {
+      const updated = await confirmKeywordsRanked(leadId);
+      onLeadUpdated?.(updated);
+      setMessage('Keywords ranked confirmed — Tech Head notified.');
+    } catch (err) {
+      setError(
+        err?.response?.data?.message || 'Failed to confirm keywords ranked.'
+      );
+    } finally {
+      setConfirmBusy(false);
+    }
+  };
+
   const persistLive = async (nextKeywords, { removeKeywordIds } = {}) => {
-    if (!isTech) return;
+    if (!isTech || editsBlocked) return;
     setBusy(true);
     setError('');
     try {
@@ -95,7 +124,7 @@ export default function LivePortfolioSection({
   };
 
   const addKeyword = async () => {
-    if (!isTech) return;
+    if (!isTech || editsBlocked) return;
     const text = keywordDraft.trim();
     if (!text) return;
     // Update rank if keyword already exists (case-insensitive)
@@ -137,7 +166,7 @@ export default function LivePortfolioSection({
   };
 
   const startEditKeyword = (kw) => {
-    if (!isTech) return;
+    if (!isTech || editsBlocked) return;
     setEditingKeywordId(kw.keywordId);
     setEditText(kw.text || '');
     setEditPosition(kw.position || '');
@@ -150,7 +179,7 @@ export default function LivePortfolioSection({
   };
 
   const saveEditKeyword = async () => {
-    if (!isTech || !editingKeywordId) return;
+    if (!isTech || editsBlocked || !editingKeywordId) return;
     const text = editText.trim();
     if (!text) {
       setError('Keyword text is required.');
@@ -171,7 +200,7 @@ export default function LivePortfolioSection({
   };
 
   const removeKeyword = async (keywordId) => {
-    if (!isTech) return;
+    if (!isTech || editsBlocked) return;
     const next = keywords.filter((k) => k.keywordId !== keywordId);
     setKeywords(next);
     if (editingKeywordId === keywordId) cancelEditKeyword();
@@ -181,6 +210,7 @@ export default function LivePortfolioSection({
   };
 
   const onUploadReport = async () => {
+    if (editsBlocked) return;
     if (!reportFile) {
       setError('Choose a PDF file to upload.');
       return;
@@ -241,6 +271,9 @@ export default function LivePortfolioSection({
         <p className="mt-1 text-sm text-zinc-500">
           Shared CST ↔ Tech workspace for keywords and monthly PDFs.
         </p>
+        {editsBlocked ? (
+          <p className="mt-2 text-xs text-amber-400/90">{waitingNote}</p>
+        ) : null}
       </div>
 
       {message ? (
@@ -257,18 +290,50 @@ export default function LivePortfolioSection({
       <div className="grid w-full grid-cols-1 gap-6 xl:grid-cols-2">
       {/* Keywords — Tech manages; CST view-only table */}
       <div className="min-w-0 rounded-xl border border-zinc-800 bg-zinc-950/40 p-4">
-        <h3 className="text-sm font-semibold text-white">Portfolio Keywords</h3>
-        <p className="mt-1 text-xs text-zinc-500">
-          {isTech
-            ? 'Add, edit, and rank keywords. CST sees updates in real time.'
-            : 'View-only ranking table managed by Tech.'}
-        </p>
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <div>
+            <h3 className="text-sm font-semibold text-white">
+              Portfolio Keywords
+            </h3>
+            <p className="mt-1 text-xs text-zinc-500">
+              {isTech
+                ? 'Add, edit, and rank keywords. CST sees updates in real time.'
+                : 'View-only ranking table managed by Tech.'}
+            </p>
+          </div>
+          {showConfirmKeywordsRanked && isTech ? (
+            <button
+              type="button"
+              disabled={confirmBusy || rankedConfirmed || editsBlocked}
+              title={editsBlocked ? waitingNote : undefined}
+              onClick={onConfirmKeywordsRanked}
+              className="shrink-0 rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {rankedConfirmed
+                ? 'Keywords Ranked ✓'
+                : confirmBusy
+                  ? 'Confirming…'
+                  : 'Confirm Keywords Ranked'}
+            </button>
+          ) : null}
+        </div>
+
+        {rankedConfirmed ? (
+          <p className="mt-2 text-xs text-emerald-400">
+            Confirmed by{' '}
+            {keywordsRankedConfirmation?.confirmedByName || 'SEO Expert'}
+            {keywordsRankedConfirmation?.confirmedAt
+              ? ` · ${formatPkt(keywordsRankedConfirmation.confirmedAt)} PKT`
+              : ''}
+          </p>
+        ) : null}
 
         {isTech ? (
           <div className="mt-3 grid gap-2 sm:grid-cols-2">
             <input
               type="text"
               value={keywordDraft}
+              disabled={editsBlocked}
               onChange={(e) => setKeywordDraft(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') {
@@ -277,11 +342,12 @@ export default function LivePortfolioSection({
                 }
               }}
               placeholder="Keyword…"
-              className={fieldClass}
+              className={`${fieldClass} disabled:cursor-not-allowed disabled:opacity-50`}
             />
             <input
               type="text"
               value={positionDraft}
+              disabled={editsBlocked}
               onChange={(e) => setPositionDraft(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') {
@@ -290,20 +356,21 @@ export default function LivePortfolioSection({
                 }
               }}
               placeholder="Position / Rank e.g. #3"
-              className={fieldClass}
+              className={`${fieldClass} disabled:cursor-not-allowed disabled:opacity-50`}
             />
             <input
               type="text"
               value={keywordNoteDraft}
+              disabled={editsBlocked}
               onChange={(e) => setKeywordNoteDraft(e.target.value)}
               placeholder="Optional notes…"
-              className={`${fieldClass} sm:col-span-2`}
+              className={`${fieldClass} sm:col-span-2 disabled:cursor-not-allowed disabled:opacity-50`}
             />
             <button
               type="button"
-              disabled={busy || !keywordDraft.trim()}
+              disabled={busy || editsBlocked || !keywordDraft.trim()}
               onClick={addKeyword}
-              className="sm:col-span-2 shrink-0 rounded-xl bg-orange-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-orange-500 disabled:opacity-50"
+              className="sm:col-span-2 shrink-0 rounded-xl bg-orange-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-orange-500 disabled:cursor-not-allowed disabled:opacity-50"
             >
               Add / Update Keyword & Rank
             </button>
@@ -389,17 +456,17 @@ export default function LivePortfolioSection({
                               <>
                                 <button
                                   type="button"
-                                  disabled={busy}
+                                  disabled={busy || editsBlocked}
                                   onClick={saveEditKeyword}
-                                  className="rounded-lg bg-orange-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-orange-500 disabled:opacity-50"
+                                  className="rounded-lg bg-orange-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-orange-500 disabled:cursor-not-allowed disabled:opacity-50"
                                 >
                                   Save
                                 </button>
                                 <button
                                   type="button"
-                                  disabled={busy}
+                                  disabled={busy || editsBlocked}
                                   onClick={cancelEditKeyword}
-                                  className="rounded-lg border border-zinc-600 px-2.5 py-1 text-xs font-semibold text-zinc-300 hover:bg-zinc-800"
+                                  className="rounded-lg border border-zinc-600 px-2.5 py-1 text-xs font-semibold text-zinc-300 hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50"
                                 >
                                   Cancel
                                 </button>
@@ -408,17 +475,17 @@ export default function LivePortfolioSection({
                               <>
                                 <button
                                   type="button"
-                                  disabled={busy}
+                                  disabled={busy || editsBlocked}
                                   onClick={() => startEditKeyword(kw)}
-                                  className="rounded-lg border border-zinc-600 px-2.5 py-1 text-xs font-semibold text-zinc-200 hover:bg-zinc-800"
+                                  className="rounded-lg border border-zinc-600 px-2.5 py-1 text-xs font-semibold text-zinc-200 hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50"
                                 >
                                   Edit
                                 </button>
                                 <button
                                   type="button"
-                                  disabled={busy}
+                                  disabled={busy || editsBlocked}
                                   onClick={() => removeKeyword(kw.keywordId)}
-                                  className="rounded-lg border border-red-500/40 px-2.5 py-1 text-xs font-semibold text-red-300 hover:bg-red-500/10"
+                                  className="rounded-lg border border-red-500/40 px-2.5 py-1 text-xs font-semibold text-red-300 hover:bg-red-500/10 disabled:cursor-not-allowed disabled:opacity-50"
                                 >
                                   Delete
                                 </button>
@@ -452,20 +519,23 @@ export default function LivePortfolioSection({
             <input
               type="text"
               value={reportMonth}
+              disabled={editsBlocked}
               onChange={(e) => setReportMonth(e.target.value)}
               placeholder="Report Month e.g. November 2026"
-              className={fieldClass}
+              className={`${fieldClass} disabled:cursor-not-allowed disabled:opacity-50`}
             />
             <input
               type="text"
               value={reportTitle}
+              disabled={editsBlocked}
               onChange={(e) => setReportTitle(e.target.value)}
               placeholder="Report Title"
-              className={fieldClass}
+              className={`${fieldClass} disabled:cursor-not-allowed disabled:opacity-50`}
             />
             <input
               type="file"
               accept="application/pdf,.pdf"
+              disabled={editsBlocked}
               onChange={(e) => {
                 const file = e.target.files?.[0] || null;
                 if (
@@ -482,13 +552,13 @@ export default function LivePortfolioSection({
                 setError('');
                 setReportFile(file);
               }}
-              className="text-sm text-zinc-400 file:mr-3 file:rounded-lg file:border-0 file:bg-zinc-800 file:px-3 file:py-2 file:text-sm file:font-semibold file:text-white sm:col-span-2"
+              className="text-sm text-zinc-400 file:mr-3 file:rounded-lg file:border-0 file:bg-zinc-800 file:px-3 file:py-2 file:text-sm file:font-semibold file:text-white disabled:cursor-not-allowed disabled:opacity-50 sm:col-span-2"
             />
             <button
               type="button"
-              disabled={busy || !reportFile}
+              disabled={busy || editsBlocked || !reportFile}
               onClick={onUploadReport}
-              className="rounded-xl bg-orange-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-orange-500 disabled:opacity-50 sm:col-span-2"
+              className="rounded-xl bg-orange-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-orange-500 disabled:cursor-not-allowed disabled:opacity-50 sm:col-span-2"
             >
               {busy ? 'Uploading…' : 'Upload Monthly Report (PDF)'}
             </button>

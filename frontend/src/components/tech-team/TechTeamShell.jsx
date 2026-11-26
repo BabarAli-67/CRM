@@ -1,8 +1,9 @@
-import { CalendarCheck, FolderKanban, LayoutTemplate } from 'lucide-react';
+import { CalendarCheck, Flag, FolderKanban, LayoutTemplate } from 'lucide-react';
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useLocation } from 'react-router-dom';
 import DepartmentShell from '../department/DepartmentShell.jsx';
+import { getMyPriorityProjects } from '../../services/handover.service.js';
 import { getMockupBadges } from '../../services/mockup.service.js';
 
 /** Attendance banner + KPI strip only on the Attendance home route. */
@@ -17,6 +18,12 @@ export default function TechTeamShell({ title, children }) {
     refetchInterval: 15_000,
   });
 
+  const { data: priorityProjects = [] } = useQuery({
+    queryKey: ['myPriorityProjects'],
+    queryFn: getMyPriorityProjects,
+    refetchInterval: 15_000,
+  });
+
   const navItems = useMemo(
     () => [
       {
@@ -28,9 +35,17 @@ export default function TechTeamShell({ title, children }) {
       {
         to: '/dashboard/tech-team/projects',
         label: 'My Projects',
-        end: false,
+        end: true,
         alsoMatch: ['/dashboard/tech-team/client'],
+        // Stay active for Active / Completed sub-tabs (?view=completed)
+        inactiveWithView: false,
         icon: FolderKanban,
+      },
+      {
+        to: '/dashboard/tech-team/priority',
+        label: 'Priority Task',
+        icon: Flag,
+        badge: priorityProjects.length,
       },
       {
         to: '/dashboard/tech-team/mockup',
@@ -39,7 +54,7 @@ export default function TechTeamShell({ title, children }) {
         badge: mockupBadges?.assignedActive ?? 0,
       },
     ],
-    [mockupBadges]
+    [mockupBadges, priorityProjects.length]
   );
 
   return (

@@ -15,7 +15,11 @@ const NEXT_OPTIONS = {
     { value: 'ongoing_seo', label: 'Mark → Ongoing (SEO)' },
     { value: 'completed', label: 'Mark → Completed' },
   ],
-  ongoing_seo: [{ value: 'completed', label: 'Mark → Completed' }],
+  // SEO Experts (and other non-Developer roles) can Start work after handoff
+  ongoing_seo: [
+    { value: 'in_progress', label: 'Start → In Progress' },
+    { value: 'completed', label: 'Mark → Completed' },
+  ],
 };
 
 /** Developers may only hand off to Ongoing (SEO) — never Mark Completed. */
@@ -33,12 +37,16 @@ const DEVELOPER_NEXT_OPTIONS = {
  * @param {string} leadId
  * @param {string} [status] Current handover.cstStatus / techStatus
  * @param {boolean} [developerHandoffOnly] Hide Mark Completed; SEO handoff only
+ * @param {boolean} [actionsDisabled] Lock all next-step buttons (SEO waiting gate)
+ * @param {string} [disabledNote] Subtle note shown when locked
  * @param {(lead: object) => void} [onUpdated]
  */
 export default function MilestoneStepper({
   leadId,
   status = 'assigned',
   developerHandoffOnly = false,
+  actionsDisabled = false,
+  disabledNote = '',
   onUpdated,
 }) {
   const queryClient = useQueryClient();
@@ -66,10 +74,15 @@ export default function MilestoneStepper({
     mutationFn: (milestone) => updateMilestone(leadId, milestone),
     onSuccess: (lead) => {
       queryClient.invalidateQueries({ queryKey: ['myProjects'] });
+      queryClient.invalidateQueries({ queryKey: ['myCompletedProjects'] });
+      queryClient.invalidateQueries({ queryKey: ['myPriorityProjects'] });
+      queryClient.invalidateQueries({ queryKey: ['myTaskStats'] });
       queryClient.invalidateQueries({ queryKey: ['handoverQueue'] });
       queryClient.invalidateQueries({ queryKey: ['cstTechPipeline'] });
       queryClient.invalidateQueries({ queryKey: ['pipeline', 'leads'] });
       queryClient.invalidateQueries({ queryKey: ['techHeadAssigned'] });
+      queryClient.invalidateQueries({ queryKey: ['techHeadPriority'] });
+      queryClient.invalidateQueries({ queryKey: ['techHeadBadges'] });
       onUpdated?.(lead);
     },
   });
@@ -129,9 +142,13 @@ export default function MilestoneStepper({
             <button
               key={opt.value}
               type="button"
-              disabled={mutation.isPending}
-              onClick={() => mutation.mutate(opt.value)}
-              className="rounded-lg bg-orange-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-orange-500 disabled:cursor-not-allowed disabled:opacity-60"
+              disabled={mutation.isPending || actionsDisabled}
+              title={actionsDisabled ? disabledNote || undefined : undefined}
+              onClick={() => {
+                if (actionsDisabled) return;
+                mutation.mutate(opt.value);
+              }}
+              className="rounded-lg bg-orange-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-orange-500 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {mutation.isPending ? 'Updating…' : opt.label}
             </button>
@@ -141,6 +158,10 @@ export default function MilestoneStepper({
             Completed
           </span>
         )}
+
+        {actionsDisabled && disabledNote ? (
+          <p className="w-full text-xs text-amber-400/90">{disabledNote}</p>
+        ) : null}
 
         {mutation.isError ? (
           <p role="alert" className="text-xs text-red-300">

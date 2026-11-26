@@ -40,6 +40,7 @@ export const getTechHeadBadges = async () => {
       escalationUnread: 0,
       completedCount: 0,
       teamCommentUnread: 0,
+      priorityCount: 0,
     }
   );
 };
@@ -62,6 +63,18 @@ export const getTechHeadAssigned = async () => {
 export const getTechHeadCompleted = async () => {
   const response = await api.get('/tech-head/completed');
   return response.data.data.leads || [];
+};
+
+export const getTechHeadPriority = async () => {
+  const response = await api.get('/tech-head/priority');
+  return response.data.data.leads || [];
+};
+
+export const setClientPriority = async (leadId, isPriority) => {
+  const response = await api.patch(`/tech-head/clients/${leadId}/priority`, {
+    isPriority: Boolean(isPriority),
+  });
+  return response.data.data.lead;
 };
 
 export const assignTeamToClient = async (leadId, techIds) => {

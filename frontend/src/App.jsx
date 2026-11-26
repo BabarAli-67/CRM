@@ -20,15 +20,18 @@ import CloserDashboardPage from './pages/CloserDashboard.page.jsx';
 import CstManagerDashboardPage from './pages/CstManagerDashboard.page.jsx';
 import HandoverQueuePage from './pages/cst-manager/HandoverQueuePage.jsx';
 import ClientDetailPage from './pages/cst-manager/ClientDetailPage.jsx';
+import CstClientsPage from './pages/cst-manager/CstClientsPage.jsx';
 import CstMockupPage from './pages/cst-manager/CstMockupPage.jsx';
 import TechTeamDashboardPage from './pages/TechTeamDashboard.page.jsx';
 import MyProjectsPage from './pages/tech-team/MyProjectsPage.jsx';
+import PriorityTasksPage from './pages/tech-team/PriorityTasksPage.jsx';
 import TechClientPortfolioPage from './pages/tech-team/TechClientPortfolioPage.jsx';
 import TechTeamMockupPage from './pages/tech-team/TechTeamMockupPage.jsx';
 import TechHeadDashboardPage from './pages/TechHeadDashboard.page.jsx';
 import TechHeadQueuePage from './pages/tech-head/TechHeadQueuePage.jsx';
 import TechHeadAssignedPage from './pages/tech-head/TechHeadAssignedPage.jsx';
 import TechHeadCompletedPage from './pages/tech-head/TechHeadCompletedPage.jsx';
+import TechHeadPriorityPage from './pages/tech-head/TechHeadPriorityPage.jsx';
 import TechHeadTeamPage from './pages/tech-head/TechHeadTeamPage.jsx';
 import TechHeadEscalationsPage from './pages/tech-head/TechHeadEscalationsPage.jsx';
 import TechHeadTeamCommentsPage from './pages/tech-head/TechHeadTeamCommentsPage.jsx';
@@ -190,6 +193,14 @@ function App() {
         }
       />
       <Route
+        path="/dashboard/cst-manager/clients"
+        element={
+          <RoleRoute allowedRoles={['cst_manager']}>
+            <CstClientsPage />
+          </RoleRoute>
+        }
+      />
+      <Route
         path="/dashboard/cst-manager/mockup"
         element={
           <RoleRoute allowedRoles={['cst_manager']}>
@@ -234,6 +245,14 @@ function App() {
         element={
           <RoleRoute allowedRoles={['tech_head']}>
             <TechHeadCompletedPage />
+          </RoleRoute>
+        }
+      />
+      <Route
+        path="/dashboard/tech-head/priority"
+        element={
+          <RoleRoute allowedRoles={['tech_head']}>
+            <TechHeadPriorityPage />
           </RoleRoute>
         }
       />
@@ -298,6 +317,14 @@ function App() {
         element={
           <RoleRoute allowedRoles={['tech_team']}>
             <MyProjectsPage />
+          </RoleRoute>
+        }
+      />
+      <Route
+        path="/dashboard/tech-team/priority"
+        element={
+          <RoleRoute allowedRoles={['tech_team']}>
+            <PriorityTasksPage />
           </RoleRoute>
         }
       />

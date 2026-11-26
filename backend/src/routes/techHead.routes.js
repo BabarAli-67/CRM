@@ -11,9 +11,11 @@ import {
   getTechHeadBadges,
   getTechHeadClient,
   getTechHeadCompleted,
+  getTechHeadPriority,
   getTechHeadQueue,
   getTechTeamAttendance,
   listTechTeam,
+  setClientPriority,
   updateClientOpsStatus,
   updateTechMember,
 } from '../controllers/techHead.controller.js';
@@ -34,6 +36,7 @@ router.get('/attendance', getTechTeamAttendance);
 router.get('/queue', getTechHeadQueue);
 router.get('/assigned', getTechHeadAssigned);
 router.get('/completed', getTechHeadCompleted);
+router.get('/priority', getTechHeadPriority);
 router.patch('/assign/:id', assignTeamToClient);
 
 router.get('/escalations', getCstEscalations);
@@ -42,5 +45,6 @@ router.get('/team-comments', getTeamComments);
 router.get('/intern-activity', getInternActivity);
 router.get('/clients/:id', getTechHeadClient);
 router.patch('/clients/:id/ops-status', updateClientOpsStatus);
+router.patch('/clients/:id/priority', setClientPriority);
 
 export default router;

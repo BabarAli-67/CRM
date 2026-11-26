@@ -44,6 +44,14 @@ const BACK_FROM = {
     label: 'Tech Status',
     to: '/dashboard/cst-manager/handover?tab=tech',
   },
+  clients: {
+    label: 'Client · Active',
+    to: '/dashboard/cst-manager/clients',
+  },
+  'clients-non-active': {
+    label: 'Client · Non-Active',
+    to: '/dashboard/cst-manager/clients?view=non-active',
+  },
   admin: {
     label: 'Pipeline',
     to: '/admin/pipeline',

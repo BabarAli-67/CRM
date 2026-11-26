@@ -1,19 +1,30 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Link } from 'react-router-dom';
 import ProjectNumberBadge from '../../components/tech/ProjectNumberBadge.jsx';
+import PriorityToggleButton, {
+  PriorityPill,
+} from '../../components/tech/PriorityToggleButton.component.jsx';
 import TechProjectsFilterBar from '../../components/tech/TechProjectsFilterBar.jsx';
 import TechHeadShell from '../../components/tech-head/TechHeadShell.jsx';
 import {
   assignTeamToClient,
   getTechHeadQueue,
   listTechTeam,
+  TECH_JD_OPTIONS,
 } from '../../services/techHead.service.js';
+import { techHeadClientPath } from '../../utils/techDetailNav.util.js';
 import {
   TECH_SERVICE_FILTER_OPTIONS,
   matchesOnboardedDate,
   matchesTechSearch,
   matchesTechService,
 } from '../../utils/techProjectFilters.util.js';
+
+const leadNeedsSeoExpert = (lead) =>
+  matchesTechService(lead, 'GMB') ||
+  matchesTechService(lead, 'SEO Web') ||
+  matchesTechService(lead, 'SEO');
 
 const formatPkt = (value) => {
   if (!value) return '—';
@@ -58,6 +69,17 @@ export default function TechHeadQueuePage() {
     [team]
   );
 
+  const specialistsByJd = useMemo(() => {
+    const map = {};
+    for (const jd of TECH_JD_OPTIONS) map[jd] = [];
+    for (const member of specialists) {
+      const jd = member.jd || 'Other';
+      if (!map[jd]) map[jd] = [];
+      map[jd].push(member);
+    }
+    return map;
+  }, [specialists]);
+
   const hasActiveFilters = Boolean(
     search.trim() || service || onboardedDate
   );
@@ -88,6 +110,10 @@ export default function TechHeadQueuePage() {
       setSelectedIds([]);
       queryClient.invalidateQueries({ queryKey: ['techHeadQueue'] });
       queryClient.invalidateQueries({ queryKey: ['techHeadAssigned'] });
+      queryClient.invalidateQueries({ queryKey: ['techHeadPriority'] });
+      queryClient.invalidateQueries({ queryKey: ['techHeadBadges'] });
+      queryClient.invalidateQueries({ queryKey: ['myProjects'] });
+      queryClient.invalidateQueries({ queryKey: ['myPriorityProjects'] });
     },
     onError: (err) => {
       setActionMessage('');
@@ -107,7 +133,15 @@ export default function TechHeadQueuePage() {
     setActionError('');
     setActionMessage('');
     setAssignTarget(lead);
-    setSelectedIds([]);
+    // GMB / SEO work: pre-select SEO Experts for direct routing
+    if (leadNeedsSeoExpert(lead)) {
+      const seoIds = specialists
+        .filter((m) => m.jd === 'SEO Expert')
+        .map((m) => String(m._id));
+      setSelectedIds(seoIds);
+    } else {
+      setSelectedIds([]);
+    }
   };
 
   return (
@@ -174,9 +208,13 @@ export default function TechHeadQueuePage() {
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
                         <ProjectNumberBadge lead={lead} size="lg" />
-                        <h3 className="font-display text-lg font-semibold text-white">
+                        <Link
+                          to={techHeadClientPath(lead._id, { from: 'queue' })}
+                          className="cursor-pointer font-display text-lg font-semibold text-white underline-offset-2 transition hover:text-orange-300 hover:underline"
+                        >
                           {lead.businessName || '—'}
-                        </h3>
+                        </Link>
+                        <PriorityPill lead={lead} />
                       </div>
                       <p className="mt-0.5 text-sm text-zinc-500">
                         Onboarded {formatPkt(lead.handover?.onboardedAt)}
@@ -230,13 +268,16 @@ export default function TechHeadQueuePage() {
                         ) : null}
                       </div>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => openAssign(lead)}
-                      className="rounded-lg bg-[#F25E26] px-4 py-2 text-sm font-semibold text-white hover:brightness-110"
-                    >
-                      Assign Team
-                    </button>
+                    <div className="flex flex-wrap gap-2">
+                      <PriorityToggleButton lead={lead} />
+                      <button
+                        type="button"
+                        onClick={() => openAssign(lead)}
+                        className="rounded-lg bg-[#F25E26] px-4 py-2 text-sm font-semibold text-white hover:brightness-110"
+                      >
+                        Assign Team
+                      </button>
+                    </div>
                   </div>
                 </li>
               );
@@ -260,44 +301,63 @@ export default function TechHeadQueuePage() {
               Assign Team
             </h3>
             <p className="mt-1 text-sm text-zinc-500">
-              {assignTarget.businessName} · select one or more specialists, then
-              Confirm / Move to Tech
+              {assignTarget.businessName} · select specialists by department,
+              then Confirm / Move to Tech
             </p>
+            {leadNeedsSeoExpert(assignTarget) ? (
+              <p className="mt-2 rounded-lg border border-sky-500/30 bg-sky-500/10 px-3 py-2 text-xs text-sky-200">
+                GMB / SEO client — assign at least one SEO Expert (pre-selected
+                when available).
+              </p>
+            ) : null}
 
-            <div className="mt-4 max-h-64 space-y-2 overflow-y-auto">
+            <div className="mt-4 max-h-72 space-y-3 overflow-y-auto">
               {specialists.length === 0 ? (
                 <p className="text-sm text-zinc-500">
                   No approved Tech specialists yet. Create them in Team
                   Management.
                 </p>
               ) : (
-                specialists.map((member) => {
-                  const id = String(member._id);
-                  const checked = selectedIds.includes(id);
+                TECH_JD_OPTIONS.map((jd) => {
+                  const members = specialistsByJd[jd] || [];
+                  if (members.length === 0) return null;
                   return (
-                    <label
-                      key={id}
-                      className={`flex cursor-pointer items-center gap-3 rounded-xl border px-3 py-2.5 text-sm transition ${
-                        checked
-                          ? 'border-[#F25E26]/50 bg-[#F25E26]/10'
-                          : 'border-zinc-800 hover:border-zinc-700'
-                      }`}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={checked}
-                        onChange={() => toggleId(id)}
-                        className="h-4 w-4 rounded border-zinc-600"
-                      />
-                      <span className="min-w-0 flex-1">
-                        <span className="font-medium text-white">
-                          {member.fullName}
-                        </span>
-                        <span className="mt-0.5 block text-xs text-zinc-500">
-                          {member.jd || 'Tech'} · {member.email || member.username}
-                        </span>
-                      </span>
-                    </label>
+                    <div key={jd}>
+                      <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-500">
+                        {jd}
+                      </p>
+                      <div className="space-y-1.5">
+                        {members.map((member) => {
+                          const id = String(member._id);
+                          const checked = selectedIds.includes(id);
+                          return (
+                            <label
+                              key={id}
+                              className={`flex cursor-pointer items-center gap-3 rounded-xl border px-3 py-2.5 text-sm transition ${
+                                checked
+                                  ? 'border-[#F25E26]/50 bg-[#F25E26]/10'
+                                  : 'border-zinc-800 hover:border-zinc-700'
+                              }`}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                onChange={() => toggleId(id)}
+                                className="h-4 w-4 rounded border-zinc-600"
+                              />
+                              <span className="min-w-0 flex-1">
+                                <span className="font-medium text-white">
+                                  {member.fullName}
+                                </span>
+                                <span className="mt-0.5 block text-xs text-zinc-500">
+                                  {member.email || member.username}
+                                </span>
+                              </span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    </div>
                   );
                 })
               )}

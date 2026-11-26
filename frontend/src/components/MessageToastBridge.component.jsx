@@ -315,8 +315,18 @@ export default function MessageToastBridge() {
       queryClient.invalidateQueries({ queryKey: ['cstTechPipeline'] });
       queryClient.invalidateQueries({ queryKey: ['techHeadAssigned'] });
       queryClient.invalidateQueries({ queryKey: ['techHeadCompleted'] });
+      queryClient.invalidateQueries({ queryKey: ['techHeadQueue'] });
+      queryClient.invalidateQueries({ queryKey: ['techHeadBadges'] });
       queryClient.invalidateQueries({ queryKey: ['myProjects'] });
+      queryClient.invalidateQueries({ queryKey: ['myCompletedProjects'] });
+      queryClient.invalidateQueries({ queryKey: ['myTaskStats'] });
       queryClient.invalidateQueries({ queryKey: ['handoverQueue'] });
+      queryClient.invalidateQueries({
+        queryKey: ['lead', payload.leadId, 'tech-portfolio'],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ['techHeadClient', payload.leadId],
+      });
     };
 
     const onSeoHandover = (payload) => {
@@ -344,18 +354,83 @@ export default function MessageToastBridge() {
         });
       }
       queryClient.invalidateQueries({ queryKey: ['myProjects'] });
+      queryClient.invalidateQueries({ queryKey: ['myCompletedProjects'] });
+      queryClient.invalidateQueries({ queryKey: ['myTaskStats'] });
       queryClient.invalidateQueries({ queryKey: ['techHeadAssigned'] });
+      queryClient.invalidateQueries({ queryKey: ['techHeadCompleted'] });
+      queryClient.invalidateQueries({ queryKey: ['techHeadBadges'] });
+      queryClient.invalidateQueries({
+        queryKey: ['lead', payload.leadId, 'tech-portfolio'],
+      });
+    };
+
+    const onKeywordsRanked = (payload) => {
+      if (role !== 'tech_head' || !payload?.leadId) return;
+      const pn = payload.projectNumber ? `#${payload.projectNumber} · ` : '';
+      pushToast({
+        toastId: `kw-ranked-${payload.leadId}-${payload.at || Date.now()}`,
+        kind: 'keywords_ranked',
+        leadId: payload.leadId,
+        senderName: 'Keywords Ranked',
+        preview: `${pn}${payload.businessName || 'Client'} — confirmed by ${
+          payload.confirmedByName || 'SEO Expert'
+        }`,
+        path: `/dashboard/tech-head/client/${payload.leadId}`,
+      });
+      queryClient.invalidateQueries({ queryKey: ['techHeadAssigned'] });
+      queryClient.invalidateQueries({
+        queryKey: ['techHeadClient', payload.leadId],
+      });
+    };
+
+    const onPriority = (payload) => {
+      if (!payload?.leadId || !payload?.isPriority) return;
+      if (role !== 'tech_team' && role !== 'tech_head') return;
+      const pn = payload.projectNumber ? `#${payload.projectNumber} ` : '';
+      const preview = `Priority Task Assigned: ${pn}${
+        payload.businessName || 'Client'
+      }`.trim();
+      pushToast({
+        toastId: `priority-${payload.leadId}-${payload.at || Date.now()}`,
+        kind: 'priority_task',
+        leadId: payload.leadId,
+        senderName: 'Priority Task',
+        preview,
+        path:
+          role === 'tech_head'
+            ? '/dashboard/tech-head/priority'
+            : '/dashboard/tech-team/priority',
+      });
+      queryClient.invalidateQueries({ queryKey: ['techHeadPriority'] });
+      queryClient.invalidateQueries({ queryKey: ['techHeadBadges'] });
+      queryClient.invalidateQueries({ queryKey: ['myPriorityProjects'] });
+      queryClient.invalidateQueries({ queryKey: ['myProjects'] });
+      queryClient.invalidateQueries({ queryKey: ['techHeadAssigned'] });
+      queryClient.invalidateQueries({ queryKey: ['techHeadQueue'] });
+    };
+
+    const onCstClientState = () => {
+      if (role !== 'cst_manager' && role !== 'super_admin') return;
+      queryClient.invalidateQueries({ queryKey: ['cstClients'] });
+      queryClient.invalidateQueries({ queryKey: ['cstTechPipeline'] });
+      queryClient.invalidateQueries({ queryKey: ['handoverQueue'] });
     };
 
     socket.on('tech:queue-new', onQueueNew);
     socket.on('tech:task-note', onTaskNote);
     socket.on('tech:status-updated', onStatusUpdated);
     socket.on('tech:seo-handover', onSeoHandover);
+    socket.on('tech:keywords-ranked', onKeywordsRanked);
+    socket.on('tech:priority', onPriority);
+    socket.on('cst:client-state', onCstClientState);
     return () => {
       socket.off('tech:queue-new', onQueueNew);
       socket.off('tech:task-note', onTaskNote);
       socket.off('tech:status-updated', onStatusUpdated);
       socket.off('tech:seo-handover', onSeoHandover);
+      socket.off('tech:keywords-ranked', onKeywordsRanked);
+      socket.off('tech:priority', onPriority);
+      socket.off('cst:client-state', onCstClientState);
     };
   }, [queryClient, user?.role]);
 
@@ -406,7 +481,11 @@ export default function MessageToastBridge() {
                   ? 'Open project'
                   : toast.kind === 'mockup_delivered'
                     ? 'Open Mockup'
-                    : 'Open chat'}
+                    : toast.kind === 'keywords_ranked'
+                      ? 'Open client'
+                      : toast.kind === 'priority_task'
+                        ? 'Open Priority Task'
+                        : 'Open chat'}
           </p>
         </button>
       ))}

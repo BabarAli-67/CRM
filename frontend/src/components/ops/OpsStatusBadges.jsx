@@ -31,7 +31,7 @@ export default function OpsStatusBadges({ handover, className = '' }) {
 
   return (
     <div className={`flex flex-wrap gap-3 ${className}`}>
-      <Pill label="Client Status" value={client} />
+      <Pill label="Client Ops" value={client} />
       <Pill label="GMB Status" value={gmb} />
       <Pill label="Website SEO Status" value={seo} />
     </div>

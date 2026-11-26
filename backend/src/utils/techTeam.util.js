@@ -68,6 +68,138 @@ export const isUserAssignedTech = (lead, userId) => {
   return getAssignedTechIdList(lead).includes(uid);
 };
 
+/** Mongo clause: hide Expired clients from Tech Head / Tech Team lists. */
+export const TECH_NON_EXPIRED_CLAUSE = {
+  'handover.clientStatus': { $ne: 'Expired' },
+};
+
+export const isExpiredClient = (lead) =>
+  String(lead?.handover?.clientStatus || lead?.clientStatus || '') ===
+  'Expired';
+
+/** True when the client brief indicates GMB and/or SEO work. */
+export const leadIndicatesGmbOrSeo = (lead) => {
+  const offered = String(lead?.servicesOffered || '').toLowerCase();
+  const areas = String(lead?.serviceAreas || '').toLowerCase();
+  const blob = `${offered} ${areas}`;
+  if (
+    /\bgmb\b/.test(blob) ||
+    blob.includes('google my business') ||
+    blob.includes('google business') ||
+    /\bseo\b/.test(blob) ||
+    blob.includes('search engine')
+  ) {
+    return true;
+  }
+  if (String(lead?.gmbLink || '').trim()) return true;
+  const gmbOps = lead?.handover?.gmbOpsStatus;
+  if (gmbOps && gmbOps !== 'Not Applicable') return true;
+  return false;
+};
+
+/** True when the client includes a website build (Developer) scope. */
+export const leadIncludesWebsiteDevelopment = (lead) => {
+  const blob = `${String(lead?.servicesOffered || '')} ${String(
+    lead?.serviceAreas || ''
+  )}`.toLowerCase();
+  if (blob.includes('website development')) return true;
+  if (blob.includes('web development')) return true;
+  if (blob.includes('website') && blob.includes('develop')) return true;
+  // Upsell titles
+  const ledger = Array.isArray(lead?.handover?.upsellLedger)
+    ? lead.handover.upsellLedger
+    : Array.isArray(lead?.upsells)
+      ? lead.upsells
+      : [];
+  for (const row of ledger) {
+    const rowBlob = `${row?.title || ''} ${row?.service || ''} ${
+      row?.serviceOther || ''
+    }`.toLowerCase();
+    if (
+      rowBlob.includes('website development') ||
+      rowBlob.includes('web development')
+    ) {
+      return true;
+    }
+  }
+  return false;
+};
+
+/**
+ * Collect effective JDs of currently assigned Tech specialists.
+ * Prefers populated user docs (`jd` / Intern mentor inheritance).
+ */
+export const getAssignedTechJdSet = (lead) => {
+  const jds = new Set();
+  const addUser = (u) => {
+    if (!u || typeof u !== 'object') return;
+    const effective =
+      resolveTechWorkspaceJd({ ...u, role: u.role || 'tech_team' }) ||
+      String(u.jd || '').trim() ||
+      null;
+    if (effective) jds.add(effective);
+  };
+  const multi = lead?.handover?.assignedTechIds;
+  if (Array.isArray(multi)) {
+    for (const u of multi) addUser(u);
+  }
+  addUser(lead?.handover?.assignedTechId);
+  return jds;
+};
+
+/**
+ * Dual-assign dependency:
+ * Developer + SEO Expert on the same project, and status is still
+ * Pending / In Progress → SEO Expert actions stay locked.
+ * Unlocks at Ongoing (SEO) / Completed, or when no Developer is assigned.
+ */
+export const isSeoWaitingForDeveloper = (lead) => {
+  const jds = getAssignedTechJdSet(lead);
+  if (!jds.has('Developer') || !jds.has('SEO Expert')) return false;
+  const st = lead?.handover?.techStatus || lead?.handover?.cstStatus || '';
+  return st !== 'ongoing_seo' && st !== 'completed';
+};
+
+/**
+ * Ensure assigned tech refs are populated with jd (and Intern mentor) so
+ * isSeoWaitingForDeveloper can resolve specialization.
+ */
+export const ensureAssignedTechsPopulated = async (lead, User) => {
+  if (!lead?.handover || !User) return lead;
+  const needsIds = Array.isArray(lead.handover.assignedTechIds)
+    ? lead.handover.assignedTechIds.some(
+        (u) => !u || typeof u !== 'object' || !('jd' in u)
+      )
+    : false;
+  const legacy = lead.handover.assignedTechId;
+  const needsLegacy =
+    Boolean(legacy) &&
+    (typeof legacy !== 'object' || !('jd' in legacy));
+  if (!needsIds && !needsLegacy) return lead;
+  await lead.populate([
+    {
+      path: 'handover.assignedTechIds',
+      select: 'fullName username role jd assignedMentorId',
+      populate: { path: 'assignedMentorId', select: 'jd fullName' },
+    },
+    {
+      path: 'handover.assignedTechId',
+      select: 'fullName username role jd assignedMentorId',
+      populate: { path: 'assignedMentorId', select: 'jd fullName' },
+    },
+  ]);
+  return lead;
+};
+
+export const SEO_WAITING_FOR_DEVELOPER_MSG =
+  'Waiting for Developer to push to Ongoing (SEO)';
+
+/**
+ * Legacy name kept for imports — dual-assigned projects stay visible so SEO
+ * can see the "Waiting for Developer…" state; pure SEO/GMB also visible.
+ */
+export const seoExpertCanSeeInActiveQueue = () => true;
+
 export const commentAuthorRole = (comment) => {
   const by = comment?.createdBy;
   if (by && typeof by === 'object' && by.role) return by.role;
@@ -225,6 +357,12 @@ export const toTechSafeClient = (lead) => {
       cstStatus: obj.handover?.cstStatus || null,
       techStatus: obj.handover?.techStatus || null,
       clientOpsStatus: obj.handover?.clientOpsStatus || null,
+      clientStatus: obj.handover?.clientStatus || 'Active',
+      isPriority: Boolean(obj.handover?.isPriority),
+      priorityAssignedAt: obj.handover?.priorityAssignedAt || null,
+      developedWebsiteUrl: obj.handover?.developedWebsiteUrl || null,
+      keywordsRankedConfirmation:
+        obj.handover?.keywordsRankedConfirmation || null,
       gmbOpsStatus: obj.handover?.gmbOpsStatus || null,
       websiteSeoOpsStatus: obj.handover?.websiteSeoOpsStatus || null,
       projectNumber,
@@ -259,6 +397,90 @@ export const emitToAllTechHeads = async (User, event, payload) => {
   }).select('_id');
   for (const h of heads) {
     emitToUser(h._id, event, payload);
+  }
+};
+
+/**
+ * Real-time Tech department project sync.
+ * Broadcasts `tech:project-sync` to all Tech Heads + assigned specialists
+ * (and optional prior assignees / actor) so open UIs refresh without reload.
+ */
+export const emitTechProjectSync = async (
+  User,
+  lead,
+  {
+    reason = 'update',
+    actorId = null,
+    alsoNotifyUserIds = [],
+  } = {}
+) => {
+  if (!lead?._id || !User) return;
+
+  const payload = {
+    leadId: String(lead._id),
+    businessName: lead.businessName || 'Client',
+    projectNumber: lead.handover?.projectNumber || null,
+    cstStatus: lead.handover?.cstStatus || null,
+    techStatus: lead.handover?.techStatus || null,
+    clientStatus: lead.handover?.clientStatus || 'Active',
+    clientOpsStatus: lead.handover?.clientOpsStatus || null,
+    gmbOpsStatus: lead.handover?.gmbOpsStatus || null,
+    websiteSeoOpsStatus: lead.handover?.websiteSeoOpsStatus || null,
+    isPriority: Boolean(lead.handover?.isPriority),
+    priorityAssignedAt: lead.handover?.priorityAssignedAt || null,
+    reason: String(reason || 'update'),
+    at: new Date(),
+  };
+
+  await emitToAllTechHeads(User, 'tech:project-sync', payload);
+
+  const recipientIds = new Set(getAssignedTechIdList(lead));
+  for (const id of alsoNotifyUserIds || []) {
+    const s = String(id || '');
+    if (s) recipientIds.add(s);
+  }
+  if (actorId) recipientIds.add(String(actorId));
+
+  for (const uid of recipientIds) {
+    emitToUser(uid, 'tech:project-sync', payload);
+  }
+};
+
+/**
+ * Notify specialists (+ Tech Heads) that a project was marked / assigned as Priority.
+ * Pass `notifyUserIds` to limit specialist recipients (e.g. newly assigned only).
+ */
+export const emitTechPriorityAlert = async (
+  User,
+  lead,
+  { notifyUserIds = null, alsoNotifyUserIds = [], actorId = null } = {}
+) => {
+  if (!lead?._id || !User || !lead.handover?.isPriority) return;
+
+  const payload = {
+    leadId: String(lead._id),
+    businessName: lead.businessName || 'Client',
+    projectNumber: lead.handover?.projectNumber || null,
+    isPriority: true,
+    priorityAssignedAt: lead.handover?.priorityAssignedAt || new Date(),
+    at: new Date(),
+  };
+
+  await emitToAllTechHeads(User, 'tech:priority', payload);
+
+  const recipientIds = new Set(
+    Array.isArray(notifyUserIds)
+      ? notifyUserIds.map((id) => String(id || '')).filter(Boolean)
+      : getAssignedTechIdList(lead)
+  );
+  for (const id of alsoNotifyUserIds || []) {
+    const s = String(id || '');
+    if (s) recipientIds.add(s);
+  }
+  if (actorId) recipientIds.delete(String(actorId));
+
+  for (const uid of recipientIds) {
+    emitToUser(uid, 'tech:priority', payload);
   }
 };
 
@@ -326,6 +548,16 @@ export const applyDeveloperToSeoHandover = async (lead, actor, User) => {
   lead.handover.assignedTechIds = nextIds;
   lead.handover.assignedTechId = nextIds[0] || null;
   lead.handover.websiteSeoOpsStatus = 'Running';
+
+  // Record developer handoff for task-history counters
+  if (!Array.isArray(lead.handover.developerHandoffs)) {
+    lead.handover.developerHandoffs = [];
+  }
+  lead.handover.developerHandoffs.push({
+    developerId: actor._id,
+    developerName: actor.fullName || actor.username || 'Developer',
+    at: new Date(),
+  });
 
   return {
     handedOver: true,

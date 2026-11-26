@@ -1,6 +1,9 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import TechProjectsFilterBar from '../../components/tech/TechProjectsFilterBar.jsx';
+import PriorityToggleButton, {
+  PriorityPill,
+} from '../../components/tech/PriorityToggleButton.component.jsx';
 import TechHeadProjectCard, {
   formatPktForTechHeadCard as formatPkt,
 } from '../../components/tech-head/TechHeadProjectCard.jsx';
@@ -13,7 +16,9 @@ import {
 import {
   CLIENT_OPS_FILTER_OPTIONS,
   TECH_LIVE_STATUS_OPTIONS,
+  TECH_SERVICE_CATEGORY_OPTIONS,
   TECH_SERVICE_FILTER_OPTIONS,
+  countLeadsByServiceCategory,
   matchesAssignedSpecialist,
   matchesAssignedStatusFilter,
   matchesTechSearch,
@@ -70,6 +75,11 @@ export default function TechHeadAssignedPage() {
     search.trim() || service || specialistId || status
   );
 
+  const categoryCounts = useMemo(
+    () => countLeadsByServiceCategory(leads),
+    [leads]
+  );
+
   const filteredLeads = useMemo(
     () =>
       leads.filter(
@@ -98,9 +108,11 @@ export default function TechHeadAssignedPage() {
       setSelectedIds([]);
       queryClient.invalidateQueries({ queryKey: ['techHeadAssigned'] });
       queryClient.invalidateQueries({ queryKey: ['techHeadCompleted'] });
+      queryClient.invalidateQueries({ queryKey: ['techHeadPriority'] });
       queryClient.invalidateQueries({ queryKey: ['techHeadBadges'] });
       queryClient.invalidateQueries({ queryKey: ['techHeadQueue'] });
       queryClient.invalidateQueries({ queryKey: ['myProjects'] });
+      queryClient.invalidateQueries({ queryKey: ['myPriorityProjects'] });
     },
     onError: (err) => {
       setActionMessage('');
@@ -154,6 +166,34 @@ export default function TechHeadAssignedPage() {
           </p>
         ) : null}
 
+        <div className="mb-4 flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => setService('')}
+            className={`rounded-lg px-3 py-1.5 text-xs font-semibold ring-1 transition ${
+              !service
+                ? 'bg-[#F25E26]/15 text-[#F25E26] ring-[#F25E26]/40'
+                : 'bg-zinc-950 text-zinc-400 ring-zinc-700 hover:text-zinc-200'
+            }`}
+          >
+            All · {leads.length}
+          </button>
+          {TECH_SERVICE_CATEGORY_OPTIONS.map((cat) => (
+            <button
+              key={cat}
+              type="button"
+              onClick={() => setService(service === cat ? '' : cat)}
+              className={`rounded-lg px-3 py-1.5 text-xs font-semibold ring-1 transition ${
+                service === cat
+                  ? 'bg-[#F25E26]/15 text-[#F25E26] ring-[#F25E26]/40'
+                  : 'bg-zinc-950 text-zinc-400 ring-zinc-700 hover:text-zinc-200'
+              }`}
+            >
+              {cat} · {categoryCounts[cat] ?? 0}
+            </button>
+          ))}
+        </div>
+
         <TechProjectsFilterBar
           search={search}
           onSearchChange={setSearch}
@@ -203,19 +243,24 @@ export default function TechHeadAssignedPage() {
                   lead={lead}
                   statusText={statusText}
                   metaLine={`Assigned ${formatPkt(lead.handover?.assignedAt)} PKT`}
+                  headerExtra={<PriorityPill lead={lead} />}
+                  detailFrom="assigned"
                   onOpsUpdated={() => {
                     queryClient.invalidateQueries({
                       queryKey: ['techHeadAssigned'],
                     });
                   }}
                   actions={
-                    <button
-                      type="button"
-                      onClick={() => openReassign(lead)}
-                      className="rounded-lg border border-zinc-600 px-3 py-1.5 text-xs font-semibold text-zinc-200 hover:bg-zinc-800"
-                    >
-                      Reassign / Add
-                    </button>
+                    <div className="flex flex-wrap gap-2">
+                      <PriorityToggleButton lead={lead} />
+                      <button
+                        type="button"
+                        onClick={() => openReassign(lead)}
+                        className="rounded-lg border border-zinc-600 px-3 py-1.5 text-xs font-semibold text-zinc-200 hover:bg-zinc-800"
+                      >
+                        Reassign / Add
+                      </button>
+                    </div>
                   }
                 />
               );

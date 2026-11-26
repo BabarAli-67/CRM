@@ -3,6 +3,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { updateClientOpsStatus } from '../../services/techHead.service.js';
 import {
   CLIENT_OPS_OPTIONS,
+  CLIENT_STATUS_OPTIONS,
   GMB_OPS_OPTIONS,
   WEBSITE_SEO_OPS_OPTIONS,
   resolveClientOpsStatus,
@@ -19,6 +20,9 @@ export default function OpsStatusEditor({ leadId, handover, onUpdated }) {
   const [clientOpsStatus, setClientOpsStatus] = useState(
     () => resolveClientOpsStatus(handover) || 'Running'
   );
+  const [clientStatus, setClientStatus] = useState(
+    () => handover?.clientStatus || 'Active'
+  );
   const [gmbOpsStatus, setGmbOpsStatus] = useState(
     () => handover?.gmbOpsStatus || ''
   );
@@ -30,6 +34,7 @@ export default function OpsStatusEditor({ leadId, handover, onUpdated }) {
 
   useEffect(() => {
     setClientOpsStatus(resolveClientOpsStatus(handover) || 'Running');
+    setClientStatus(handover?.clientStatus || 'Active');
     setGmbOpsStatus(handover?.gmbOpsStatus || '');
     setWebsiteSeoOpsStatus(handover?.websiteSeoOpsStatus || '');
   }, [handover]);
@@ -62,6 +67,7 @@ export default function OpsStatusEditor({ leadId, handover, onUpdated }) {
     setError('');
     const payload = {
       clientOpsStatus,
+      clientStatus: clientStatus || 'Active',
     };
     if (gmbOpsStatus) payload.gmbOpsStatus = gmbOpsStatus;
     if (websiteSeoOpsStatus) payload.websiteSeoOpsStatus = websiteSeoOpsStatus;
@@ -92,9 +98,9 @@ export default function OpsStatusEditor({ leadId, handover, onUpdated }) {
         </button>
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-3">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <label className="block space-y-1 text-xs font-medium text-zinc-400">
-          <span>Client Status (IN / OUT)</span>
+          <span>Client Ops (IN / OUT)</span>
           <select
             required
             value={clientOpsStatus}
@@ -107,6 +113,25 @@ export default function OpsStatusEditor({ leadId, handover, onUpdated }) {
               </option>
             ))}
           </select>
+        </label>
+
+        <label className="block space-y-1 text-xs font-medium text-zinc-400">
+          <span>Client Status</span>
+          <select
+            required
+            value={clientStatus}
+            onChange={(e) => setClientStatus(e.target.value)}
+            className={selectClass}
+          >
+            {CLIENT_STATUS_OPTIONS.map((opt) => (
+              <option key={opt} value={opt}>
+                {opt}
+              </option>
+            ))}
+          </select>
+          <span className="text-[10px] text-zinc-600">
+            Expired hides this client from Tech Head &amp; Tech Team
+          </span>
         </label>
 
         <label className="block space-y-1 text-xs font-medium text-zinc-400">

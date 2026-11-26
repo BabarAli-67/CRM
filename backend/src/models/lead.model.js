@@ -846,6 +846,82 @@ const leadSchema = new mongoose.Schema(
           enum: ['Running', 'Paused', 'Stopped / Out', 'Pending'],
           default: null,
         },
+        /**
+         * Lifecycle visibility for Tech department.
+         * Expired clients are hidden from Tech Head / Tech Team APIs;
+         * Super Admin + CST retain full access.
+         */
+        clientStatus: {
+          type: String,
+          enum: ['Active', 'Expired'],
+          default: 'Active',
+        },
+        /**
+         * CST Manager Active / Non-Active board (independent of Tech Expired).
+         */
+        cstClientState: {
+          type: String,
+          enum: ['Active', 'Non-Active'],
+          default: 'Active',
+        },
+        isNonActive: {
+          type: Boolean,
+          default: false,
+        },
+        nonActiveAt: {
+          type: Date,
+          default: null,
+        },
+        /**
+         * Tech Head priority flag — surfaces in Priority Task queues.
+         */
+        isPriority: {
+          type: Boolean,
+          default: false,
+        },
+        priorityAssignedAt: {
+          type: Date,
+          default: null,
+        },
+        /**
+         * Website URL submitted by Developer (built site).
+         * Separate from client websiteLink from CST/Closer.
+         */
+        developedWebsiteUrl: {
+          type: String,
+          default: null,
+          trim: true,
+        },
+        /**
+         * SEO Expert confirms all target keywords are ranked for this client.
+         */
+        keywordsRankedConfirmation: {
+          confirmed: { type: Boolean, default: false },
+          confirmedAt: { type: Date, default: null },
+          confirmedBy: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: 'User',
+            default: null,
+          },
+          confirmedByName: { type: String, default: null, trim: true },
+        },
+        /**
+         * Developer → SEO handoff history (for Developer task counters).
+         */
+        developerHandoffs: {
+          type: [
+            {
+              developerId: {
+                type: mongoose.Schema.Types.ObjectId,
+                ref: 'User',
+                required: true,
+              },
+              developerName: { type: String, default: null, trim: true },
+              at: { type: Date, default: Date.now },
+            },
+          ],
+          default: undefined,
+        },
         gmbOpsStatus: {
           type: String,
           enum: [

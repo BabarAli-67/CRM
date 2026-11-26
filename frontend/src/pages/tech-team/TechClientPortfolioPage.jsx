@@ -6,7 +6,12 @@ import OpsStatusBadges from '../../components/ops/OpsStatusBadges.jsx';
 import LivePortfolioSection, {
   mapKeywordsFromLead,
 } from '../../components/portfolio/LivePortfolioSection.jsx';
+import DevelopedWebsiteUrlField from '../../components/tech/DevelopedWebsiteUrlField.component.jsx';
 import ProjectNumberBadge from '../../components/tech/ProjectNumberBadge.jsx';
+import { PriorityPill } from '../../components/tech/PriorityToggleButton.component.jsx';
+import TechProjectWorkScope, {
+  resolveProjectStatusLabel,
+} from '../../components/tech/TechProjectWorkScope.component.jsx';
 import {
   DeveloperMockupPanel,
   RoleDeliverableWorkspace,
@@ -14,6 +19,8 @@ import {
 import TechTeamShell from '../../components/tech-team/TechTeamShell.jsx';
 import useAuth from '../../hooks/useAuth.hook.js';
 import { getLeadById } from '../../services/lead.service.js';
+import { resolveTechTeamBackNav } from '../../utils/techDetailNav.util.js';
+import { opsStatusBadgeClass } from '../../utils/opsStatus.util.js';
 import { projectTitle } from '../../utils/projectNumber.util.js';
 import {
   getClientTabsForJd,
@@ -23,8 +30,7 @@ import {
 } from '../../utils/techWorkspace.util.js';
 
 /**
- * JD-routed Tech client workspace — SEO keeps Work & Reports;
- * Developer / Content / Social / Design get dedicated panels + Comments.
+ * JD-routed Tech client project detail — work scope + role workspace + Comments.
  */
 export default function TechClientPortfolioPage() {
   const { id } = useParams();
@@ -37,6 +43,7 @@ export default function TechClientPortfolioPage() {
     () => getClientTabsForJd(workspaceJd),
     [workspaceJd]
   );
+  const backNav = resolveTechTeamBackNav(searchParams.get('from'));
 
   const [detailTab, setDetailTab] = useState(() =>
     resolveClientTab(workspaceJd, searchParams.get('tab'))
@@ -83,6 +90,7 @@ export default function TechClientPortfolioPage() {
     queryClient.setQueryData(['lead', id, 'tech-portfolio'], updated);
     queryClient.setQueryData(['lead', id], updated);
     queryClient.invalidateQueries({ queryKey: ['myProjects'] });
+    queryClient.invalidateQueries({ queryKey: ['myPriorityProjects'] });
     queryClient.invalidateQueries({ queryKey: ['commentNotifications'] });
     if (updated) {
       setKeywords(mapKeywordsFromLead(updated));
@@ -90,16 +98,22 @@ export default function TechClientPortfolioPage() {
   };
 
   const unread = Number(lead?.unreadCommentCount) || 0;
+  const waitingForDeveloper = Boolean(
+    lead?.waitingForDeveloper || lead?.seoActionsLocked
+  );
+  const waitingNote = 'Waiting for Developer to push to Ongoing (SEO)';
+  const statusLabel = resolveProjectStatusLabel(lead);
+  const clientLifecycle = lead?.handover?.clientStatus || 'Active';
 
   return (
-    <TechTeamShell title="Client Portfolio">
+    <TechTeamShell title="Project Detail">
       <section className="mx-auto w-full max-w-7xl space-y-6">
         <div>
           <Link
-            to="/dashboard/tech-team/projects"
+            to={backNav.to}
             className="inline-flex items-center gap-1.5 text-sm font-medium text-orange-400 transition hover:text-orange-300"
           >
-            ← Back to My Projects
+            ← {backNav.label}
           </Link>
         </div>
 
@@ -117,12 +131,13 @@ export default function TechClientPortfolioPage() {
           <>
             <div className="rounded-2xl border border-zinc-800/80 bg-zinc-900/50 px-6 py-5 shadow-xl">
               <div className="flex flex-wrap items-center gap-2">
-                <p className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500">
-                  Assigned client
-                </p>
                 <ProjectNumberBadge lead={lead} size="lg" />
                 <span className="inline-flex rounded-full border border-[#F25E26]/40 bg-[#F25E26]/15 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[#F25E26]">
                   {meta.badge}
+                </span>
+                <PriorityPill lead={lead} />
+                <span className="rounded-full bg-zinc-800 px-2.5 py-0.5 text-[11px] font-semibold text-zinc-300 ring-1 ring-zinc-600">
+                  {statusLabel}
                 </span>
                 {user?.jd === 'Intern' && workspaceJd ? (
                   <span className="text-[11px] text-zinc-500">
@@ -133,15 +148,38 @@ export default function TechClientPortfolioPage() {
               <h1 className="mt-2 font-display text-2xl font-bold tracking-tight text-white">
                 {projectTitle(lead, '—')}
               </h1>
-              <p className="mt-1 text-sm text-zinc-400">
-                {lead.serviceAreas?.trim() || 'Assigned project'}
-              </p>
-              <OpsStatusBadges handover={lead.handover} className="mt-3" />
+              <div className="mt-3 flex flex-wrap gap-3">
+                <span className="inline-flex max-w-full flex-col items-start gap-0.5">
+                  <span className="text-[10px] font-medium uppercase tracking-wide text-zinc-500">
+                    Client Status
+                  </span>
+                  <span
+                    className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold ${opsStatusBadgeClass(
+                      clientLifecycle === 'Expired' ? 'Suspended' : 'Verified'
+                    )}`}
+                  >
+                    {clientLifecycle}
+                  </span>
+                </span>
+                <OpsStatusBadges handover={lead.handover} />
+              </div>
               <p className="mt-2 text-xs text-zinc-500">
                 Work fields only · billing hidden from Tech · statuses set by
-                Tech Head · forwards appear in Comments
+                Tech Head
               </p>
+              {waitingForDeveloper ? (
+                <p className="mt-2 text-xs text-amber-400/90">{waitingNote}</p>
+              ) : null}
             </div>
+
+            <TechProjectWorkScope lead={lead} />
+
+            {workspaceJd === 'Developer' ? (
+              <DevelopedWebsiteUrlField
+                leadId={lead._id}
+                value={lead.handover?.developedWebsiteUrl || ''}
+              />
+            ) : null}
 
             <div
               role="tablist"
@@ -189,6 +227,12 @@ export default function TechClientPortfolioPage() {
                     ? lead.handover.monthlyReports
                     : []
                 }
+                keywordsRankedConfirmation={
+                  lead.handover?.keywordsRankedConfirmation || null
+                }
+                showConfirmKeywordsRanked
+                actionsLocked={waitingForDeveloper}
+                lockedReason={waitingNote}
                 onLeadUpdated={onLeadUpdated}
               />
             ) : null}
@@ -204,7 +248,6 @@ export default function TechClientPortfolioPage() {
                 badge={meta.badge}
                 title={meta.notesTitle || meta.primaryLabel}
                 hint={meta.notesHint}
-                taskNotes={taskNotes}
               />
             ) : null}
           </>

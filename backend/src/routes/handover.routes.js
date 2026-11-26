@@ -7,6 +7,8 @@ import cstHandoverUpload from '../middlewares/cstHandoverUpload.middleware.js';
 import {
   getHandoverQueue,
   getTechPipeline,
+  getCstClients,
+  setCstClientState,
   getTechList,
   markClientOnboarded,
   setActivationCall,
@@ -32,6 +34,11 @@ import {
   updateChangeRequestStatus,
   assignHandover,
   getMyProjects,
+  getMyCompletedProjects,
+  getMyPriorityProjects,
+  getMyTaskStats,
+  confirmKeywordsRanked,
+  saveDevelopedWebsiteUrl,
   updateMilestone,
   reassignHandover,
 } from '../controllers/handover.controller.js';
@@ -53,6 +60,18 @@ router.get(
   getTechPipeline
 );
 
+router.get(
+  '/cst-clients',
+  restrictTo('cst_manager', 'super_admin', 'admin'),
+  getCstClients
+);
+
+router.patch(
+  '/:id/cst-client-state',
+  restrictTo('cst_manager'),
+  setCstClientState
+);
+
 router.get('/tech-list', restrictTo('cst_manager'), getTechList);
 
 router.get(
@@ -65,6 +84,24 @@ router.get(
   '/my-projects',
   restrictTo('tech_team'),
   getMyProjects
+);
+
+router.get(
+  '/my-projects/completed',
+  restrictTo('tech_team'),
+  getMyCompletedProjects
+);
+
+router.get(
+  '/my-projects/priority',
+  restrictTo('tech_team'),
+  getMyPriorityProjects
+);
+
+router.get(
+  '/my-task-stats',
+  restrictTo('tech_team'),
+  getMyTaskStats
 );
 
 router.get(
@@ -189,13 +226,13 @@ router.get(
 
 router.patch(
   '/:id/live-portfolio',
-  restrictTo('cst_manager', 'tech_team', 'super_admin'),
+  restrictTo('cst_manager', 'tech_team', 'tech_head', 'super_admin'),
   saveLivePortfolio
 );
 
 router.post(
   '/:id/monthly-reports',
-  restrictTo('tech_team', 'cst_manager', 'super_admin'),
+  restrictTo('tech_team', 'cst_manager', 'tech_head', 'super_admin'),
   (req, res, next) => {
     monthlyReportUpload.single('report')(req, res, (err) => {
       if (err) {
@@ -233,6 +270,18 @@ router.patch(
   '/:id/milestone',
   restrictTo('tech_team', 'tech_head', 'super_admin'),
   updateMilestone
+);
+
+router.patch(
+  '/:id/developed-website-url',
+  restrictTo('tech_team', 'tech_head', 'super_admin'),
+  saveDevelopedWebsiteUrl
+);
+
+router.patch(
+  '/:id/confirm-keywords-ranked',
+  restrictTo('tech_team', 'tech_head', 'super_admin'),
+  confirmKeywordsRanked
 );
 
 // super_admin writes; admin is allowlisted so blockReadOnlyAdmin returns the

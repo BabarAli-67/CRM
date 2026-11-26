@@ -113,6 +113,7 @@ export default function TechHeadCompletedPage() {
                 lead={lead}
                 statusText="Completed"
                 metaLine={`Completed ${formatPkt(lead.handover?.completedAt)} · Assigned ${formatPkt(lead.handover?.assignedAt)}`}
+                detailFrom="completed"
                 onOpsUpdated={() => {
                   queryClient.invalidateQueries({
                     queryKey: ['techHeadCompleted'],
@@ -120,7 +121,7 @@ export default function TechHeadCompletedPage() {
                 }}
                 actions={
                   <Link
-                    to={`/dashboard/tech-head/client/${lead._id}`}
+                    to={`/dashboard/tech-head/client/${lead._id}?from=completed`}
                     className="rounded-lg border border-zinc-600 px-3 py-1.5 text-xs font-semibold text-zinc-200 hover:bg-zinc-800"
                   >
                     Work & Reports

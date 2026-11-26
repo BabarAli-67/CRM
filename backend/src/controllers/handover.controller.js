@@ -16,9 +16,15 @@ import {
   appendInternActivityIfNeeded,
   applyDeveloperToSeoHandover,
   emitToAllTechHeads,
+  emitTechProjectSync,
+  ensureAssignedTechsPopulated,
   filterCommentsForViewerRole,
   getAssignedTechIdList,
+  isSeoWaitingForDeveloper,
   isUserAssignedTech,
+  resolveTechWorkspaceJd,
+  SEO_WAITING_FOR_DEVELOPER_MSG,
+  TECH_NON_EXPIRED_CLAUSE,
   toTechSafeClient,
   canUseSeoPortfolioTools,
 } from '../utils/techTeam.util.js';
@@ -136,11 +142,20 @@ const normalizeChangeRequests = (raw, userId) => {
     .filter(Boolean);
 };
 
+/** Mongo clause: CST Active clients (legacy rows without field count as Active). */
+const CST_ACTIVE_CLIENT_CLAUSE = {
+  $or: [
+    { 'handover.isNonActive': { $ne: true } },
+    { 'handover.isNonActive': { $exists: false } },
+  ],
+};
+
 export const getHandoverQueue = asyncHandler(async (req, res) => {
   // Pending Review + Onboard tabs share this feed; frontend filters by cstStatus
   const leads = await Lead.find({
     stage: 'closed_sale',
     'handover.cstStatus': { $in: ['pending_review', 'onboarded'] },
+    ...CST_ACTIVE_CLIENT_CLAUSE,
   })
     .select(
       'stage status clientName businessName personalPhone businessPhone businessEmail personalEmail yelpLink websiteLink gmbLink serviceAreas servicesOffered niche locationAddress leadSource salesAmount paymentOffered paymentReceived paymentPending payment savedCards handover closedAt closedBy agentId closerId notes createdAt updatedAt'
@@ -241,6 +256,10 @@ export const markClientOnboarded = asyncHandler(async (req, res) => {
     projectNumber: lead.handover?.projectNumber || null,
     onboardedAt: lead.handover?.onboardedAt || now,
     at: now,
+  });
+  await emitTechProjectSync(User, lead, {
+    reason: 'queue-new',
+    actorId: req.user._id,
   });
 
   res
@@ -2195,6 +2214,7 @@ export const getCommentNotifications = asyncHandler(async (req, res) => {
     role === 'tech_team'
       ? {
           stage: 'closed_sale',
+          ...TECH_NON_EXPIRED_CLAUSE,
           'handover.cstStatus': { $in: TECH_ACTIVE_STATUSES },
           $or: [
             { 'handover.assignedTechIds': req.user._id },
@@ -2202,11 +2222,18 @@ export const getCommentNotifications = asyncHandler(async (req, res) => {
           ],
           'handover.comments.0': { $exists: true },
         }
-      : {
-          stage: 'closed_sale',
-          'handover.cstStatus': { $in: CST_PIPELINE_STATUSES },
-          'handover.comments.0': { $exists: true },
-        };
+      : role === 'tech_head'
+        ? {
+            stage: 'closed_sale',
+            ...TECH_NON_EXPIRED_CLAUSE,
+            'handover.cstStatus': { $in: CST_PIPELINE_STATUSES },
+            'handover.comments.0': { $exists: true },
+          }
+        : {
+            stage: 'closed_sale',
+            'handover.cstStatus': { $in: CST_PIPELINE_STATUSES },
+            'handover.comments.0': { $exists: true },
+          };
 
   const leads = await Lead.find(filter)
     .select('businessName clientName handover.comments handover.commentReads')
@@ -2404,6 +2431,13 @@ export const saveLivePortfolio = asyncHandler(async (req, res) => {
         'Portfolio Keywords are restricted to SEO Expert specialists'
       );
     }
+    await ensureAssignedTechsPopulated(lead, User);
+    if (
+      resolveTechWorkspaceJd(actor || req.user) === 'SEO Expert' &&
+      isSeoWaitingForDeveloper(lead)
+    ) {
+      throw new ApiError(403, SEO_WAITING_FOR_DEVELOPER_MSG);
+    }
   }
 
   if (hasKeywordOps) {
@@ -2484,7 +2518,18 @@ export const saveLivePortfolio = asyncHandler(async (req, res) => {
   }
 
   await lead.save();
-  const updated = await populateCstLead(Lead.findById(lead._id));
+  const updatedDoc = await populateCstLead(Lead.findById(lead._id));
+  const updated =
+    isAssignedTech || isTechHead
+      ? toTechSafeClient(updatedDoc)
+      : updatedDoc;
+
+  if (isAssignedTech || isTechHead) {
+    await emitTechProjectSync(User, lead, {
+      reason: 'portfolio',
+      actorId: req.user._id,
+    });
+  }
 
   res
     .status(200)
@@ -2527,6 +2572,13 @@ export const uploadMonthlyReport = asyncHandler(async (req, res) => {
         403,
         'Monthly SEO Reports are restricted to SEO Expert specialists'
       );
+    }
+    await ensureAssignedTechsPopulated(lead, User);
+    if (
+      resolveTechWorkspaceJd(actor || req.user) === 'SEO Expert' &&
+      isSeoWaitingForDeveloper(lead)
+    ) {
+      throw new ApiError(403, SEO_WAITING_FOR_DEVELOPER_MSG);
     }
   }
 
@@ -2586,6 +2638,13 @@ export const uploadMonthlyReport = asyncHandler(async (req, res) => {
 
   await lead.save();
   const updated = await populateCstLead(Lead.findById(lead._id));
+
+  if (isAssignedTech || isTechHead) {
+    await emitTechProjectSync(User, lead, {
+      reason: 'monthly-report',
+      actorId: req.user._id,
+    });
+  }
 
   res
     .status(201)
@@ -2729,22 +2788,28 @@ export const updateChangeRequestStatus = asyncHandler(async (req, res) => {
  * CST Tech Status board — Onboarded (active, awaiting tech) + live Tech delivery.
  */
 export const getTechPipeline = asyncHandler(async (req, res) => {
+  // $and required — spreading two top-level $or clauses would overwrite Active filter
   const leads = await Lead.find({
     stage: 'closed_sale',
-    $or: [
-      // Freshly onboarded — visible as Onboarded / Active before tech assign
-      { 'handover.cstStatus': 'onboarded' },
+    $and: [
+      CST_ACTIVE_CLIENT_CLAUSE,
       {
-        'handover.assignedTechId': { $ne: null },
-        'handover.cstStatus': {
-          $in: ['assigned', 'in_progress', 'ongoing_seo', 'completed'],
-        },
-      },
-      {
-        'handover.assignedTechIds.0': { $exists: true },
-        'handover.cstStatus': {
-          $in: ['assigned', 'in_progress', 'ongoing_seo', 'completed'],
-        },
+        $or: [
+          // Freshly onboarded — visible as Onboarded / Active before tech assign
+          { 'handover.cstStatus': 'onboarded' },
+          {
+            'handover.assignedTechId': { $ne: null },
+            'handover.cstStatus': {
+              $in: ['assigned', 'in_progress', 'ongoing_seo', 'completed'],
+            },
+          },
+          {
+            'handover.assignedTechIds.0': { $exists: true },
+            'handover.cstStatus': {
+              $in: ['assigned', 'in_progress', 'ongoing_seo', 'completed'],
+            },
+          },
+        ],
       },
     ],
   })
@@ -2771,6 +2836,140 @@ export const getTechPipeline = asyncHandler(async (req, res) => {
         ),
       },
       'Tech pipeline retrieved'
+    )
+  );
+});
+
+const CST_CLIENT_PIPELINE_CLAUSE = {
+  $or: [
+    { 'handover.cstStatus': 'onboarded' },
+    {
+      'handover.assignedTechId': { $ne: null },
+      'handover.cstStatus': {
+        $in: ['assigned', 'in_progress', 'ongoing_seo', 'completed'],
+      },
+    },
+    {
+      'handover.assignedTechIds.0': { $exists: true },
+      'handover.cstStatus': {
+        $in: ['assigned', 'in_progress', 'ongoing_seo', 'completed'],
+      },
+    },
+  ],
+};
+
+const CST_CLIENT_SELECT =
+  'stage status clientName businessName personalPhone businessPhone businessEmail personalEmail yelpLink websiteLink gmbLink serviceAreas servicesOffered niche locationAddress leadSource salesAmount paymentOffered paymentReceived paymentPending payment savedCards handover closedAt closedBy agentId closerId notes createdAt updatedAt';
+
+/**
+ * GET /handover/cst-clients — CST Client board (Active / Non-Active).
+ * Query: ?state=active|non-active (default active)
+ */
+export const getCstClients = asyncHandler(async (req, res) => {
+  const stateRaw = String(req.query?.state || 'active')
+    .trim()
+    .toLowerCase();
+  const isNonActive = stateRaw === 'non-active' || stateRaw === 'nonactive';
+
+  const leads = await Lead.find({
+    stage: 'closed_sale',
+    $and: [
+      CST_CLIENT_PIPELINE_CLAUSE,
+      isNonActive
+        ? { 'handover.isNonActive': true }
+        : CST_ACTIVE_CLIENT_CLAUSE,
+    ],
+  })
+    .select(CST_CLIENT_SELECT)
+    .populate('agentId', 'fullName username role')
+    .populate('closerId', 'fullName username role')
+    .populate('closedBy', 'fullName username role')
+    .populate('handover.assignedTechId', 'fullName username role')
+    .sort(
+      isNonActive
+        ? { 'handover.nonActiveAt': -1, updatedAt: -1 }
+        : { 'handover.onboardedAt': -1, 'handover.assignedAt': -1 }
+    );
+
+  res.status(200).json(
+    new ApiResponse(
+      200,
+      {
+        leads: attachUnreadCommentCount(
+          leads,
+          req.user._id,
+          req.user.role === 'cst_manager' ? 'cst_manager' : null
+        ),
+      },
+      isNonActive
+        ? 'Non-Active clients retrieved'
+        : 'Active clients retrieved'
+    )
+  );
+});
+
+/**
+ * PATCH /handover/:id/cst-client-state — mark Active / Non-Active (CST).
+ */
+export const setCstClientState = asyncHandler(async (req, res) => {
+  const nextRaw = String(
+    req.body?.cstClientState || (req.body?.isNonActive ? 'Non-Active' : '')
+  ).trim();
+  const next =
+    nextRaw === 'Non-Active' || nextRaw === 'non-active'
+      ? 'Non-Active'
+      : nextRaw === 'Active' || nextRaw === 'active'
+        ? 'Active'
+        : null;
+
+  if (!next) {
+    throw new ApiError(400, "cstClientState must be 'Active' or 'Non-Active'");
+  }
+
+  const lead = await Lead.findOne({
+    _id: req.params.id,
+    stage: 'closed_sale',
+    ...CST_CLIENT_PIPELINE_CLAUSE,
+  });
+
+  if (!lead) {
+    throw new ApiError(404, 'Client not found in CST pipeline');
+  }
+  if (!lead.handover) lead.handover = {};
+
+  const becomingNonActive = next === 'Non-Active';
+  lead.handover.cstClientState = next;
+  lead.handover.isNonActive = becomingNonActive;
+  lead.handover.nonActiveAt = becomingNonActive ? new Date() : null;
+
+  await lead.save();
+  await lead.populate([
+    { path: 'agentId', select: 'fullName username role' },
+    { path: 'closerId', select: 'fullName username role' },
+    { path: 'closedBy', select: 'fullName username role' },
+    { path: 'handover.assignedTechId', select: 'fullName username role' },
+  ]);
+
+  const payload = {
+    leadId: String(lead._id),
+    businessName: lead.businessName || 'Client',
+    cstClientState: next,
+    isNonActive: becomingNonActive,
+    at: new Date(),
+  };
+  const cstManagers = await User.find({
+    role: 'cst_manager',
+    status: 'approved',
+  }).select('_id');
+  for (const u of cstManagers) {
+    emitToUser(u._id, 'cst:client-state', payload);
+  }
+
+  res.status(200).json(
+    new ApiResponse(
+      200,
+      { lead },
+      becomingNonActive ? 'Client marked Non-Active' : 'Client restored to Active'
     )
   );
 });
@@ -2900,22 +3099,113 @@ export const assignHandover = asyncHandler(async (req, res) => {
     );
 });
 
+const MY_PROJECTS_SELECT =
+  'businessName serviceAreas websiteLink servicesOffered socialLinks gmbLink handover.onboardingNotes handover.cstStatus handover.techStatus handover.clientOpsStatus handover.clientStatus handover.isPriority handover.priorityAssignedAt handover.developedWebsiteUrl handover.gmbOpsStatus handover.websiteSeoOpsStatus handover.projectNumber handover.assignedAt handover.completedAt handover.assignedTechId handover.assignedTechIds handover.upsellLedger handover.upscale handover.upscaleNotes handover.comments handover.portfolioKeywords handover.monthlyReports handover.techTaskNotes handover.keywordsRankedConfirmation handover.developerHandoffs createdAt updatedAt';
+
+const normalizeDevelopedWebsiteUrl = (raw) => {
+  const trimmed = String(raw || '').trim();
+  if (!trimmed) return null;
+  if (/^https?:\/\//i.test(trimmed)) return trimmed;
+  return `https://${trimmed}`;
+};
+
+/**
+ * PATCH /handover/:id/developed-website-url — Developer saves built-site URL.
+ */
+export const saveDevelopedWebsiteUrl = asyncHandler(async (req, res) => {
+  const lead = await Lead.findOne({
+    _id: req.params.id,
+    stage: 'closed_sale',
+    ...TECH_NON_EXPIRED_CLAUSE,
+  });
+  if (!lead) throw new ApiError(404, 'Client not found');
+
+  const role = req.user.role;
+  if (role === 'tech_team') {
+    if (!isUserAssignedTech(lead, req.user._id)) {
+      throw new ApiError(403, 'You can only update your assigned projects');
+    }
+    let actor = req.user;
+    if (req.user.jd === 'Intern') {
+      actor = await User.findById(req.user._id)
+        .select('fullName username role jd assignedMentorId')
+        .populate('assignedMentorId', 'jd fullName');
+    }
+    if (resolveTechWorkspaceJd(actor) !== 'Developer') {
+      throw new ApiError(403, 'Only Developers can set the developed website URL');
+    }
+  } else if (role !== 'tech_head' && role !== 'super_admin') {
+    throw new ApiError(403, 'Not allowed to update developed website URL');
+  }
+
+  if (!lead.handover) lead.handover = {};
+  lead.handover.developedWebsiteUrl = normalizeDevelopedWebsiteUrl(
+    req.body?.developedWebsiteUrl
+  );
+  await lead.save();
+
+  await emitTechProjectSync(User, lead, {
+    reason: 'developed-website-url',
+    actorId: req.user._id,
+  });
+
+  res.status(200).json(
+    new ApiResponse(
+      200,
+      { lead: toTechSafeClient(lead) },
+      'Developed website URL saved'
+    )
+  );
+});
+
+const toMyProjectClient = (lead, uid) => {
+  const client = toTechSafeClient(lead);
+  const notes = Array.isArray(lead?.handover?.techTaskNotes)
+    ? lead.handover.techTaskNotes
+    : [];
+  if (client.handover) {
+    client.handover.techTaskNotes = notes.filter(
+      (n) => String(n.assignedToUserId) === String(uid)
+    );
+  }
+  return client;
+};
+
 export const getMyProjects = asyncHandler(async (req, res) => {
-  // Strict: only projects where this specialist is in assignedTechIds (or legacy assignedTechId).
-  // Unassigned / Tech Head queue clients are never returned here.
+  // Active queue: assigned + not Completed. Newest assignment first.
   const uid = req.user._id;
+  let actor = req.user;
+  if (req.user.jd === 'Intern' && req.user.assignedMentorId) {
+    actor = await User.findById(req.user._id)
+      .populate('assignedMentorId', 'jd fullName')
+      .select('fullName username role jd assignedMentorId');
+  }
+  const workspaceJd = resolveTechWorkspaceJd(actor);
+
   const leads = await Lead.find({
     stage: 'closed_sale',
-    'handover.cstStatus': { $in: TECH_ACTIVE_STATUSES },
+    ...TECH_NON_EXPIRED_CLAUSE,
+    'handover.cstStatus': {
+      $in: ['assigned', 'in_progress', 'ongoing_seo'],
+    },
+    'handover.techStatus': { $ne: 'completed' },
     $or: [
       { 'handover.assignedTechIds': uid },
       { 'handover.assignedTechId': uid },
     ],
   })
-    .select(
-      'businessName serviceAreas websiteLink servicesOffered socialLinks handover.onboardingNotes handover.cstStatus handover.techStatus handover.clientOpsStatus handover.gmbOpsStatus handover.websiteSeoOpsStatus handover.projectNumber handover.assignedAt handover.assignedTechId handover.assignedTechIds handover.upsellLedger handover.upscale handover.upscaleNotes handover.comments handover.portfolioKeywords handover.monthlyReports handover.techTaskNotes createdAt updatedAt'
-    )
-    .sort({ 'handover.assignedAt': 1 });
+    .select(MY_PROJECTS_SELECT)
+    .populate({
+      path: 'handover.assignedTechIds',
+      select: 'fullName username role jd assignedMentorId',
+      populate: { path: 'assignedMentorId', select: 'jd fullName' },
+    })
+    .populate({
+      path: 'handover.assignedTechId',
+      select: 'fullName username role jd assignedMentorId',
+      populate: { path: 'assignedMentorId', select: 'jd fullName' },
+    })
+    .sort({ 'handover.assignedAt': -1, createdAt: -1 });
 
   const withUnread = attachUnreadCommentCount(
     leads,
@@ -2923,19 +3213,280 @@ export const getMyProjects = asyncHandler(async (req, res) => {
     'tech_team'
   );
   const safe = withUnread.map((lead) => {
-    const client = toTechSafeClient(lead);
-    // Historical forwards still available inside Comments (not on project cards).
-    const notes = Array.isArray(lead?.handover?.techTaskNotes)
-      ? lead.handover.techTaskNotes
-      : [];
-    client.handover.techTaskNotes = notes.filter(
-      (n) => String(n.assignedToUserId) === String(uid)
-    );
+    const client = toMyProjectClient(lead, uid);
+    const waiting =
+      workspaceJd === 'SEO Expert' && isSeoWaitingForDeveloper(lead);
+    client.waitingForDeveloper = waiting;
+    client.seoActionsLocked = waiting;
     return client;
   });
 
   res.status(200).json(
     new ApiResponse(200, { leads: safe }, 'My projects retrieved')
+  );
+});
+
+/**
+ * GET /handover/my-projects/priority — active Priority Tasks for this specialist.
+ */
+export const getMyPriorityProjects = asyncHandler(async (req, res) => {
+  const uid = req.user._id;
+
+  const leads = await Lead.find({
+    stage: 'closed_sale',
+    ...TECH_NON_EXPIRED_CLAUSE,
+    'handover.isPriority': true,
+    'handover.cstStatus': {
+      $in: ['assigned', 'in_progress', 'ongoing_seo'],
+    },
+    'handover.techStatus': { $ne: 'completed' },
+    $or: [
+      { 'handover.assignedTechIds': uid },
+      { 'handover.assignedTechId': uid },
+    ],
+  })
+    .select(MY_PROJECTS_SELECT)
+    .populate({
+      path: 'handover.assignedTechIds',
+      select: 'fullName username role jd assignedMentorId',
+      populate: { path: 'assignedMentorId', select: 'jd fullName' },
+    })
+    .populate({
+      path: 'handover.assignedTechId',
+      select: 'fullName username role jd assignedMentorId',
+      populate: { path: 'assignedMentorId', select: 'jd fullName' },
+    })
+    .sort({ 'handover.priorityAssignedAt': -1, 'handover.assignedAt': -1 });
+
+  let actor = req.user;
+  if (req.user.jd === 'Intern' && req.user.assignedMentorId) {
+    actor = await User.findById(req.user._id)
+      .populate('assignedMentorId', 'jd fullName')
+      .select('fullName username role jd assignedMentorId');
+  }
+  const workspaceJd = resolveTechWorkspaceJd(actor);
+
+  const withUnread = attachUnreadCommentCount(
+    leads,
+    req.user._id,
+    'tech_team'
+  );
+  const safe = withUnread.map((lead) => {
+    const client = toMyProjectClient(lead, uid);
+    const waiting =
+      workspaceJd === 'SEO Expert' && isSeoWaitingForDeveloper(lead);
+    client.waitingForDeveloper = waiting;
+    client.seoActionsLocked = waiting;
+    return client;
+  });
+
+  res.status(200).json(
+    new ApiResponse(200, { leads: safe }, 'Priority projects retrieved')
+  );
+});
+
+/**
+ * GET /handover/my-projects/completed — finished / handed-off work for specialists.
+ */
+export const getMyCompletedProjects = asyncHandler(async (req, res) => {
+  const uid = req.user._id;
+
+  const [handedOff, completedAssigned] = await Promise.all([
+    Lead.find({
+      stage: 'closed_sale',
+      ...TECH_NON_EXPIRED_CLAUSE,
+      'handover.developerHandoffs.developerId': uid,
+    })
+      .select(MY_PROJECTS_SELECT)
+      .sort({ 'handover.assignedAt': -1, updatedAt: -1 }),
+    Lead.find({
+      stage: 'closed_sale',
+      ...TECH_NON_EXPIRED_CLAUSE,
+      $and: [
+        {
+          $or: [
+            { 'handover.assignedTechIds': uid },
+            { 'handover.assignedTechId': uid },
+          ],
+        },
+        {
+          $or: [
+            { 'handover.techStatus': 'completed' },
+            { 'handover.cstStatus': 'completed' },
+          ],
+        },
+      ],
+    })
+      .select(MY_PROJECTS_SELECT)
+      .sort({ 'handover.completedAt': -1, 'handover.assignedAt': -1 }),
+  ]);
+
+  const byId = new Map();
+  for (const lead of [...handedOff, ...completedAssigned]) {
+    byId.set(String(lead._id), lead);
+  }
+  const merged = [...byId.values()].sort((a, b) => {
+    const aHandoffs = Array.isArray(a.handover?.developerHandoffs)
+      ? a.handover.developerHandoffs
+      : [];
+    const bHandoffs = Array.isArray(b.handover?.developerHandoffs)
+      ? b.handover.developerHandoffs
+      : [];
+    const aMine = aHandoffs
+      .filter((h) => String(h.developerId) === String(uid))
+      .map((h) => new Date(h.at || 0).getTime());
+    const bMine = bHandoffs
+      .filter((h) => String(h.developerId) === String(uid))
+      .map((h) => new Date(h.at || 0).getTime());
+    const aAt = Math.max(
+      new Date(a.handover?.completedAt || 0).getTime(),
+      aMine.length ? Math.max(...aMine) : 0,
+      new Date(a.handover?.assignedAt || 0).getTime()
+    );
+    const bAt = Math.max(
+      new Date(b.handover?.completedAt || 0).getTime(),
+      bMine.length ? Math.max(...bMine) : 0,
+      new Date(b.handover?.assignedAt || 0).getTime()
+    );
+    return bAt - aAt;
+  });
+
+  const withUnread = attachUnreadCommentCount(
+    merged,
+    req.user._id,
+    'tech_team'
+  );
+  const safe = withUnread.map((lead) => {
+    const client = toMyProjectClient(lead, uid);
+    const handoffs = Array.isArray(lead.handover?.developerHandoffs)
+      ? lead.handover.developerHandoffs
+      : [];
+    const mine = handoffs.find((h) => String(h.developerId) === String(uid));
+    client.completedReason = mine
+      ? 'Handed over to SEO (Ongoing SEO)'
+      : 'Completed';
+    client.completedAt =
+      mine?.at || lead.handover?.completedAt || lead.updatedAt || null;
+    return client;
+  });
+
+  res.status(200).json(
+    new ApiResponse(200, { leads: safe }, 'Completed projects retrieved')
+  );
+});
+
+/**
+ * GET /handover/my-task-stats — Developer task history counters.
+ */
+export const getMyTaskStats = asyncHandler(async (req, res) => {
+  const uid = req.user._id;
+  const active = await Lead.find({
+    stage: 'closed_sale',
+    ...TECH_NON_EXPIRED_CLAUSE,
+    'handover.cstStatus': { $in: TECH_ACTIVE_STATUSES },
+    $or: [
+      { 'handover.assignedTechIds': uid },
+      { 'handover.assignedTechId': uid },
+    ],
+  }).select('handover.techStatus handover.cstStatus');
+
+  let pending = 0;
+  let activeCompleted = 0;
+  for (const lead of active) {
+    const st = lead.handover?.techStatus || lead.handover?.cstStatus;
+    if (st === 'completed') activeCompleted += 1;
+    else pending += 1;
+  }
+
+  const handedOverCount = await Lead.countDocuments({
+    stage: 'closed_sale',
+    'handover.developerHandoffs.developerId': uid,
+  });
+
+  const totalTasks = active.length + handedOverCount;
+  const tasksCompleted = activeCompleted + handedOverCount;
+
+  res.status(200).json(
+    new ApiResponse(
+      200,
+      {
+        totalTasks,
+        tasksPending: pending,
+        tasksCompleted,
+      },
+      'Task stats retrieved'
+    )
+  );
+});
+
+/**
+ * PATCH /handover/:id/confirm-keywords-ranked — SEO Expert check-state action.
+ */
+export const confirmKeywordsRanked = asyncHandler(async (req, res) => {
+  const role = req.user.role;
+  if (role !== 'tech_team' && role !== 'tech_head' && role !== 'super_admin') {
+    throw new ApiError(403, 'Only Tech can confirm keyword rankings');
+  }
+
+  const lead = await Lead.findOne({
+    _id: req.params.id,
+    stage: 'closed_sale',
+    ...TECH_NON_EXPIRED_CLAUSE,
+  });
+  if (!lead) throw new ApiError(404, 'Client not found');
+
+  if (role === 'tech_team') {
+    if (!isUserAssignedTech(lead, req.user._id)) {
+      throw new ApiError(403, 'You can only confirm keywords on your assigned clients');
+    }
+    // Populate mentor for Intern workspace JD resolution when available
+    let actor = req.user;
+    if (req.user.jd === 'Intern' && req.user.assignedMentorId) {
+      actor = await User.findById(req.user._id)
+        .populate('assignedMentorId', 'jd fullName')
+        .select('fullName username role jd assignedMentorId');
+    }
+    if (resolveTechWorkspaceJd(actor) !== 'SEO Expert') {
+      throw new ApiError(403, 'Only SEO Experts can confirm keywords ranked');
+    }
+    await ensureAssignedTechsPopulated(lead, User);
+    if (isSeoWaitingForDeveloper(lead)) {
+      throw new ApiError(403, SEO_WAITING_FOR_DEVELOPER_MSG);
+    }
+  }
+
+  if (!lead.handover) lead.handover = {};
+  const now = new Date();
+  const name = req.user.fullName || req.user.username || 'SEO Expert';
+  lead.handover.keywordsRankedConfirmation = {
+    confirmed: true,
+    confirmedAt: now,
+    confirmedBy: req.user._id,
+    confirmedByName: name,
+  };
+  // Reflect ranked state on Website SEO ops tracker
+  lead.handover.websiteSeoOpsStatus = 'Completed';
+  await lead.save();
+
+  await emitToAllTechHeads(User, 'tech:keywords-ranked', {
+    leadId: String(lead._id),
+    businessName: lead.businessName || 'Client',
+    projectNumber: lead.handover?.projectNumber || null,
+    confirmedByName: name,
+    at: now,
+  });
+  await emitTechProjectSync(User, lead, {
+    reason: 'keywords-ranked',
+    actorId: req.user._id,
+  });
+
+  const client = toTechSafeClient(lead);
+  res.status(200).json(
+    new ApiResponse(
+      200,
+      { lead: client },
+      'Keywords ranked confirmation saved'
+    )
   );
 });
 
@@ -2948,11 +3499,12 @@ const MILESTONE_ORDER = {
   completed: 5,
 };
 
-/** Allowed forward transitions for Tech project status. */
+/** Allowed transitions for Tech project status. */
 const MILESTONE_NEXT = {
   assigned: ['in_progress'],
   in_progress: ['ongoing_seo', 'completed'],
-  ongoing_seo: ['completed'],
+  // SEO Experts may Start → In Progress after Developer handoff lands on Ongoing (SEO)
+  ongoing_seo: ['in_progress', 'completed'],
 };
 
 export const updateMilestone = asyncHandler(async (req, res) => {
@@ -2993,6 +3545,22 @@ export const updateMilestone = asyncHandler(async (req, res) => {
     );
   }
 
+  // SEO Expert cannot advance status while a co-assigned Developer still owns build
+  if (role === 'tech_team') {
+    let actorForGate = req.user;
+    if (req.user.jd === 'Intern') {
+      actorForGate = await User.findById(req.user._id)
+        .select('fullName username role jd assignedMentorId')
+        .populate('assignedMentorId', 'jd fullName');
+    }
+    if (resolveTechWorkspaceJd(actorForGate) === 'SEO Expert') {
+      await ensureAssignedTechsPopulated(lead, User);
+      if (isSeoWaitingForDeveloper(lead)) {
+        throw new ApiError(403, SEO_WAITING_FOR_DEVELOPER_MSG);
+      }
+    }
+  }
+
   lead.handover.cstStatus = milestone;
   lead.handover.techStatus = milestone;
 
@@ -3016,6 +3584,8 @@ export const updateMilestone = asyncHandler(async (req, res) => {
       User,
     });
   }
+
+  const priorAssigneeIds = getAssignedTechIdList(lead);
 
   let seoHandover = {
     handedOver: false,
@@ -3055,6 +3625,16 @@ export const updateMilestone = asyncHandler(async (req, res) => {
     emitToUser(u._id, 'tech:status-updated', statusPayload);
   }
   await emitToAllTechHeads(User, 'tech:status-updated', statusPayload);
+  // Specialists on this project (incl. pre-handoff Developers) need live unlock
+  for (const uid of new Set([...priorAssigneeIds, ...getAssignedTechIdList(lead)])) {
+    emitToUser(uid, 'tech:status-updated', statusPayload);
+  }
+
+  await emitTechProjectSync(User, lead, {
+    reason: seoHandover.handedOver ? 'seo-handover' : 'milestone',
+    actorId: req.user._id,
+    alsoNotifyUserIds: priorAssigneeIds,
+  });
 
   if (seoHandover.handedOver) {
     const handoverPayload = {
@@ -3160,6 +3740,8 @@ export const reassignHandover = asyncHandler(async (req, res) => {
     lead.handover.overrideLog = [];
   }
 
+  const priorOverrideAssignees = getAssignedTechIdList(lead);
+
   if (nextTechId) {
     const tech = await User.findById(nextTechId);
 
@@ -3216,6 +3798,12 @@ export const reassignHandover = asyncHandler(async (req, res) => {
   ) {
     await ensureLeadProjectNumber(lead);
   }
+
+  await emitTechProjectSync(User, lead, {
+    reason: 'override',
+    actorId: req.user._id,
+    alsoNotifyUserIds: priorOverrideAssignees,
+  });
 
   res
     .status(200)

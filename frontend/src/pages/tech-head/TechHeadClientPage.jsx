@@ -5,10 +5,19 @@ import CstClientComments from '../../components/cst-manager/CstClientComments.js
 import LivePortfolioSection, {
   mapKeywordsFromLead,
 } from '../../components/portfolio/LivePortfolioSection.jsx';
+import OpsStatusBadges from '../../components/ops/OpsStatusBadges.jsx';
 import OpsStatusEditor from '../../components/ops/OpsStatusEditor.jsx';
 import ProjectNumberBadge from '../../components/tech/ProjectNumberBadge.jsx';
+import PriorityToggleButton, {
+  PriorityPill,
+} from '../../components/tech/PriorityToggleButton.component.jsx';
+import TechProjectWorkScope, {
+  resolveProjectStatusLabel,
+} from '../../components/tech/TechProjectWorkScope.component.jsx';
 import TechHeadShell from '../../components/tech-head/TechHeadShell.jsx';
 import { getTechHeadClient } from '../../services/techHead.service.js';
+import { resolveTechHeadBackNav } from '../../utils/techDetailNav.util.js';
+import { opsStatusBadgeClass } from '../../utils/opsStatus.util.js';
 import { projectTitle } from '../../utils/projectNumber.util.js';
 
 export default function TechHeadClientPage() {
@@ -18,22 +27,7 @@ export default function TechHeadClientPage() {
   const [keywords, setKeywords] = useState([]);
   const tabParam = searchParams.get('tab');
   const detailTab = tabParam === 'comments' ? 'comments' : 'work';
-  const fromParam = searchParams.get('from');
-  const backNav =
-    fromParam === 'team-comments'
-      ? {
-          to: '/dashboard/tech-head/team-comments',
-          label: 'Back to Team Comments',
-        }
-      : fromParam === 'cst-comments'
-        ? {
-            to: '/dashboard/tech-head/escalations',
-            label: 'Back to CST Comments',
-          }
-        : {
-            to: '/dashboard/tech-head/assigned',
-            label: 'Back to Assigned Projects',
-          };
+  const backNav = resolveTechHeadBackNav(searchParams.get('from'));
 
   const {
     data: lead,
@@ -65,18 +59,25 @@ export default function TechHeadClientPage() {
     );
   };
 
-  const onLeadUpdated = () => {
-    // Always re-fetch tech-safe client (comment POST returns a full lead payload).
+  const onLeadUpdated = (updated) => {
+    if (updated) {
+      queryClient.setQueryData(['techHeadClient', id], updated);
+      setKeywords(mapKeywordsFromLead(updated));
+    }
     queryClient.invalidateQueries({ queryKey: ['techHeadClient', id] });
     queryClient.invalidateQueries({ queryKey: ['commentNotifications'] });
     queryClient.invalidateQueries({ queryKey: ['techHeadBadges'] });
     queryClient.invalidateQueries({ queryKey: ['techHeadTeamComments'] });
     queryClient.invalidateQueries({ queryKey: ['techHeadEscalations'] });
+    queryClient.invalidateQueries({ queryKey: ['techHeadPriority'] });
   };
 
+  const statusLabel = resolveProjectStatusLabel(lead);
+  const clientLifecycle = lead?.handover?.clientStatus || 'Active';
+
   return (
-    <TechHeadShell title="Client Work & Reports">
-      <section className="mx-auto w-full max-w-4xl space-y-6">
+    <TechHeadShell title="Project Detail">
+      <section className="mx-auto w-full max-w-5xl space-y-6">
         <div>
           <Link
             to={backNav.to}
@@ -99,43 +100,73 @@ export default function TechHeadClientPage() {
         ) : (
           <>
             <div className="rounded-2xl border border-zinc-800/80 bg-zinc-900/50 px-6 py-5 shadow-xl">
-              <div className="flex flex-wrap items-center gap-2">
-                <p className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500">
-                  Tech Head · Client
-                </p>
-                <ProjectNumberBadge lead={lead} size="lg" />
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <ProjectNumberBadge lead={lead} size="lg" />
+                    <PriorityPill lead={lead} />
+                    <span className="rounded-full bg-zinc-800 px-2.5 py-0.5 text-[11px] font-semibold text-zinc-300 ring-1 ring-zinc-600">
+                      {statusLabel}
+                    </span>
+                  </div>
+                  <h1 className="mt-2 font-display text-2xl font-bold tracking-tight text-white">
+                    {projectTitle(lead, '—')}
+                  </h1>
+                  <div className="mt-3 flex flex-wrap gap-3">
+                    <span className="inline-flex max-w-full flex-col items-start gap-0.5">
+                      <span className="text-[10px] font-medium uppercase tracking-wide text-zinc-500">
+                        Client Status
+                      </span>
+                      <span
+                        className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold ${opsStatusBadgeClass(
+                          clientLifecycle === 'Expired'
+                            ? 'Suspended'
+                            : 'Verified'
+                        )}`}
+                      >
+                        {clientLifecycle}
+                      </span>
+                    </span>
+                    <OpsStatusBadges handover={lead.handover} />
+                  </div>
+                </div>
+                <PriorityToggleButton lead={lead} />
               </div>
-              <h1 className="mt-2 font-display text-2xl font-bold tracking-tight text-white">
-                {projectTitle(lead, '—')}
-              </h1>
-              <p className="mt-1 text-sm text-zinc-400">
-                Status: {lead.statusLabel || lead.handover?.techStatus || '—'}
-              </p>
+            </div>
 
-              <div className="mt-4 flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  onClick={() => selectTab('work')}
-                  className={`rounded-lg px-3 py-1.5 text-sm font-semibold ring-1 ${
-                    detailTab === 'work'
-                      ? 'bg-[#F25E26]/15 text-[#F25E26] ring-[#F25E26]/40'
-                      : 'bg-zinc-900 text-zinc-400 ring-zinc-700 hover:text-zinc-200'
-                  }`}
-                >
-                  Work & Reports
-                </button>
-                <button
-                  type="button"
-                  onClick={() => selectTab('comments')}
-                  className={`rounded-lg px-3 py-1.5 text-sm font-semibold ring-1 ${
-                    detailTab === 'comments'
-                      ? 'bg-[#F25E26]/15 text-[#F25E26] ring-[#F25E26]/40'
-                      : 'bg-zinc-900 text-zinc-400 ring-zinc-700 hover:text-zinc-200'
-                  }`}
-                >
-                  Comments
-                </button>
-              </div>
+            <TechProjectWorkScope lead={lead} showAssignees />
+
+            <div
+              role="tablist"
+              aria-label="Client sections"
+              className="flex flex-wrap gap-1 rounded-xl border border-zinc-800/80 bg-[#111111] p-1"
+            >
+              <button
+                type="button"
+                role="tab"
+                aria-selected={detailTab === 'work'}
+                onClick={() => selectTab('work')}
+                className={`rounded-lg px-3.5 py-2 text-sm font-semibold transition ${
+                  detailTab === 'work'
+                    ? 'bg-[#F25E26]/15 text-[#F25E26] ring-1 ring-[#F25E26]/40'
+                    : 'text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-200'
+                }`}
+              >
+                Work &amp; Reports
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={detailTab === 'comments'}
+                onClick={() => selectTab('comments')}
+                className={`rounded-lg px-3.5 py-2 text-sm font-semibold transition ${
+                  detailTab === 'comments'
+                    ? 'bg-[#F25E26]/15 text-[#F25E26] ring-1 ring-[#F25E26]/40'
+                    : 'text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-200'
+                }`}
+              >
+                Comments
+              </button>
             </div>
 
             {detailTab === 'comments' ? (
@@ -153,7 +184,7 @@ export default function TechHeadClientPage() {
                 />
 
                 <LivePortfolioSection
-                  mode="cst"
+                  mode="tech"
                   leadId={lead._id}
                   keywords={keywords}
                   setKeywords={setKeywords}
@@ -162,6 +193,15 @@ export default function TechHeadClientPage() {
                       ? lead.handover.monthlyReports
                       : []
                   }
+                  keywordsRankedConfirmation={
+                    lead.handover?.keywordsRankedConfirmation || null
+                  }
+                  showConfirmKeywordsRanked
+                  onLeadUpdated={() => {
+                    queryClient.invalidateQueries({
+                      queryKey: ['techHeadClient', id],
+                    });
+                  }}
                 />
               </>
             )}

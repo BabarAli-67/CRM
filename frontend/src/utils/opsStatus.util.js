@@ -7,6 +7,9 @@ export const CLIENT_OPS_OPTIONS = [
   'Pending',
 ];
 
+/** Lifecycle visibility for Tech department (Expired hidden from Tech). */
+export const CLIENT_STATUS_OPTIONS = ['Active', 'Expired'];
+
 export const GMB_OPS_OPTIONS = [
   'Verified',
   'Pending Verification',

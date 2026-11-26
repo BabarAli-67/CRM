@@ -2,6 +2,7 @@ import {
   CalendarCheck,
   ClipboardList,
   LayoutTemplate,
+  Users,
   UserCheck,
   Wrench,
 } from 'lucide-react';
@@ -10,6 +11,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useLocation } from 'react-router-dom';
 import DepartmentShell from '../department/DepartmentShell.jsx';
 import {
+  getCstClients,
   getHandoverQueue,
   getTechPipeline,
 } from '../../services/handover.service.js';
@@ -33,6 +35,18 @@ export default function CstManagerShell({ title, children }) {
     refetchInterval: 15_000,
   });
 
+  const { data: activeClients = [] } = useQuery({
+    queryKey: ['cstClients', 'active'],
+    queryFn: () => getCstClients('active'),
+    refetchInterval: 15_000,
+  });
+
+  const { data: nonActiveClients = [] } = useQuery({
+    queryKey: ['cstClients', 'non-active'],
+    queryFn: () => getCstClients('non-active'),
+    refetchInterval: 15_000,
+  });
+
   const { data: mockupBadges } = useQuery({
     queryKey: ['mockupBadges'],
     queryFn: getMockupBadges,
@@ -51,10 +65,11 @@ export default function CstManagerShell({ title, children }) {
       pending,
       onboard,
       tech: Array.isArray(techLeads) ? techLeads.length : 0,
+      clients: activeClients.length + nonActiveClients.length,
       mockupUnread:
         mockupBadges?.deliveredUnread ?? mockupBadges?.actionable ?? 0,
     };
-  }, [queueLeads, techLeads, mockupBadges]);
+  }, [queueLeads, techLeads, activeClients, nonActiveClients, mockupBadges]);
 
   const navItems = useMemo(
     () => [
@@ -89,6 +104,15 @@ export default function CstManagerShell({ title, children }) {
         alsoMatch: ['/dashboard/cst-manager/client'],
         icon: Wrench,
         badge: counts.tech,
+      },
+      {
+        to: '/dashboard/cst-manager/clients',
+        label: 'Client',
+        end: false,
+        matchFrom: ['clients', 'clients-non-active'],
+        alsoMatch: ['/dashboard/cst-manager/client'],
+        icon: Users,
+        badge: counts.clients,
       },
       {
         to: '/dashboard/cst-manager/mockup',

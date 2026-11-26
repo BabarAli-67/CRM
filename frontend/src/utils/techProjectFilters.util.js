@@ -1,13 +1,20 @@
 import { resolveClientOpsStatus } from './opsStatus.util.js';
 import { resolveProjectNumber } from './projectNumber.util.js';
 
+/** Core Tech Head service tracks + legacy aliases. */
+export const TECH_SERVICE_CATEGORY_OPTIONS = [
+  'GMB',
+  'SEO Web',
+  'Citation Pages',
+  'Social Media',
+];
+
 /** Standard service filter options for Tech Head / Tech Team lists. */
 export const TECH_SERVICE_FILTER_OPTIONS = [
+  ...TECH_SERVICE_CATEGORY_OPTIONS,
   'Website Development',
   'SEO',
   'Web SEO',
-  'Citation Pages',
-  'Social Media',
   'Website',
   'Others',
 ];
@@ -67,20 +74,62 @@ export const matchesTechSearch = (lead, query) => {
 };
 
 export const matchesTechService = (lead, service) => {
-  const needle = String(service || '')
-    .trim()
-    .toLowerCase();
-  if (!needle) return true;
+  const raw = String(service || '').trim();
+  if (!raw) return true;
+  const needle = raw.toLowerCase();
 
   const offered = String(lead?.servicesOffered || '').toLowerCase();
+  const areas = String(lead?.serviceAreas || '').toLowerCase();
+  const blob = `${offered} ${areas}`;
+
+  // Category aliases for Tech Head service-track breakdown
+  if (needle === 'gmb') {
+    if (blob.includes('gmb') || blob.includes('google my business')) return true;
+    if (String(lead?.gmbLink || '').trim()) return true;
+    const gmbOps = lead?.handover?.gmbOpsStatus;
+    if (gmbOps && gmbOps !== 'Not Applicable') return true;
+    return false;
+  }
+  if (needle === 'seo web' || needle === 'web seo' || needle === 'seo') {
+    if (
+      blob.includes('seo') ||
+      blob.includes('web seo') ||
+      blob.includes('website seo') ||
+      blob.includes('search engine')
+    ) {
+      return true;
+    }
+    const seoOps = lead?.handover?.websiteSeoOpsStatus;
+    if (seoOps && seoOps !== 'Not Applicable') return true;
+    return false;
+  }
+  if (needle === 'citation pages') {
+    return blob.includes('citation');
+  }
+  if (needle === 'social media') {
+    if (blob.includes('social')) return true;
+    if (String(lead?.socialLinks || '').trim()) return true;
+    return false;
+  }
+
   if (offered.includes(needle)) return true;
 
   const upsells = Array.isArray(lead?.upsells) ? lead.upsells : [];
   for (const row of upsells) {
-    const blob = haystack(row?.title, row?.service, row?.serviceOther);
-    if (blob.includes(needle)) return true;
+    const rowBlob = haystack(row?.title, row?.service, row?.serviceOther);
+    if (rowBlob.includes(needle)) return true;
   }
   return false;
+};
+
+/** Count leads per core service category (a lead may match multiple). */
+export const countLeadsByServiceCategory = (leads) => {
+  const rows = Array.isArray(leads) ? leads : [];
+  const counts = {};
+  for (const cat of TECH_SERVICE_CATEGORY_OPTIONS) {
+    counts[cat] = rows.filter((lead) => matchesTechService(lead, cat)).length;
+  }
+  return counts;
 };
 
 export const matchesOnboardedDate = (lead, ymd) => {

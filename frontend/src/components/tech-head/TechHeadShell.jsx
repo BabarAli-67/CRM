@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import {
   CalendarCheck,
   CheckCircle2,
+  Flag,
   Inbox,
   LayoutTemplate,
   Users,
@@ -46,6 +47,12 @@ export default function TechHeadShell({ title, children }) {
         to: '/dashboard/tech-head/assigned',
         label: 'Assigned Projects',
         icon: FolderKanban,
+      },
+      {
+        to: '/dashboard/tech-head/priority',
+        label: 'Priority Task',
+        icon: Flag,
+        badge: badges?.priorityCount ?? 0,
       },
       {
         to: '/dashboard/tech-head/completed',

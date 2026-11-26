@@ -25,6 +25,9 @@ import { resolvePktMonthRange } from '../utils/shiftTime.util.js';
 import { applyContractFieldsToLead } from '../utils/contract.util.js';
 import {
   filterCommentsForViewerRole,
+  isExpiredClient,
+  isSeoWaitingForDeveloper,
+  resolveTechWorkspaceJd,
   toTechSafeClient,
 } from '../utils/techTeam.util.js';
 import { randomUUID } from 'crypto';
@@ -963,11 +966,13 @@ export const getLeadById = asyncHandler(async (req, res) => {
     .populate('closedBy', 'fullName username role')
     .populate({
       path: 'handover.assignedTechId',
-      select: 'fullName username role jd',
+      select: 'fullName username role jd assignedMentorId',
+      populate: { path: 'assignedMentorId', select: 'jd fullName' },
     })
     .populate({
       path: 'handover.assignedTechIds',
-      select: 'fullName username role jd',
+      select: 'fullName username role jd assignedMentorId',
+      populate: { path: 'assignedMentorId', select: 'jd fullName' },
     })
     .populate({
       path: 'handover.comments.createdBy',
@@ -987,6 +992,14 @@ export const getLeadById = asyncHandler(async (req, res) => {
       403,
       'You can only view leads you own or are assigned to'
     );
+  }
+
+  // Expired clients are hidden from Tech Head / Tech Team (SA + CST keep access)
+  if (
+    (req.user.role === 'tech_team' || req.user.role === 'tech_head') &&
+    isExpiredClient(lead)
+  ) {
+    throw new ApiError(404, 'Client not found');
   }
 
   // Merge legacy base-deal card into savedCards vault (append-only, never overwrite)
@@ -1047,6 +1060,17 @@ export const getLeadById = asyncHandler(async (req, res) => {
       safe.handover.techTaskNotes = notes.filter(
         (n) => String(n.assignedToUserId) === String(req.user._id)
       );
+      let actor = req.user;
+      if (req.user.jd === 'Intern' && req.user.assignedMentorId) {
+        actor = await User.findById(req.user._id)
+          .populate('assignedMentorId', 'jd fullName')
+          .select('fullName username role jd assignedMentorId');
+      }
+      const waiting =
+        resolveTechWorkspaceJd(actor) === 'SEO Expert' &&
+        isSeoWaitingForDeveloper(leadObj);
+      safe.waitingForDeveloper = waiting;
+      safe.seoActionsLocked = waiting;
     }
     payloadLead = {
       ...safe,

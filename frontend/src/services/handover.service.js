@@ -10,6 +10,20 @@ export const getTechPipeline = async () => {
   return response.data.data.leads;
 };
 
+export const getCstClients = async (state = 'active') => {
+  const response = await api.get('/handover/cst-clients', {
+    params: { state },
+  });
+  return response.data.data.leads || [];
+};
+
+export const setCstClientState = async (leadId, cstClientState) => {
+  const response = await api.patch(`/handover/${leadId}/cst-client-state`, {
+    cstClientState,
+  });
+  return response.data.data.lead;
+};
+
 export const getTechList = async () => {
   const response = await api.get('/handover/tech-list');
   return response.data.data.techs;
@@ -213,15 +227,51 @@ export const assignHandover = async (leadId, payload) => {
   return response.data.data.lead;
 };
 
+export const getMyTaskStats = async () => {
+  const response = await api.get('/handover/my-task-stats');
+  return (
+    response.data.data || {
+      totalTasks: 0,
+      tasksPending: 0,
+      tasksCompleted: 0,
+    }
+  );
+};
+
+export const confirmKeywordsRanked = async (leadId) => {
+  const response = await api.patch(
+    `/handover/${leadId}/confirm-keywords-ranked`
+  );
+  return response.data.data.lead;
+};
+
 export const getMyProjects = async () => {
   const response = await api.get('/handover/my-projects');
-  return response.data.data.leads;
+  return response.data.data.leads || [];
+};
+
+export const getMyCompletedProjects = async () => {
+  const response = await api.get('/handover/my-projects/completed');
+  return response.data.data.leads || [];
+};
+
+export const getMyPriorityProjects = async () => {
+  const response = await api.get('/handover/my-projects/priority');
+  return response.data.data.leads || [];
 };
 
 export const updateMilestone = async (leadId, milestone) => {
   const response = await api.patch(`/handover/${leadId}/milestone`, {
     milestone,
   });
+  return response.data.data.lead;
+};
+
+export const saveDevelopedWebsiteUrl = async (leadId, developedWebsiteUrl) => {
+  const response = await api.patch(
+    `/handover/${leadId}/developed-website-url`,
+    { developedWebsiteUrl }
+  );
   return response.data.data.lead;
 };
 

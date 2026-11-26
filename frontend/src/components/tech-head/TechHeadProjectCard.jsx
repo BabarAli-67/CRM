@@ -1,6 +1,8 @@
 import { Link } from 'react-router-dom';
 import OpsStatusEditor from '../ops/OpsStatusEditor.jsx';
+import { DevelopedWebsiteLink } from '../tech/DevelopedWebsiteUrlField.component.jsx';
 import ProjectNumberBadge from '../tech/ProjectNumberBadge.jsx';
+import { techHeadClientPath } from '../../utils/techDetailNav.util.js';
 
 const formatPkt = (value) => {
   if (!value) return '—';
@@ -22,9 +24,11 @@ export default function TechHeadProjectCard({
   lead,
   statusText,
   metaLine,
+  headerExtra = null,
   actions = null,
   showOpsEditor = true,
   onOpsUpdated,
+  detailFrom = 'assigned',
 }) {
   const assignees = Array.isArray(lead.handover?.assignedTechIds)
     ? lead.handover.assignedTechIds
@@ -46,8 +50,8 @@ export default function TechHeadProjectCard({
           <div className="flex flex-wrap items-center gap-2">
             <ProjectNumberBadge lead={lead} size="lg" />
             <Link
-              to={`/dashboard/tech-head/client/${lead._id}`}
-              className="font-display text-lg font-semibold text-white hover:text-orange-300"
+              to={techHeadClientPath(lead._id, { from: detailFrom })}
+              className="cursor-pointer font-display text-lg font-semibold text-white underline-offset-2 transition hover:text-orange-300 hover:underline"
             >
               {lead.businessName || '—'}
             </Link>
@@ -56,6 +60,7 @@ export default function TechHeadProjectCard({
                 {statusText}
               </span>
             ) : null}
+            {headerExtra}
           </div>
           {metaLine ? (
             <p className="mt-0.5 text-sm text-zinc-500">{metaLine}</p>
@@ -141,7 +146,10 @@ export default function TechHeadProjectCard({
             </div>
           </dl>
         </div>
-        {actions}
+        <div className="flex flex-col items-end gap-2">
+          <DevelopedWebsiteLink url={lead.handover?.developedWebsiteUrl} />
+          {actions}
+        </div>
       </div>
 
       {showOpsEditor ? (

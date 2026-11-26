@@ -7,10 +7,14 @@ import Lead from '../models/lead.model.js';
 import { emitToUser } from '../sockets/ioInstance.util.js';
 import { getTechTeamAttendanceGrid } from '../services/attendance.service.js';
 import {
+  emitTechPriorityAlert,
+  emitTechProjectSync,
   getAssignedTechIdList,
   isUserAssignedTech,
+  leadIndicatesGmbOrSeo,
   MENTOR_JD_OPTIONS,
   TECH_JD_OPTIONS,
+  TECH_NON_EXPIRED_CLAUSE,
   TECH_STATUS_LABEL,
   toTechSafeClient,
   TECH_USERNAME_REGEX,
@@ -294,6 +298,7 @@ export const getTechHeadQueue = asyncHandler(async (req, res) => {
   const leads = await Lead.find({
     stage: 'closed_sale',
     'handover.cstStatus': 'onboarded',
+    ...TECH_NON_EXPIRED_CLAUSE,
     $and: [
       {
         $or: [
@@ -311,7 +316,7 @@ export const getTechHeadQueue = asyncHandler(async (req, res) => {
     ],
   })
     .select(
-      'businessName serviceAreas websiteLink servicesOffered socialLinks handover.onboardedAt handover.onboardingNotes handover.projectNumber handover.upscale handover.upscaleNotes handover.upsellLedger handover.cstStatus handover.techStatus handover.clientOpsStatus handover.gmbOpsStatus handover.websiteSeoOpsStatus createdAt updatedAt'
+      'businessName serviceAreas websiteLink servicesOffered socialLinks gmbLink handover.onboardedAt handover.onboardingNotes handover.projectNumber handover.upscale handover.upscaleNotes handover.upsellLedger handover.cstStatus handover.techStatus handover.clientOpsStatus handover.clientStatus handover.isPriority handover.priorityAssignedAt handover.gmbOpsStatus handover.websiteSeoOpsStatus createdAt updatedAt'
     )
     .sort({ 'handover.onboardedAt': 1, updatedAt: 1 });
 
@@ -332,10 +337,11 @@ export const getTechHeadAssigned = asyncHandler(async (req, res) => {
     stage: 'closed_sale',
     'handover.cstStatus': { $in: TECH_LIVE_STATUSES },
     'handover.techStatus': { $ne: 'completed' },
+    ...TECH_NON_EXPIRED_CLAUSE,
     $and: [ASSIGNED_SPECIALIST_CLAUSE],
   })
     .select(
-      'businessName serviceAreas websiteLink servicesOffered socialLinks handover createdAt updatedAt'
+      'businessName serviceAreas websiteLink servicesOffered socialLinks gmbLink handover createdAt updatedAt'
     )
     .populate('handover.assignedTechId', 'fullName username jd')
     .populate('handover.assignedTechIds', 'fullName username jd')
@@ -364,6 +370,7 @@ export const getTechHeadAssigned = asyncHandler(async (req, res) => {
 export const getTechHeadCompleted = asyncHandler(async (req, res) => {
   const leads = await Lead.find({
     stage: 'closed_sale',
+    ...TECH_NON_EXPIRED_CLAUSE,
     $and: [
       {
         $or: [
@@ -375,7 +382,7 @@ export const getTechHeadCompleted = asyncHandler(async (req, res) => {
     ],
   })
     .select(
-      'businessName serviceAreas websiteLink servicesOffered socialLinks handover createdAt updatedAt'
+      'businessName serviceAreas websiteLink servicesOffered socialLinks gmbLink handover createdAt updatedAt'
     )
     .populate('handover.assignedTechId', 'fullName username jd')
     .populate('handover.assignedTechIds', 'fullName username jd')
@@ -402,6 +409,7 @@ export const getTechHeadCompleted = asyncHandler(async (req, res) => {
 export const getCstEscalations = asyncHandler(async (req, res) => {
   const leads = await Lead.find({
     stage: 'closed_sale',
+    ...TECH_NON_EXPIRED_CLAUSE,
     'handover.comments.0': { $exists: true },
   })
     .select(
@@ -676,6 +684,7 @@ export const getTechHeadBadges = asyncHandler(async (req, res) => {
   const queueCount = await Lead.countDocuments({
     stage: 'closed_sale',
     'handover.cstStatus': 'onboarded',
+    ...TECH_NON_EXPIRED_CLAUSE,
     $and: [
       {
         $or: [
@@ -695,6 +704,7 @@ export const getTechHeadBadges = asyncHandler(async (req, res) => {
 
   const completedCount = await Lead.countDocuments({
     stage: 'closed_sale',
+    ...TECH_NON_EXPIRED_CLAUSE,
     $and: [
       {
         $or: [
@@ -706,10 +716,21 @@ export const getTechHeadBadges = asyncHandler(async (req, res) => {
     ],
   });
 
+  const priorityCount = await Lead.countDocuments({
+    stage: 'closed_sale',
+    ...TECH_NON_EXPIRED_CLAUSE,
+    'handover.isPriority': true,
+    'handover.cstStatus': {
+      $in: ['onboarded', ...TECH_LIVE_STATUSES],
+    },
+    'handover.techStatus': { $ne: 'completed' },
+  });
+
   // Unread = @Tech Head comments newer than this user's commentReads watermark
   const uid = String(req.user._id);
   const leads = await Lead.find({
     stage: 'closed_sale',
+    ...TECH_NON_EXPIRED_CLAUSE,
     'handover.comments.0': { $exists: true },
   })
     .select('handover.comments handover.commentReads')
@@ -768,8 +789,104 @@ export const getTechHeadBadges = asyncHandler(async (req, res) => {
   res.status(200).json(
     new ApiResponse(
       200,
-      { queueCount, escalationUnread, completedCount, teamCommentUnread },
+      {
+        queueCount,
+        escalationUnread,
+        completedCount,
+        teamCommentUnread,
+        priorityCount,
+      },
       'Tech Head badges retrieved'
+    )
+  );
+});
+
+/**
+ * GET /tech-head/priority — active Priority Task board (newest priority first).
+ */
+export const getTechHeadPriority = asyncHandler(async (req, res) => {
+  const leads = await Lead.find({
+    stage: 'closed_sale',
+    ...TECH_NON_EXPIRED_CLAUSE,
+    'handover.isPriority': true,
+    'handover.cstStatus': {
+      $in: ['onboarded', ...TECH_LIVE_STATUSES],
+    },
+    'handover.techStatus': { $ne: 'completed' },
+  })
+    .select(
+      'businessName serviceAreas websiteLink servicesOffered socialLinks gmbLink handover createdAt updatedAt'
+    )
+    .populate('handover.assignedTechId', 'fullName username jd')
+    .populate('handover.assignedTechIds', 'fullName username jd')
+    .sort({ 'handover.priorityAssignedAt': -1, 'handover.assignedAt': -1 });
+
+  res.status(200).json(
+    new ApiResponse(
+      200,
+      {
+        leads: leads.map((lead) => {
+          const client = toTechSafeClient(lead);
+          const status =
+            lead.handover?.techStatus || lead.handover?.cstStatus || null;
+          client.statusLabel = TECH_STATUS_LABEL[status] || status;
+          return client;
+        }),
+      },
+      'Priority projects retrieved'
+    )
+  );
+});
+
+/**
+ * PATCH /tech-head/clients/:id/priority — mark / unmark Priority Task.
+ */
+export const setClientPriority = asyncHandler(async (req, res) => {
+  const wantsPriority = Boolean(req.body?.isPriority);
+
+  const lead = await Lead.findOne({
+    _id: req.params.id,
+    stage: 'closed_sale',
+    ...TECH_NON_EXPIRED_CLAUSE,
+    'handover.cstStatus': {
+      $in: ['onboarded', ...TECH_LIVE_STATUSES, 'completed'],
+    },
+  });
+
+  if (!lead) {
+    throw new ApiError(404, 'Client not found');
+  }
+  if (!lead.handover) lead.handover = {};
+
+  const wasPriority = Boolean(lead.handover.isPriority);
+  lead.handover.isPriority = wantsPriority;
+  lead.handover.priorityAssignedAt = wantsPriority ? new Date() : null;
+
+  await lead.save();
+  await lead.populate([
+    { path: 'handover.assignedTechId', select: 'fullName username jd' },
+    { path: 'handover.assignedTechIds', select: 'fullName username jd' },
+  ]);
+
+  await emitTechProjectSync(User, lead, {
+    reason: wantsPriority ? 'priority-on' : 'priority-off',
+    actorId: req.user._id,
+  });
+
+  if (wantsPriority && !wasPriority) {
+    await emitTechPriorityAlert(User, lead, { actorId: req.user._id });
+  }
+
+  const client = toTechSafeClient(lead);
+  const status =
+    lead.handover?.techStatus || lead.handover?.cstStatus || null;
+  client.statusLabel = TECH_STATUS_LABEL[status] || status;
+
+  res.status(200).json(
+    new ApiResponse(
+      200,
+      { lead: client },
+      wantsPriority ? 'Marked as Priority' : 'Priority removed'
     )
   );
 });
@@ -833,9 +950,10 @@ export const getTechHeadClient = asyncHandler(async (req, res) => {
   const lead = await Lead.findOne({
     _id: req.params.id,
     stage: 'closed_sale',
+    ...TECH_NON_EXPIRED_CLAUSE,
   })
     .select(
-      'businessName serviceAreas websiteLink servicesOffered socialLinks handover createdAt updatedAt'
+      'businessName serviceAreas websiteLink servicesOffered socialLinks gmbLink handover createdAt updatedAt'
     )
     .populate('handover.assignedTechId', 'fullName username jd')
     .populate('handover.assignedTechIds', 'fullName username jd')
@@ -859,6 +977,7 @@ export const getTechHeadClient = asyncHandler(async (req, res) => {
 export const getTeamComments = asyncHandler(async (req, res) => {
   const leads = await Lead.find({
     stage: 'closed_sale',
+    ...TECH_NON_EXPIRED_CLAUSE,
     'handover.comments.0': { $exists: true },
   })
     .select(
@@ -970,6 +1089,7 @@ const WEBSITE_SEO_OPS_STATUS = [
 export const updateClientOpsStatus = asyncHandler(async (req, res) => {
   const {
     clientOpsStatus,
+    clientStatus,
     gmbOpsStatus,
     websiteSeoOpsStatus,
   } = req.body || {};
@@ -1000,10 +1120,19 @@ export const updateClientOpsStatus = asyncHandler(async (req, res) => {
     if (!CLIENT_OPS_STATUS.includes(next)) {
       throw new ApiError(
         400,
-        `Client Status must be one of: ${CLIENT_OPS_STATUS.join(', ')}`
+        `Client Ops Status must be one of: ${CLIENT_OPS_STATUS.join(', ')}`
       );
     }
     lead.handover.clientOpsStatus = next;
+    touched = true;
+  }
+
+  if (clientStatus !== undefined) {
+    const next = String(clientStatus || '').trim();
+    if (next !== 'Active' && next !== 'Expired') {
+      throw new ApiError(400, "clientStatus must be 'Active' or 'Expired'");
+    }
+    lead.handover.clientStatus = next;
     touched = true;
   }
 
@@ -1040,6 +1169,11 @@ export const updateClientOpsStatus = asyncHandler(async (req, res) => {
     { path: 'handover.assignedTechId', select: 'fullName username jd' },
     { path: 'handover.assignedTechIds', select: 'fullName username jd' },
   ]);
+
+  await emitTechProjectSync(User, lead, {
+    reason: 'ops-status',
+    actorId: req.user._id,
+  });
 
   const client = toTechSafeClient(lead);
   const status =
@@ -1098,6 +1232,7 @@ export const assignTeamToClient = asyncHandler(async (req, res) => {
   const lead = await Lead.findOne({
     _id: req.params.id,
     stage: 'closed_sale',
+    ...TECH_NON_EXPIRED_CLAUSE,
     'handover.cstStatus': {
       $in: [
         'onboarded',
@@ -1114,6 +1249,17 @@ export const assignTeamToClient = asyncHandler(async (req, res) => {
   }
 
   if (!lead.handover) lead.handover = {};
+
+  // GMB / SEO work must include at least one SEO Expert
+  if (leadIndicatesGmbOrSeo(lead)) {
+    const hasSeo = ordered.some((t) => t.jd === 'SEO Expert');
+    if (!hasSeo) {
+      throw new ApiError(
+        400,
+        'GMB / SEO clients must be assigned to at least one SEO Expert'
+      );
+    }
+  }
 
   const priorIds = getAssignedTechIdList(lead);
   const firstAssign =
@@ -1138,6 +1284,26 @@ export const assignTeamToClient = asyncHandler(async (req, res) => {
     { path: 'handover.assignedTechId', select: 'fullName username jd' },
     { path: 'handover.assignedTechIds', select: 'fullName username jd' },
   ]);
+
+  await emitTechProjectSync(User, lead, {
+    reason: firstAssign ? 'assign' : 'reassign',
+    actorId: req.user._id,
+    alsoNotifyUserIds: priorIds,
+  });
+
+  // Newly assigned specialists get a Priority alert when the project is flagged
+  if (lead.handover.isPriority) {
+    const currentIds = getAssignedTechIdList(lead);
+    const newIds = firstAssign
+      ? currentIds
+      : currentIds.filter((id) => !priorIds.includes(id));
+    if (newIds.length) {
+      await emitTechPriorityAlert(User, lead, {
+        actorId: req.user._id,
+        notifyUserIds: newIds,
+      });
+    }
+  }
 
   res.status(200).json(
     new ApiResponse(

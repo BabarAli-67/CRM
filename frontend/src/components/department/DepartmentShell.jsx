@@ -5,6 +5,7 @@ import { Bell, Clock3, LogOut, Menu, X } from 'lucide-react';
 import AttendanceBanner from '../AttendanceBanner.component.jsx';
 import ClientCommentNotificationBell from '../ClientCommentNotificationBell.component.jsx';
 import MockupDeliveryNotificationBell from '../MockupDeliveryNotificationBell.component.jsx';
+import PriorityTaskNotificationBell from '../tech/PriorityTaskNotificationBell.component.jsx';
 import DockedChatWindowsHost from '../DockedChatWindowsHost.component.jsx';
 import GracefulExitModal from '../GracefulExitModal.component.jsx';
 import GlobalRemindersBridge from '../alerts/GlobalRemindersBridge.component.jsx';
@@ -58,21 +59,39 @@ function isItemActive(item, pathname, search) {
     if (item.matchFrom) {
       const from =
         new URLSearchParams(search).get('from') || item.defaultFrom || 'onboard';
-      return from === item.matchFrom;
+      const allowed = Array.isArray(item.matchFrom)
+        ? item.matchFrom
+        : [item.matchFrom];
+      return allowed.includes(from);
     }
     return true;
   }
 
   const itemPath = pathOf(item.to);
-  const itemTab = item.matchTab ?? new URLSearchParams(searchOf(item.to)).get('tab');
+  const itemSearch = new URLSearchParams(searchOf(item.to));
+  const currentSearch = new URLSearchParams(search);
+  const itemTab = item.matchTab ?? itemSearch.get('tab');
   if (itemTab != null) {
     if (pathname !== itemPath) return false;
     const currentTab =
-      new URLSearchParams(search).get('tab') || item.defaultTab || 'leads';
+      currentSearch.get('tab') || item.defaultTab || 'leads';
     return currentTab === itemTab;
+  }
+  const itemView = item.matchView ?? itemSearch.get('view');
+  if (itemView != null) {
+    if (pathname !== itemPath) return false;
+    return (currentSearch.get('view') || item.defaultView || '') === itemView;
   }
   if (item.end === false) {
     return pathname === itemPath || pathname.startsWith(`${itemPath}/`);
+  }
+  // Plain path item: inactive when a sibling uses ?view= on the same path
+  if (
+    pathname === itemPath &&
+    currentSearch.get('view') &&
+    item.inactiveWithView !== false
+  ) {
+    return false;
   }
   return pathname === itemPath;
 }
@@ -521,6 +540,7 @@ export default function DepartmentShell({
           </div>
           <div className="flex min-w-0 items-center gap-2 sm:gap-3">
             <ClientCommentNotificationBell />
+            <PriorityTaskNotificationBell />
             <MockupDeliveryNotificationBell />
             <HeaderPulseDot enabled={pulseEnabled} />
             <SessionIdentityBadge user={user} roleLabel={displayRole} />
