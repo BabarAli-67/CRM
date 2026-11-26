@@ -1,14 +1,17 @@
 import { useMemo, useState } from 'react';
+import { Navigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import MockupLogoPreview from '../../components/mockup/MockupLogoPreview.jsx';
 import MockupStatusBadge from '../../components/mockup/MockupStatusBadge.jsx';
 import MockupUrlActions from '../../components/mockup/MockupUrlActions.jsx';
 import TechTeamShell from '../../components/tech-team/TechTeamShell.jsx';
+import useAuth from '../../hooks/useAuth.hook.js';
 import useMockupFile from '../../hooks/useMockupFile.hook.js';
 import {
   listAssignedMockups,
   submitMockupUrl,
 } from '../../services/mockup.service.js';
+import { resolveTechWorkspaceJd } from '../../utils/techWorkspace.util.js';
 
 const fieldClass =
   'w-full rounded-xl border border-zinc-700 bg-zinc-950/60 px-3 py-2 text-sm text-white outline-none transition focus:border-orange-500/50 focus:ring-2 focus:ring-orange-500/20';
@@ -132,6 +135,8 @@ function MockupCard({ item, urlDrafts, setUrlDrafts, submitMutation }) {
 }
 
 export default function TechTeamMockupPage() {
+  const { user } = useAuth();
+  const workspaceJd = resolveTechWorkspaceJd(user);
   const queryClient = useQueryClient();
   const [tab, setTab] = useState('in_progress');
   const [search, setSearch] = useState('');
@@ -139,6 +144,8 @@ export default function TechTeamMockupPage() {
   const [urlDrafts, setUrlDrafts] = useState({});
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
+
+  const canAccessMockup = workspaceJd === 'Developer';
 
   const {
     data: mockups = [],
@@ -149,6 +156,7 @@ export default function TechTeamMockupPage() {
     queryKey: ['assignedMockups'],
     queryFn: listAssignedMockups,
     refetchInterval: 15_000,
+    enabled: canAccessMockup,
   });
 
   const submitMutation = useMutation({
@@ -204,6 +212,10 @@ export default function TechTeamMockupPage() {
     tab === 'in_progress' ? filteredInProgress : filteredDelivered;
 
   const hasActiveFilters = Boolean(search.trim() || requesterRole);
+
+  if (!canAccessMockup) {
+    return <Navigate to="/dashboard/tech-team/projects" replace />;
+  }
 
   return (
     <TechTeamShell title="Mockup">

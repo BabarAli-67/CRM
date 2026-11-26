@@ -255,7 +255,10 @@ export default function TechHeadMockupPage() {
   });
 
   const specialists = useMemo(
-    () => team.filter((m) => m.status === 'approved'),
+    () =>
+      team.filter(
+        (m) => m.status === 'approved' && String(m.jd || '') === 'Developer'
+      ),
     [team]
   );
 
@@ -343,7 +346,7 @@ export default function TechHeadMockupPage() {
             Mockup Requests
           </h2>
           <p className="mt-1 text-sm text-zinc-500">
-            Incoming from Closers & CST Managers — assign any Tech specialist,
+            Incoming from Closers & CST Managers — assign a Developer,
             then forward the completed URL back to the original sender.
           </p>
         </div>

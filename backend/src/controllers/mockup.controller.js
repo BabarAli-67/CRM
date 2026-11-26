@@ -438,6 +438,9 @@ export const assignMockup = asyncHandler(async (req, res) => {
   if (!tech) {
     throw new ApiError(400, 'Assignee must be an approved Tech team member');
   }
+  if (String(tech.jd || '') !== 'Developer') {
+    throw new ApiError(400, 'Mockups can only be assigned to Developers');
+  }
 
   const mockup = await MockupRequest.findById(req.params.id);
   if (!mockup) throw new ApiError(404, 'Mockup request not found');

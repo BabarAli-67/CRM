@@ -91,6 +91,15 @@ const canAccessLead = (lead, user) => {
     user.role === 'tech_team' &&
     assignedTechIds.includes(userId);
 
+  // Developers removed after Ongoing (SEO) handoff still need Completed detail access
+  const handoffs = Array.isArray(lead.handover?.developerHandoffs)
+    ? lead.handover.developerHandoffs
+    : [];
+  const isHandedOffDeveloper =
+    !isCstNonActive &&
+    user.role === 'tech_team' &&
+    handoffs.some((h) => String(h.developerId) === userId);
+
   // Tech Head may view onboarded + assigned fulfillment leads (no financial projection here)
   const techHeadStatuses = new Set([
     'onboarded',
@@ -110,6 +119,7 @@ const canAccessLead = (lead, user) => {
     isCloserOnRecord ||
     isCloserClosedSaleVisible ||
     isAssignedTech ||
+    isHandedOffDeveloper ||
     isTechHeadVisible
   );
 };

@@ -61,6 +61,7 @@ export default function TechClientPortfolioPage() {
     enabled: Boolean(id),
     staleTime: 0,
     refetchOnMount: 'always',
+    retry: 1,
   });
 
   useEffect(() => {
